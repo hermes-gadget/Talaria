@@ -16,6 +16,8 @@
 package com.nousresearch.talaria.feature.manage.config
 
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -26,6 +28,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -48,12 +54,14 @@ import com.nousresearch.talaria.domain.model.ConfigSchemaResponse
 import com.nousresearch.talaria.ui.components.ScreenScaffold
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConfigScreen() {
     val repo = TalariaApp.instance.container.hermesRepository
@@ -67,6 +75,19 @@ fun ConfigScreen() {
     var selectedCategory by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var importText by remember { mutableStateOf<String?>(null) }
+
+    val importFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            val raw = context.contentResolver.openInputStream(uri)
+                ?.bufferedReader()?.use { it.readText() }.orEmpty()
+            JsonConfig.json.parseToJsonElement(raw).jsonObject // validate
+            text = raw
+            message = "Imported from file (not saved)"
+        }.onFailure { message = "Invalid config file: ${it.message}" }
+    }
 
     fun load() {
         scope.launch {
@@ -154,8 +175,45 @@ fun ConfigScreen() {
                             val type = meta?.get("type")?.jsonPrimitive?.contentOrNull
                             val desc = meta?.get("description")?.jsonPrimitive?.contentOrNull
                             val current = configObj?.get(key)?.toString()?.trim('"') ?: ""
-                            when (type) {
-                                "boolean", "bool" -> {
+                            val enumValues = meta?.let { enumOptions(it) }
+                            when {
+                                !enumValues.isNullOrEmpty() -> {
+                                    var expanded by remember(key) { mutableStateOf(false) }
+                                    ExposedDropdownMenuBox(
+                                        expanded = expanded,
+                                        onExpandedChange = { expanded = it },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        OutlinedTextField(
+                                            value = current,
+                                            onValueChange = {},
+                                            readOnly = true,
+                                            label = { Text(key) },
+                                            supportingText = desc?.let { { Text(it) } },
+                                            trailingIcon = {
+                                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+                                            },
+                                            modifier = Modifier
+                                                .menuAnchor()
+                                                .fillMaxWidth(),
+                                        )
+                                        ExposedDropdownMenu(
+                                            expanded = expanded,
+                                            onDismissRequest = { expanded = false },
+                                        ) {
+                                            enumValues.forEach { option ->
+                                                DropdownMenuItem(
+                                                    text = { Text(option) },
+                                                    onClick = {
+                                                        text = updateConfigKey(text, key, option)
+                                                        expanded = false
+                                                    },
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                type == "boolean" || type == "bool" -> {
                                     val checked = current.equals("true", ignoreCase = true)
                                     Row(
                                         modifier = Modifier
@@ -227,7 +285,12 @@ fun ConfigScreen() {
                 }) { Text("Export") }
                 OutlinedButton(onClick = {
                     importText = text
-                }) { Text("Import") }
+                }) { Text("Paste") }
+                OutlinedButton(onClick = {
+                    importFileLauncher.launch(
+                        arrayOf("application/json", "text/plain", "*/*"),
+                    )
+                }) { Text("Import file") }
             }
 
             importText?.let {
@@ -269,6 +332,27 @@ private fun fieldKeysForCategory(fields: JsonObject, category: String): List<Str
         val cat = el.jsonObject["category"]?.jsonPrimitive?.contentOrNull
         if (cat == category) key else null
     }.sorted()
+}
+
+/**
+ * Extracts enum choices from a schema field. Supports `enum: [...]`, `choices: [...]`,
+ * and JSON-Schema `oneOf: [{const: ...}, ...]` shapes used by the Hermes config schema.
+ */
+private fun enumOptions(meta: JsonObject): List<String> {
+    fun primitives(arr: JsonArray): List<String> =
+        arr.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+
+    (meta["enum"] as? JsonArray)?.let { return primitives(it) }
+    (meta["choices"] as? JsonArray)?.let { return primitives(it) }
+    (meta["oneOf"] as? JsonArray)?.let { arr ->
+        val consts = arr.mapNotNull { el ->
+            (el as? JsonObject)?.get("const")?.let { c ->
+                (c as? JsonPrimitive)?.contentOrNull
+            }
+        }
+        if (consts.isNotEmpty()) return consts
+    }
+    return emptyList()
 }
 
 private fun updateConfigKey(text: String, key: String, newVal: String): String {

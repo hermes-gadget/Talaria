@@ -274,7 +274,10 @@ data class ToolsetInfo(
     val label: String? = null,
     val description: String? = null,
     val active: Boolean? = null,
+    val enabled: Boolean? = null,
+    val available: Boolean? = null,
     val configured: Boolean? = null,
+    val platform: String? = null,
     val tools: List<String> = emptyList(),
 )
 
@@ -302,3 +305,37 @@ object SlashCommands {
         SlashCommand("/new", "Start a fresh session"),
     )
 }
+
+@Serializable
+data class MemoryState(
+    val active: String? = null,
+    val providers: List<MemoryProvider> = emptyList(),
+)
+
+@Serializable
+data class MemoryProvider(
+    val name: String,
+    val description: String? = null,
+    val available: Boolean = false,
+    val configured: Boolean = false,
+    val status: String? = null,
+    val setup: MemoryProviderSetup? = null,
+)
+
+@Serializable
+data class MemoryProviderSetup(
+    val pip_dependencies: List<String> = emptyList(),
+    val required_env: List<String> = emptyList(),
+    val dependencies_installed: Boolean = false,
+)
+
+@Serializable
+data class CuratorState(
+    val enabled: Boolean = false,
+    val paused: Boolean = false,
+    val interval_hours: Double? = null,
+    val last_run_at: String? = null,
+    val min_idle_hours: Double? = null,
+    val stale_after_days: Int? = null,
+    val archive_after_days: Int? = null,
+)

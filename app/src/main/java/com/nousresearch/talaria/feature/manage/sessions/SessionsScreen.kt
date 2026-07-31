@@ -18,6 +18,7 @@ package com.nousresearch.talaria.feature.manage.sessions
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,13 +26,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuAnchorType
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -49,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.domain.model.SessionSummary
 import com.nousresearch.talaria.ui.components.ScreenScaffold
+import com.nousresearch.talaria.ui.theme.LocalSpacing
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -59,6 +62,7 @@ private enum class SessionTab { Chats, Automation, All }
 @Composable
 fun SessionsScreen(onOpen: (String) -> Unit, onResume: (String) -> Unit) {
     val repo = TalariaApp.instance.container.hermesRepository
+    val spacing = LocalSpacing.current
     val scope = rememberCoroutineScope()
     var tab by remember { mutableStateOf(SessionTab.Chats) }
     var sourceFilter by remember { mutableStateOf("") }
@@ -147,8 +151,14 @@ fun SessionsScreen(onOpen: (String) -> Unit, onResume: (String) -> Unit) {
         TextButton(onClick = { reload() }) { Text("Refresh") }
         TextButton(onClick = { confirmPrune = true }) { Text("Prune") }
     }) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(spacing.itemGap)) {
+            // Single compact filter row: tab chips + source dropdown chip.
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+            ) {
                 SessionTab.entries.forEach { t ->
                     FilterChip(
                         selected = tab == t,
@@ -156,30 +166,25 @@ fun SessionsScreen(onOpen: (String) -> Unit, onResume: (String) -> Unit) {
                         label = { Text(t.name) },
                     )
                 }
-            }
-            ExposedDropdownMenuBox(
-                expanded = sourceExpanded,
-                onExpandedChange = { sourceExpanded = it },
-            ) {
-                OutlinedTextField(
-                    value = knownSources.find { it.first == sourceFilter }?.second ?: sourceFilter,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Source") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(sourceExpanded) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, enabled = true),
-                )
-                ExposedDropdownMenu(expanded = sourceExpanded, onDismissRequest = { sourceExpanded = false }) {
-                    knownSources.forEach { (value, label) ->
-                        DropdownMenuItem(
-                            text = { Text(label) },
-                            onClick = {
-                                sourceFilter = value
-                                sourceExpanded = false
-                            },
-                        )
+                Box {
+                    FilterChip(
+                        selected = sourceFilter.isNotBlank(),
+                        onClick = { sourceExpanded = true },
+                        label = {
+                            Text(knownSources.find { it.first == sourceFilter }?.second ?: "All sources")
+                        },
+                        trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
+                    )
+                    DropdownMenu(expanded = sourceExpanded, onDismissRequest = { sourceExpanded = false }) {
+                        knownSources.forEach { (value, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = {
+                                    sourceFilter = value
+                                    sourceExpanded = false
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -190,18 +195,12 @@ fun SessionsScreen(onOpen: (String) -> Unit, onResume: (String) -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                shape = MaterialTheme.shapes.medium,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    "Showing ${sessions.size}" + (total?.let { " · total $it" } ?: "") +
-                        " · ${tab.name.lowercase()}",
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.padding(12.dp),
-                )
-            }
+            Text(
+                "Showing ${sessions.size}" + (total?.let { " · total $it" } ?: "") +
+                    " · ${tab.name.lowercase()}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             LazyColumn(modifier = Modifier.weight(1f, fill = true)) {
                 items(sessions, key = { it.id }) { s ->

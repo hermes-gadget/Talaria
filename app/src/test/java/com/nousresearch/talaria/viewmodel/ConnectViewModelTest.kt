@@ -26,7 +26,8 @@ class ConnectViewModelTest {
     @Test
     fun defaultStatePointsAtLocalDashboard() {
         val state = ConnectUiState()
-        assertEquals("http://127.0.0.1:9119", state.baseUrl)
+        // 10.0.2.2 is the emulator alias for the host loopback (see ConnectUiState).
+        assertEquals("http://10.0.2.2:9119", state.baseUrl)
         assertEquals(AuthMode.SESSION_TOKEN, state.authMode)
     }
 }

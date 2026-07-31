@@ -43,8 +43,9 @@ object Routes {
     const val PAIRING = "pairing"
     const val CHANNELS = "channels"
     const val SYSTEM = "system"
+    const val MEMORY = "memory"
+    const val CURATOR = "curator"
     const val SETTINGS = "settings"
-    const val PRIVACY = "privacy"
 
     fun chat(resume: String? = null) =
         if (resume.isNullOrBlank()) "chat?resume=" else "chat?resume=$resume"

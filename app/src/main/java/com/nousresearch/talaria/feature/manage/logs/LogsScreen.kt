@@ -17,12 +17,24 @@ package com.nousresearch.talaria.feature.manage.logs
 
 import android.content.Intent
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -37,12 +49,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.ui.components.ScreenScaffold
+import com.nousresearch.talaria.ui.theme.LocalSpacing
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
 @Composable
 fun LogsScreen() {
     val context = LocalContext.current
+    val spacing = LocalSpacing.current
     var file by remember { mutableStateOf("agent") }
     var level by remember { mutableStateOf<String?>(null) }
     var component by remember { mutableStateOf<String?>(null) }
@@ -50,6 +64,7 @@ fun LogsScreen() {
     var debouncedSearch by remember { mutableStateOf("") }
     var lines by remember { mutableStateOf<List<String>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
+    val listState = rememberLazyListState()
 
     LaunchedEffect(search) {
         delay(300)
@@ -89,52 +104,91 @@ fun LogsScreen() {
         ) { Text("Share") }
     }) {
         Column {
-            Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+            // Single compact filter row: file segmented chips + level/component dropdowns.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+            ) {
                 listOf("agent", "gateway", "errors").forEach { f ->
                     FilterChip(selected = file == f, onClick = { file = f }, label = { Text(f) })
                 }
-            }
-            Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                FilterChip(
-                    selected = level == null,
-                    onClick = { level = null },
-                    label = { Text("level:all") },
+                DropdownFilterChip(
+                    label = "level",
+                    value = level,
+                    options = listOf("debug", "info", "warn", "error"),
+                    onSelect = { level = it },
                 )
-                listOf("debug", "info", "warn", "error").forEach { lv ->
-                    FilterChip(
-                        selected = level == lv,
-                        onClick = { level = lv },
-                        label = { Text(lv) },
-                    )
-                }
-            }
-            Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                FilterChip(
-                    selected = component == null,
-                    onClick = { component = null },
-                    label = { Text("component:all") },
+                DropdownFilterChip(
+                    label = "component",
+                    value = component,
+                    options = listOf("gateway", "agent", "tools", "cron"),
+                    onSelect = { component = it },
                 )
-                listOf("gateway", "agent", "tools", "cron").forEach { c ->
-                    FilterChip(
-                        selected = component == c,
-                        onClick = { component = c },
-                        label = { Text(c) },
-                    )
-                }
             }
             OutlinedTextField(
                 value = search,
                 onValueChange = { search = it },
                 label = { Text("Search") },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = spacing.xs),
                 singleLine = true,
             )
-            error?.let { Text(it) }
-            Text(
-                lines.joinToString(separator = "\n"),
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.verticalScroll(rememberScrollState()),
+            error?.let {
+                Text(
+                    it,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(vertical = spacing.xs),
+                )
+            }
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = spacing.xs),
+            ) {
+                items(lines) { line ->
+                    Text(
+                        line,
+                        fontFamily = FontFamily.Monospace,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Compact chip that opens a dropdown; shows `label` when unset, `label:value` when set. */
+@Composable
+private fun DropdownFilterChip(
+    label: String,
+    value: String?,
+    options: List<String>,
+    onSelect: (String?) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        FilterChip(
+            selected = value != null,
+            onClick = { expanded = true },
+            label = { Text(if (value == null) "$label:all" else "$label:$value") },
+            trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
+        )
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("all") },
+                onClick = { onSelect(null); expanded = false },
             )
+            options.forEach { opt ->
+                DropdownMenuItem(
+                    text = { Text(opt) },
+                    onClick = { onSelect(opt); expanded = false },
+                )
+            }
         }
     }
 }

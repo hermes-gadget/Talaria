@@ -52,7 +52,12 @@ class HermesSyncWorker(
             }
             snap.pairing?.pending?.forEach { p ->
                 val body = "${p.platform}: ${p.user_name ?: p.user_id}"
-                container.notifier.notifyPairing("Pairing request", body)
+                container.notifier.notifyPairing(
+                    title = "Pairing request",
+                    body = body,
+                    platform = p.platform,
+                    code = p.code ?: p.request_id,
+                )
                 container.hermesRepository.recordActivity("pairing", "Pairing request", body)
             }
             snap.cron.filter { it.state.equals("error", ignoreCase = true) }.forEach {
@@ -60,6 +65,13 @@ class HermesSyncWorker(
                 container.notifier.notifyCron("Cron error", body)
                 container.hermesRepository.recordActivity("cron", "Cron error", body)
             }
+            // Phase 13 offline snapshot: cache a widget-friendly summary + pairing badge.
+            val gw = if (gatewayRunning == true) "GW up" else "GW down"
+            val pending = snap.pairing?.pending?.size ?: 0
+            container.settingsStore.cachedStatusLine =
+                "Hermes ${snap.status.version ?: "?"} · $gw · sessions ${snap.status.active_sessions ?: 0}"
+            container.settingsStore.cachedStatusUpdatedAt = System.currentTimeMillis()
+            container.settingsStore.pendingPairingCount = pending
             container.hermesRepository.recordActivity(
                 "sync",
                 "Background sync",

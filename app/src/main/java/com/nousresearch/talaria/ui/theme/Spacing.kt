@@ -16,15 +16,28 @@
 
 package com.nousresearch.talaria.ui.theme
 
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Shapes
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-/** Material 3 shape scale used across Talaria surfaces and buttons. */
-val TalariaShapes = Shapes(
-    extraSmall = RoundedCornerShape(6.dp),
-    small = RoundedCornerShape(10.dp),
-    medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(22.dp),
-    extraLarge = RoundedCornerShape(28.dp),
+/**
+ * Shared spacing/density scale. Screens read these tokens instead of hardcoding
+ * dp literals so density can be tuned globally in one place.
+ *
+ * Scale is a 4dp base grid; semantic aliases name the common layout roles.
+ */
+data class Spacing(
+    // Raw scale
+    val xs: Dp = 4.dp,
+    val sm: Dp = 8.dp,
+    val md: Dp = 12.dp,
+    val lg: Dp = 16.dp,
+    val xl: Dp = 24.dp,
+    // Semantic aliases
+    val screenH: Dp = 16.dp,
+    val screenV: Dp = 6.dp,
+    val cardPad: Dp = 12.dp,
+    val itemGap: Dp = 6.dp,
 )
+
+val LocalSpacing = staticCompositionLocalOf { Spacing() }

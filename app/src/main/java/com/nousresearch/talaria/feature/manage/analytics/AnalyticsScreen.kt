@@ -30,6 +30,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -62,11 +65,12 @@ fun AnalyticsScreen() {
     var data by remember { mutableStateOf<AnalyticsUsage?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
+    var days by remember { mutableStateOf(30) }
     val scope = rememberCoroutineScope()
 
     fun reload() = scope.launch {
         loading = true
-        repo.getAnalytics(30)
+        repo.getAnalytics(days)
             .onSuccess {
                 data = it
                 error = null
@@ -77,11 +81,22 @@ fun AnalyticsScreen() {
                 loading = false
             }
     }
-    LaunchedEffect(Unit) { reload() }
+    LaunchedEffect(days) { reload() }
 
-    ScreenScaffold("Analytics", "Last 30 days", actions = {
+    ScreenScaffold("Analytics", "Last $days days", actions = {
         TextButton(onClick = { reload() }) { Text("Refresh") }
     }) {
+        // Range selector — the backend getAnalytics(days) param, now user-driven.
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.padding(bottom = 8.dp)) {
+            val ranges = listOf(7, 30, 90)
+            ranges.forEachIndexed { index, r ->
+                SegmentedButton(
+                    selected = days == r,
+                    onClick = { days = r },
+                    shape = SegmentedButtonDefaults.itemShape(index, ranges.size),
+                ) { Text("${r}d") }
+            }
+        }
         when {
             loading && data == null -> LoadingBox()
             error != null && data == null -> ErrorBox(error!!, onRetry = { reload() })

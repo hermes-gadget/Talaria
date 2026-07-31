@@ -2,7 +2,7 @@
 
 Goal: make Talaria feel like a first-class mobile client for the [Hermes Agent Web Dashboard](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard) — every major page and workflow, adapted for touch, offline, and battery — while staying a remote client (no embedded Python runtime).
 
-**Current baseline:** Talaria `0.2.1` · Hermes API `dashboard-v0.17+`  
+**Current baseline:** Talaria `1.0.0` (parity freeze) · Hermes API `dashboard-v0.17+`  
 **Contract sources:** `docs/API.md`, upstream `web/src/lib/api.ts`, `hermes_cli/web_server.py`, dashboard docs.
 
 Use this file as the working backlog. Each item has **why**, **done when**, and **how** (ordered steps). Check boxes as you ship.
@@ -28,7 +28,7 @@ Use this file as the working backlog. Each item has **why**, **done when**, and 
 
 ---
 
-## Snapshot — where `0.2.1` stands
+## Snapshot — where `1.0.0` stands
 
 | Web Dashboard page | Talaria today |
 |--------------------|---------------|
@@ -37,19 +37,20 @@ Use this file as the working backlog. Each item has **why**, **done when**, and 
 | Config | Done — schema categories, bool switches, JSON escape hatch, reset/export/import |
 | API Keys | Done — `env_catalog.json` merge, signup links, `/reload` tip |
 | Sessions | Done — filters/search/rename/export/delete/prune |
-| Logs | Done — level/component/search + poll tail + share |
-| Analytics | Done — daily bars + totals + model breakdown |
+| Logs | Done — compact filter row + poll tail + share; virtualized `LazyColumn` |
+| Analytics | Done — daily bars + totals + model breakdown + 7/30/90-day range |
 | Cron | Done — create/edit + presets + last/next + lifecycle |
 | Profiles | Done — switch active + skills/config shortcuts |
-| Skills | Done — search/categories + toolsets + Hub docs Custom Tab |
+| Skills | Done — search/categories + toolset activate (PUT) + Hub docs Custom Tab |
 | MCP | Done — CRUD + test |
 | Webhooks | Done — create / enable / delete |
 | Pairing | Done — approve / revoke / clear-pending + sync notify |
 | Channels | Done — configure sheet + test |
-| System | Done — doctor / audit / backup / portal / memory / curator |
-| Profile switcher (global) | Done — amber banner; stops sidecar on switch |
+| System | Done — doctor / audit / backup / portal |
+| Memory / Curator | Done — dedicated typed screens (was raw JSON in System) |
+| Profile switcher (global) | Done — compact top-bar chip; stops sidecar on switch |
 | Auth (gated WS tickets) | Done — tickets + OIDC Custom Tabs + paste fallback |
-| Events / live fan-out | Done — `HermesEventClient` + background teardown |
+| Events / live fan-out | Done — `HermesEventClient` + `SidecarFrameParser`; live Activity + Chat status |
 | Connection doctor | Done — status + ticket + PTY probe + 4401/4403 |
 
 ---
@@ -499,14 +500,14 @@ Web Chat = real `hermes --tui` over `/api/pty` (xterm.js) **plus** `/api/ws` + `
 
 Not required for “web parity,” but expected of a phone client.
 
-| Item | Steps |
+| Item | Status |
 |------|--------|
-| Notification richness | Map more sync diffs → channels; actionable Approve on pairing |
-| Offline | Cache last Status/Analytics snapshots; read-only Sessions when unreachable |
-| Widgets | Expand widget: last reply snippet, pending pairing count |
-| Share targets | Share images/files when `/api/files*` or chat attachments exist upstream |
-| Voice | Optional on-device Whisper/Vosk module (documented, not default APK) |
-| Large screens | NavigationSuite dual-pane: session list | chat |
+| Notification richness | **Done** — sync maps gateway/pairing/cron/error diffs → channels; actionable **Approve** on pairing notifications (`PairingApproveWorker`) |
+| Offline | **Done** — `SettingsStore` caches last Status snapshot + pending-pairing count; widget shows `· cached` when unreachable; Room already caches Sessions for read-only browse |
+| Widgets | **Done** — Glance widget shows cached status + pending pairing badge |
+| Large screens | **Done** — `NavigationSuiteScaffold` adapts bottom bar ↔ navigation rail by width (list-detail dual-pane chat remains an optional future enhancement) |
+| Share targets | **wontfix** — `/api/files*` / chat attachments not exposed by the dashboard |
+| Voice | **Done (by design)** — on-device `SpeechRecognizer` + TTS ship; heavier Whisper/Vosk engines are opt-in, documented, not in the default APK |
 
 ---
 
@@ -586,8 +587,58 @@ Phase 8–11 Extensibility & admin
 Phase 12 Auth polish
 - [x] 12.1 OIDC/Portal Custom Tabs (Custom Tabs + cookie jar; paste-token fallback documented)
 - [x] 12.2 in-app connection doctor (+ PTY probe)
+
+Phase 13 Mobile-only excellence
+- [x] Notification richness (pairing Approve action + gateway/cron/error diffs)
+- [x] Offline snapshot cache (Status + pending pairing; Room Sessions cache)
+- [x] Widget: cached status + pending pairing badge
+- [x] Large screens: adaptive NavigationSuite rail/bar
+- [~] Share targets — wontfix (files API not exposed upstream)
+- [x] Voice on-device (heavier engines opt-in, not default APK)
 ```
 
+**M5 — Parity freeze (`1.0.0`) reached:** all Phase 0–12 done-when criteria met, Phase 13
+essentials shipped, and `docs/API.md` Gaps table contains only wontfix/non-goal items.
+
+---
+
+## Phase 14 — Density + feature expansion (post-1.0.0)
+
+Parity was the floor; this phase reclaims screen space and surfaces backend signal the app was
+already receiving but discarding. All items verified on-device against a running Hermes v0.19.0.
+
+### 14.1 Design system + space consolidation
+- [x] Spacing/density token scale (`ui/theme/Spacing.kt` + `LocalSpacing`).
+- [x] Collapse the triple-stacked header: global profile strip → compact top-bar chip
+  (`ProfileSwitcherChip`); single dense title line in `ScreenScaffold`.
+- [x] Density passes: Manage grouped sections, Logs single filter row + virtualized list,
+  Sessions compact filter header, You segmented theme + denser toggles, Privacy folded into You.
+
+### 14.2 Live agent status (Chat)
+- [x] Type the sidecar `session.info` frame (was dropped as `Raw`); show
+  `model · reasoning · approval · yolo` (+ token/cost when a provider emits usage).
+- [x] Fix `event`-envelope parsing (real type is `params.type`, not the outer method).
+
+### 14.3 Event-driven Activity
+- [x] Foreground sidecar subscription writes gateway/session/approval rows live
+  (`HermesForegroundObserver`), complementing WorkManager polling.
+
+### 14.4 Memory & Curator screens
+- [x] Typed `MemoryState` / `CuratorState`; structured screens via `SimpleManageViewModel`;
+  removed the raw-JSON sections from System.
+
+### 14.5 Toolset activation + analytics range
+- [x] Toolset enable/disable via `PUT /api/tools/toolsets/{name}`.
+- [x] Analytics 7/30/90-day range selector.
+
+### 14.6 Quality
+- [x] Fix `SettingsStore.cloudSttOptIn` setter; extract pure `SidecarFrameParser` with unit tests;
+  add `MainDispatcherRule` + typed-model decode tests.
+
+**Not done — blocked upstream on v0.19.0** (re-check when Hermes updates):
+- Backend slash-command discovery — no RPC method (`commands.list`/`slash.list` → unknown method);
+  Chat keeps `SlashCommands.defaults`.
+- Live log streaming — no upstream event stream; Logs polls into the virtualized list.
 
 ---
 

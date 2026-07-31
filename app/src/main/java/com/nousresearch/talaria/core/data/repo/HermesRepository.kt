@@ -29,7 +29,9 @@ import com.nousresearch.talaria.domain.model.AnalyticsUsage
 import com.nousresearch.talaria.domain.model.ConfigSchemaResponse
 import com.nousresearch.talaria.domain.model.CronJob
 import com.nousresearch.talaria.domain.model.EnvVarInfo
+import com.nousresearch.talaria.domain.model.CuratorState
 import com.nousresearch.talaria.domain.model.McpServer
+import com.nousresearch.talaria.domain.model.MemoryState
 import com.nousresearch.talaria.domain.model.MessagingPlatform
 import com.nousresearch.talaria.domain.model.ModelInfo
 import com.nousresearch.talaria.domain.model.ModelOption
@@ -412,6 +414,13 @@ class HermesRepository(
         }
     }
 
+    suspend fun setToolsetEnabled(name: String, enabled: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            api().setToolset(name, buildJsonObject { put("enabled", enabled) })
+            Unit
+        }
+    }
+
     suspend fun getConfigSchema(): Result<ConfigSchemaResponse> = withContext(Dispatchers.IO) {
         runCatching { api().getConfigSchema() }
     }
@@ -527,6 +536,14 @@ class HermesRepository(
 
     suspend fun getCurator(): Result<JsonElement> = withContext(Dispatchers.IO) {
         runCatching { api().getCurator() }
+    }
+
+    suspend fun getMemoryState(): Result<MemoryState> = withContext(Dispatchers.IO) {
+        runCatching { JsonConfig.json.decodeFromJsonElement(MemoryState.serializer(), api().getMemory()) }
+    }
+
+    suspend fun getCuratorState(): Result<CuratorState> = withContext(Dispatchers.IO) {
+        runCatching { JsonConfig.json.decodeFromJsonElement(CuratorState.serializer(), api().getCurator()) }
     }
 
     /** Export session messages as markdown for share sheet. */

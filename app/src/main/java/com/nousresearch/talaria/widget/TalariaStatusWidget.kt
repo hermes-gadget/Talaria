@@ -41,29 +41,51 @@ import kotlinx.coroutines.withContext
 
 class TalariaStatusWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val line = withContext(Dispatchers.IO) {
-            runCatching {
+        val settings = TalariaApp.instance.container.settingsStore
+        val snapshot = withContext(Dispatchers.IO) {
+            val live = runCatching {
                 val status = TalariaApp.instance.container.hermesRepository.refreshStatus().getOrThrow()
                 val gw = if (status.gateway?.running == true) "GW up" else "GW down"
-                "Hermes ${status.version ?: "?"} · $gw · sessions ${status.active_sessions ?: 0}"
-            }.getOrElse { "Talaria · connect Hermes" }
+                val line = "Hermes ${status.version ?: "?"} · $gw · sessions ${status.active_sessions ?: 0}"
+                // Refresh the offline cache while we have a fresh read.
+                settings.cachedStatusLine = line
+                settings.cachedStatusUpdatedAt = System.currentTimeMillis()
+                line
+            }.getOrNull()
+            when {
+                live != null -> WidgetSnapshot(live, settings.pendingPairingCount, stale = false)
+                settings.cachedStatusLine != null ->
+                    WidgetSnapshot(settings.cachedStatusLine!!, settings.pendingPairingCount, stale = true)
+                else -> WidgetSnapshot("Talaria · connect Hermes", 0, stale = false)
+            }
         }
         provideContent {
             GlanceTheme {
-                StatusContent(line)
+                StatusContent(snapshot)
             }
         }
     }
 }
 
+private data class WidgetSnapshot(val line: String, val pendingPairing: Int, val stale: Boolean)
+
 @Composable
-private fun StatusContent(line: String) {
+private fun StatusContent(snapshot: WidgetSnapshot) {
     Column(
         modifier = GlanceModifier.fillMaxSize().background(GlanceTheme.colors.surface).padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("Talaria", style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 16.sp))
-        Text(line, style = TextStyle(fontSize = 13.sp))
+        Text(
+            if (snapshot.stale) "${snapshot.line} · cached" else snapshot.line,
+            style = TextStyle(fontSize = 13.sp),
+        )
+        if (snapshot.pendingPairing > 0) {
+            Text(
+                "${snapshot.pendingPairing} pairing request${if (snapshot.pendingPairing == 1) "" else "s"}",
+                style = TextStyle(fontWeight = FontWeight.Medium, fontSize = 12.sp),
+            )
+        }
     }
 }
 

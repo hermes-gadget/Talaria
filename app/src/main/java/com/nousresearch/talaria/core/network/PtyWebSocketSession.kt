@@ -125,18 +125,33 @@ class PtyWebSocketSession(
     }
 
     fun sendText(text: String) {
-        val payload = if (text.endsWith('\n')) text else text + '\n'
-        socket?.send(payload)
+        // The Hermes TUI reads the PTY in raw mode. Send the message body and
+        // the Enter key as SEPARATE frames: bundling "body\r" into one frame is
+        // seen as a bracketed paste (the \r lands as a literal newline in the
+        // input and nothing is submitted). A standalone \r frame reads as an
+        // Enter keypress, which is what actually submits the line — matching how
+        // xterm.js delivers a paste followed by the Enter key on the web dashboard.
+        val body = text.trimEnd('\n', '\r')
+        if (body.isNotEmpty()) socket?.send(body)
+        socket?.send("\r")
     }
 
     fun sendRaw(text: String) {
         socket?.send(text)
     }
 
+    private var lastResize: Pair<Int, Int>? = null
+
     fun resize(cols: Int, rows: Int) {
-        // Match dashboard xterm resize control used by ChatPage.
+        // Hermes' PTY writer consumes ONLY the `\x1b[RESIZE:cols;rows]` escape
+        // (see web_server.py `_RESIZE_RE`); any other frame — e.g. a JSON
+        // `{"type":"resize"}` — is written straight to the PTY and echoed back
+        // as garbage, flooding the transcript and corrupting typed input. Send
+        // just the escape, and only when the dimensions actually change so we
+        // don't spam the socket on every IME/layout tick.
+        if (lastResize == cols to rows) return
+        lastResize = cols to rows
         socket?.send("\u001b[RESIZE:$cols;$rows]")
-        socket?.send("""{"type":"resize","cols":$cols,"rows":$rows}""")
     }
 
     fun close() {

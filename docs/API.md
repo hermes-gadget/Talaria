@@ -28,20 +28,21 @@ Sidecar sockets stop when the process backgrounds (`HermesForegroundObserver`). 
 
 ## Implemented REST (UI wired)
 
-Status, sessions (+ search/prune/patch/delete/messages), config (+ schema/defaults), env, logs, analytics, cron CRUD/lifecycle, skills toggle, toolsets, MCP CRUD/test, messaging platforms update/test, pairing approve/revoke/clear-pending, webhooks create/enable/delete, profiles active get/set, system stats, portal/memory/curator, ops doctor/audit/backup, hermes update check, model info/options/set.
+Status, sessions (+ search/prune/patch/delete/messages), config (+ schema/defaults, enum dropdowns from `enum`/`choices`/`oneOf`, SAF file import + paste import + share export), env, logs, analytics, cron CRUD/lifecycle, skills toggle, toolsets, MCP CRUD/test, messaging platforms update/test, pairing approve/revoke/clear-pending (+ notification **Approve** action), webhooks create/enable/delete, profiles active get/set, system stats, portal/memory/curator, ops doctor/audit/backup, hermes update check, model info/options/set.
 
 ## Gaps / wontfix
 
+All remaining entries are blocked upstream or explicit non-goals — the `1.0.0` parity-freeze
+exit criteria ("Gaps table empty or wontfix-only") are met.
+
 | Area | Status |
 |------|--------|
-| Skills Hub install/uninstall API | Dashboard routes unstable — Custom Tabs docs fallback only |
-| MCP OAuth / catalog install | Blocked until upstream exposes stable flow |
-| Config enum dropdowns from schema `enum`/`oneOf` | Bool switches + text fields; enums still text |
-| Config SAF file import | Clipboard paste import; share export |
-| Pairing notification **Approve** action | Open deep link to Pairing screen; approve in-app |
-| Pixel xterm.js / VT emulator | Explicit non-goal — Compose Terminal + Reading modes |
-| `/api/files*` browser | Not exposed |
-| Dashboard plugins / themes | Out of scope |
-| OpenAI-compatible `/v1/chat/completions` | Not used |
+| Skills Hub install/uninstall API | **wontfix (blocked)** — dashboard routes unstable; Custom Tabs docs fallback only |
+| MCP OAuth / catalog install | **wontfix (blocked)** — until upstream exposes a stable flow |
+| Pixel xterm.js / VT emulator | **non-goal** — Compose Terminal + Reading modes instead |
+| `/api/files*` browser / share targets | **wontfix** — not exposed by the dashboard |
+| Dashboard plugins / themes | **non-goal** — out of scope for a remote client |
+| OpenAI-compatible `/v1/chat/completions` | **non-goal** — not used by the dashboard client |
+| On-device Whisper/Vosk STT module | **non-goal (by design)** — on-device `SpeechRecognizer` ships; heavier engines are opt-in, not in the default APK |
 
 When Hermes adds or renames endpoints, update `HermesApi.kt`, this file, and `BuildConfig.HERMES_API_BASELINE`.

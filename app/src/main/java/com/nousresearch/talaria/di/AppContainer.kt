@@ -56,5 +56,10 @@ class AppContainer(context: Context) {
     val notifier = TalariaNotifier(appContext, settingsStore)
     val speechCoordinator = SpeechCoordinator(appContext, settingsStore)
     val ttsSpeaker = TtsSpeaker(appContext, settingsStore)
-    val foregroundObserver = HermesForegroundObserver(eventClient, wsAuthHelper)
+    val foregroundObserver = HermesForegroundObserver(
+        eventClient,
+        wsAuthHelper,
+        hermesRepository,
+        connectionStore,
+    )
 }

@@ -16,8 +16,11 @@
 
 package com.nousresearch.talaria.feature.chat
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -29,29 +32,34 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -73,8 +81,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nousresearch.talaria.TalariaApp
@@ -97,28 +107,37 @@ fun ChatScreen(
     var expandedTool by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(resumeSessionId, hasConnection) {
-        if (!hasConnection) onNeedConnection() else vm.connect(resumeSessionId)
+        if (!hasConnection) onNeedConnection() else vm.ensureStarted(resumeSessionId)
     }
     LaunchedEffect(initialShare) {
         if (!initialShare.isNullOrBlank()) vm.updateDraft(initialShare)
     }
-    val displayLines = if (ui.transcriptMode == TranscriptMode.READING && ui.readingMessages.isNotEmpty()) {
-        ui.readingMessages
+    val active = ui.active
+    // Reading mode shows only the clean conversation (never the raw PTY/TUI dump).
+    val displayLines = if (ui.transcriptMode == TranscriptMode.READING) {
+        active?.readingMessages.orEmpty()
     } else {
-        ui.lines
+        active?.lines.orEmpty()
     }
-    LaunchedEffect(displayLines.size) {
+    LaunchedEffect(displayLines.size, ui.activeTabId) {
         if (displayLines.isNotEmpty()) listState.animateScrollToItem(displayLines.lastIndex)
     }
 
     val status = when {
-        ui.connecting -> "Connecting…"
-        ui.connected -> "Live · ${ui.modelLabel ?: "Hermes"}"
+        active?.connecting == true -> "Connecting…"
+        active?.connected == true -> buildString {
+            append("Live · ${active.modelLabel ?: "Hermes"}")
+            active.reasoningEffort?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+            active.approvalMode?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+            if (active.yolo) append(" · ⚡yolo")
+            active.totalTokens?.let { append(" · ${it} tok") }
+            active.costUsd?.let { append(" · $${"%.4f".format(it)}") }
+        }
         else -> "Disconnected"
     }
 
-    if (ui.prompt != null) {
-        val prompt = ui.prompt!!
+    if (active?.prompt != null) {
+        val prompt = active.prompt
         var clarifyText by remember(prompt.message) { mutableStateOf("") }
         val needsText = prompt.kind.name == "CLARIFY" || prompt.kind.name == "SUDO"
         AlertDialog(
@@ -162,20 +181,22 @@ fun ChatScreen(
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
-            TextButton(onClick = { vm.newChat() }, modifier = Modifier.padding(horizontal = 8.dp)) {
-                Text("New chat")
-            }
-            TextButton(onClick = { vm.refreshSessions() }, modifier = Modifier.padding(horizontal = 8.dp)) {
-                Text("Refresh")
+            Row(modifier = Modifier.padding(horizontal = 8.dp)) {
+                TextButton(onClick = { vm.newSession() }) { Text("New agent") }
+                TextButton(onClick = { vm.refreshSessions() }) { Text("Refresh") }
+                TextButton(onClick = {
+                    vm.toggleSessionRail(false)
+                    onOpenSessions()
+                }) { Text("All sessions") }
             }
             LazyColumn {
                 items(ui.sessions, key = { it.id }) { s ->
-                    val active = s.id == ui.resumeSessionId
+                    val isOpen = ui.tabs.any { it.liveSessionId == s.id || it.resumeSessionId == s.id }
                     ListItem(
                         headlineContent = {
                             Text(
-                                (s.title ?: s.preview ?: s.id.take(8)) + if (active) " · active" else "",
-                                color = if (active) MaterialTheme.colorScheme.primary
+                                (s.title ?: s.preview ?: s.id.take(8)) + if (isOpen) " · open" else "",
+                                color = if (isOpen) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurface,
                             )
                         },
@@ -221,27 +242,38 @@ fun ChatScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("Chat", style = MaterialTheme.typography.titleLarge)
+                        Text("Chat", style = MaterialTheme.typography.titleMedium)
                         Text(
                             status,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (active?.connected == true) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 },
                 actions = {
-                    AssistChip(
-                        onClick = { vm.toggleModelPicker() },
-                        label = { Text(ui.modelLabel?.take(18) ?: "Model") },
-                        leadingIcon = { Icon(Icons.Filled.SmartToy, contentDescription = null) },
-                    )
-                    IconButton(onClick = { vm.newChat() }) {
-                        Icon(Icons.Filled.Add, contentDescription = "New chat")
+                    val reading = ui.transcriptMode == TranscriptMode.READING
+                    IconButton(onClick = {
+                        vm.setTranscriptMode(
+                            if (reading) TranscriptMode.TERMINAL else TranscriptMode.READING,
+                        )
+                    }) {
+                        Icon(
+                            if (reading) Icons.Filled.Terminal else Icons.AutoMirrored.Filled.Article,
+                            contentDescription = if (reading) "Terminal view" else "Reading view",
+                        )
+                    }
+                    IconButton(onClick = { vm.toggleModelPicker() }) {
+                        Icon(Icons.Filled.SmartToy, contentDescription = "Change model")
                     }
                     IconButton(onClick = { vm.toggleSessionRail() }) {
-                        Icon(Icons.Filled.History, contentDescription = "Session rail")
+                        Icon(Icons.Filled.History, contentDescription = "Sessions")
                     }
-                    TextButton(onClick = onOpenSessions) { Text("All") }
                 },
                 windowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout),
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -279,10 +311,17 @@ fun ChatScreen(
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(
-                            value = ui.draft,
+                            value = active?.draft.orEmpty(),
                             onValueChange = vm::updateDraft,
                             modifier = Modifier.weight(1f),
-                            placeholder = { Text("Message Hermes (/ for commands)") },
+                            placeholder = {
+                                Text(
+                                    "Message Hermes…",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            shape = MaterialTheme.shapes.large,
                             maxLines = 4,
                         )
                         Spacer(Modifier.width(4.dp))
@@ -294,7 +333,7 @@ fun ChatScreen(
                         }
                         FilledIconButton(
                             onClick = { vm.send() },
-                            enabled = ui.connected && ui.draft.isNotBlank(),
+                            enabled = active?.connected == true && !active.draft.isBlank(),
                         ) {
                             Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                         }
@@ -314,19 +353,14 @@ fun ChatScreen(
                     if (cols > 0 && rows > 0) vm.resizePty(cols, rows)
                 },
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = ui.transcriptMode == TranscriptMode.TERMINAL,
-                    onClick = { vm.setTranscriptMode(TranscriptMode.TERMINAL) },
-                    label = { Text("Terminal") },
-                )
-                FilterChip(
-                    selected = ui.transcriptMode == TranscriptMode.READING,
-                    onClick = { vm.setTranscriptMode(TranscriptMode.READING) },
-                    label = { Text("Reading") },
-                )
-            }
-            ui.error?.let {
+            SessionTabStrip(
+                tabs = ui.tabs,
+                activeTabId = ui.activeTabId,
+                onSelect = { vm.switchTab(it) },
+                onClose = { vm.closeTab(it) },
+                onAdd = { vm.newSession() },
+            )
+            active?.error?.let {
                 Text(
                     it,
                     color = MaterialTheme.colorScheme.error,
@@ -334,9 +368,9 @@ fun ChatScreen(
                     modifier = Modifier.padding(vertical = 4.dp),
                 )
             }
-            if (ui.tools.isNotEmpty()) {
+            if (active?.tools?.isNotEmpty() == true) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(vertical = 4.dp)) {
-                    ui.tools.take(5).forEach { tool ->
+                    active.tools.take(5).forEach { tool ->
                         ToolCallCard(tool, expanded = expandedTool == tool.id) {
                             expandedTool = if (expandedTool == tool.id) null else tool.id
                         }
@@ -349,6 +383,20 @@ fun ChatScreen(
                 contentPadding = PaddingValues(vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (displayLines.isEmpty()) {
+                    item {
+                        Text(
+                            if (ui.transcriptMode == TranscriptMode.READING) {
+                                "No messages yet — say hello to Hermes."
+                            } else {
+                                "Waiting for terminal output…"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(16.dp),
+                        )
+                    }
+                }
                 items(displayLines, key = { it.id }) { line ->
                     val mine = line.role == "user"
                     Surface(
@@ -375,6 +423,63 @@ fun ChatScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+/** One tab per running Hermes agent, with a live status dot and a close affordance. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SessionTabStrip(
+    tabs: List<ChatTab>,
+    activeTabId: String?,
+    onSelect: (String) -> Unit,
+    onClose: (String) -> Unit,
+    onAdd: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        val effectiveActive = activeTabId ?: tabs.firstOrNull()?.id
+        tabs.forEach { tab ->
+            val dotColor = when {
+                tab.connected -> MaterialTheme.colorScheme.primary
+                tab.connecting -> MaterialTheme.colorScheme.tertiary
+                else -> MaterialTheme.colorScheme.outline
+            }
+            InputChip(
+                selected = tab.id == effectiveActive,
+                onClick = { onSelect(tab.id) },
+                label = { Text(tab.title, maxLines = 1) },
+                leadingIcon = {
+                    Box(
+                        Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(dotColor),
+                    )
+                },
+                trailingIcon = if (tabs.size > 1) {
+                    {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "Close ${tab.title}",
+                            modifier = Modifier
+                                .size(18.dp)
+                                .clickable { onClose(tab.id) },
+                        )
+                    }
+                } else {
+                    null
+                },
+            )
+        }
+        IconButton(onClick = onAdd) {
+            Icon(Icons.Filled.Add, contentDescription = "New agent")
         }
     }
 }

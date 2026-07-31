@@ -23,8 +23,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
 /**
- * Full Material 3 type scale. Display/title use a distinctive serif;
- * body uses sans-serif; labels use monospace for agent/terminal affinity.
+ * Full Material 3 type scale. Display/headline use a distinctive serif for a
+ * branded, editorial feel; titles, body, and labels use a clean sans-serif so
+ * buttons, chips, and tabs read as modern (not terminal). Genuinely monospace
+ * surfaces — the chat Terminal view, logs, code — opt in locally.
  */
 val TalariaTypography = Typography(
     displayLarge = TextStyle(
@@ -69,6 +71,7 @@ val TalariaTypography = Typography(
         fontWeight = FontWeight.SemiBold,
         fontSize = 22.sp,
         lineHeight = 28.sp,
+        letterSpacing = (-0.2).sp,
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
@@ -106,24 +109,24 @@ val TalariaTypography = Typography(
         letterSpacing = 0.4.sp,
     ),
     labelLarge = TextStyle(
-        fontFamily = FontFamily.Monospace,
-        fontWeight = FontWeight.Medium,
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.SemiBold,
         fontSize = 14.sp,
         lineHeight = 20.sp,
         letterSpacing = 0.1.sp,
     ),
     labelMedium = TextStyle(
-        fontFamily = FontFamily.Monospace,
+        fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Medium,
         fontSize = 12.sp,
         lineHeight = 16.sp,
-        letterSpacing = 0.5.sp,
+        letterSpacing = 0.4.sp,
     ),
     labelSmall = TextStyle(
-        fontFamily = FontFamily.Monospace,
+        fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Medium,
         fontSize = 11.sp,
         lineHeight = 16.sp,
-        letterSpacing = 0.5.sp,
+        letterSpacing = 0.4.sp,
     ),
 )
