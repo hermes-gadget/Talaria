@@ -1,6 +1,6 @@
-# Talaria roadmap — Web Dashboard parity
+# Talaria roadmap — Web Dashboard + Hermes Desktop parity
 
-Goal: make Talaria feel like a first-class mobile client for the [Hermes Agent Web Dashboard](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard) — every major page and workflow, adapted for touch, offline, and battery — while staying a remote client (no embedded Python runtime).
+Goal: make Talaria feel like a first-class mobile client for the [Hermes Agent Web Dashboard](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard) and the [Hermes Desktop app](https://hermes-agent.nousresearch.com/docs/developer-guide/desktop-plugin-sdk) — every major page and workflow, adapted for touch, offline, and battery — while staying a remote client (no embedded Python runtime).
 
 **Current baseline:** Talaria `1.0.0` (parity freeze) · Hermes API `dashboard-v0.17+`  
 **Contract sources:** `docs/API.md`, upstream `web/src/lib/api.ts`, `hermes_cli/web_server.py`, dashboard docs.
@@ -553,6 +553,7 @@ Phase 0
 - [x] 0.2 Global profile switcher + banner
 - [x] 0.3 Typed models + fixtures
 - [x] 0.4 /api/ws + /api/events clients
+  (auto-reconnect with fresh WS tickets + backoff — added 2026-08)
 
 Phase 1 Chat
 - [x] 1.1 channel + sidecar wiring
@@ -569,6 +570,8 @@ Phase 2–3 Overview & Sessions
 - [x] 2.2 Activity from real signals
 - [x] 3.1 filters/search/stats
 - [x] 3.2 rich session detail
+  (markdown messages, role colors, collapsible tool JSON, LIVE chip + token
+  counts in header — added 2026-08)
 - [x] 3.3 rename/export/delete/prune
 
 Phase 4–7 Config → Cron
@@ -582,6 +585,7 @@ Phase 8–11 Extensibility & admin
 - [x] 8.x skills + toolsets + Hub
 - [x] 9.x MCP CRUD + test
 - [x] 10.x channels forms, pairing polish, webhooks wizard
+  (webhook url/secret copy-to-clipboard + one-time secret card — added 2026-08)
 - [x] 11.x profiles + system/doctor/portal/memory
 
 Phase 12 Auth polish
@@ -639,6 +643,194 @@ already receiving but discarding. All items verified on-device against a running
 - Backend slash-command discovery — no RPC method (`commands.list`/`slash.list` → unknown method);
   Chat keeps `SlashCommands.defaults`.
 - Live log streaming — no upstream event stream; Logs polls into the virtualized list.
+
+---
+
+## Phase 15 — Hermes Desktop parity & beyond (post-1.0.0)
+
+Reference: `NousResearch/hermes-agent/apps/desktop` (routes, panes, settings). API grounding verified against `hermes_cli/web_server.py` (2026-08): `/api/fs/*`, `/api/files/*`, `/api/media`, `/api/chat/image-upload`, `/api/audio/*`, `/api/learning/*`, `/api/ops/*`, `/api/gateway/drain`.
+
+### Snapshot — where Talaria stands vs the Desktop app
+
+| Desktop surface | Talaria today | Item |
+|-----------------|---------------|------|
+| Chat composer (images, rich input) | Text + voice only | 15.2 |
+| Files pane (`/api/fs`) | Missing | 15.1 |
+| Artifacts page | Missing | 15.3 |
+| Starmap (learning graph) | Missing | 15.4 |
+| Command center (usage + maintenance) | Analytics only | 15.5 |
+| Agents / subagent monitoring | Missing | 15.6 |
+| Command palette (⌘K) | Missing | 15.7 |
+| Multi-profile live streaming | Single profile at a time | 15.8 |
+| Quick entry + floating HUD | Notification reply only | 15.9 |
+| Server voice (TTS/STT) | On-device STT only | 15.10 |
+| System ops (drain, prompt-size, debug-share) | Partial | 15.11 |
+| Model management (visibility, fallbacks, endpoints) | Schema editor only | 15.12 |
+| Terminal pane | PTY text view | 15.13 |
+| Keybinds / themes / i18n | System theme; no i18n | 15.14 |
+
+### 15.1 Files pane (`API-ready`)
+
+**Why:** Desktop's Files pane browses the host tree; it is the most-used surface after chat for verifying agent work.
+
+**Done when:** Tree browser over `/api/fs/list` + `/api/fs/read-text` + `/api/fs/git-root`; text preview, share sheet, SAF download; upload to cwd via `/api/files/upload`; "open in Files" from Artifacts/Status.
+
+**How:**
+1. `HermesApi`: `fsList`, `fsReadText`, `fsGitRoot`, `fsDefaultCwd`, `filesUpload` (Retrofit multipart).
+2. `FilesViewModel`: lazy tree state, breadcrumb path, text preview cache, upload queue.
+3. Compose: two-pane list/preview (`ModalNavigationDrawer`-style), path bar with cwd badge from `default-cwd`.
+4. Test: decode `fs/list` fixture; path traversal guard test.
+
+### 15.2 Attach images in chat (`Missing`)
+
+**Why:** Desktop composer sends images (`/api/chat/image-upload` + `/api/media`); mobile users expect camera/gallery attach.
+
+**Done when:** Gallery/camera pick → upload → inline thumbnail in transcript; assistant messages with media refs render images; tap = full-screen viewer.
+
+**How:**
+1. `HermesApi`: `chatImageUpload` (multipart), `mediaFetch` (auth'd `GET /api/media`).
+2. `ChatViewModel`: attach state, upload progress, `image_upload` sidecar event handling.
+3. Compose: picker row in composer, `AsyncImage` thumbnails, viewer dialog (pinch zoom).
+4. Better-than-desktop: direct camera capture + share-to-chat intent filter.
+
+### 15.3 Artifacts browser (`Missing`)
+
+**Why:** Desktop's Artifacts page lists files the agent produced; on mobile this is the fastest way to grab screenshots/reports.
+
+**Done when:** Artifacts grid via `/api/fs` on the artifacts dir (HERMES_HOME/artifacts); image/PDF/HTML preview via `/api/media`; share + save-to-device; refresh + "new" badge.
+
+**How:**
+1. Resolve artifacts dir: `fsGitRoot`-style probe of `HERMES_HOME/artifacts` (fallback: `fsDefaultCwd` scan for `artifacts/`).
+2. `ArtifactsViewModel`: flat list + grid, mtime sort, thumbnail cache (LRU).
+3. Compose: gallery grid (StaggeredGrid), preview screen, share sheet.
+4. Test: fs-list fixture decode; thumbnail cache eviction unit test.
+
+### 15.4 Learning graph / Starmap (`API-ready`)
+
+**Why:** Desktop's Starmap visualizes what Hermes learned (`/api/learning/graph` + `/api/learning/node`); mobile canvas is a natural fit.
+
+**Done when:** Graph fetch → radial-time render (Canvas), node tap → detail sheet (PUT/DELETE node via existing endpoints), pasted share-code import.
+
+**How:**
+1. `HermesApi`: `learningGraph`, `learningNode`, `updateLearningNode`, `deleteLearningNode`.
+2. `LearningViewModel`: node/edge caching, share-code encode/decode.
+3. Compose: `Canvas` radial layout (port of `starmap/geometry.ts`), scrubber + legend, pinch zoom.
+4. Test: geometry port unit tests (ported from desktop `starmap` tests where present).
+
+### 15.5 Command center: usage + maintenance (`Partial`)
+
+**Why:** Desktop's command center separates Usage (live list, debounced search) from Maintenance (memory files, cache ops). Talaria's Analytics shows totals only.
+
+**Done when:** Usage tab = per-session/per-model rows w/ search + date filter; Maintenance tab = memory file browse + ops (`/api/ops/prompt-size`, `/api/ops/debug-share`) + cache prune where API allows.
+
+**How:**
+1. Extend `HermesApi` with `opsPromptSize`, `opsDebugShare`.
+2. `CommandCenterViewModel`: usage aggregation from `/api/analytics` + sessions; maintenance ops.
+3. Compose: tabbed page (Usage / Maintenance), `LazyColumn` rows, debounced search field.
+4. Test: usage aggregation unit tests.
+
+### 15.6 Subagent monitoring (`Missing`)
+
+**Why:** Desktop's Agents view shows spawned subagents live (status dots, streams). Users want to watch delegation from their pocket.
+
+**Done when:** Subagent rows from session tree + sidecar events (`agent.spawn`/`agent.done` frames); status dot (running/done/failed); tap → transcript; optional push when a delegation finishes.
+
+**How:**
+1. Extend `SidecarFrameParser` with agent lifecycle frames (verify upstream event names first).
+2. `AgentsViewModel`: live map of subagents (id → status), merged with `/api/sessions` tree.
+3. Compose: Agents page (route + nav row), status-dot rows, stream preview.
+4. Better-than-desktop: finish-notification via `TalariaNotifier`.
+
+### 15.7 Global command palette (`Mobile-adapt`)
+
+**Why:** Desktop ⌘K is the fastest way anywhere; phones need the same muscle memory.
+
+**Done when:** Palette sheet from anywhere (edge swipe / FAB / long-press app icon): search + run — open screen, switch profile, jump to session, run system action; recent actions first.
+
+**How:**
+1. `CommandPaletteState`: action registry (screens, profiles, sessions, ops), fuzzy filter, recents (Room table).
+2. Compose: full-screen sheet, haptic on pick, deep links (`talaria://<screen>`).
+3. Better-than-desktop: app-icon shortcut menu (Android ShortcutManager) for top 4 actions.
+
+### 15.8 Multi-profile live streaming (`Partial`)
+
+**Why:** Desktop keeps background profiles streaming and merges lists; Talaria stops the sidecar on switch.
+
+**Done when:** One sidecar per profile (bounded pool, e.g. 3), merged session list with profile tag, tap row = foreground switch; stopped sidecars reconnect on foreground.
+
+**How:**
+1. `ProfileSidecarPool`: N `HermesEventClient`s keyed by profile; lifecycle on app foreground/background.
+2. Merge in `SessionsViewModel` + `ActivityViewModel` (profile tag on rows).
+3. Compose: profile chip on session rows; switch = `ProfileSwitcherBar` behavior, no full reconnect.
+4. Test: pool eviction + merge unit tests.
+
+### 15.9 Quick-entry widget + PiP chat (`Mobile-adapt` — better than desktop)
+
+**Why:** Desktop's quick entry + floating HUD; a phone can beat it: type into the agent from the home screen, or float the chat over any app.
+
+**Done when:** Glance widget gains a text input (quick entry → new session); Picture-in-Picture mode floats the active chat (PiP button in chat top bar); PiP shows streaming text + mic.
+
+**How:**
+1. Widget: `RemoteViews` input (Glance action → WorkManager → PTY send to last session; create if none).
+2. PiP: `PictureInPictureParams` on ChatScreen; `RemoteAction`s (mic, close); stream renders into PiP surface via sidecar events.
+3. Test: widget action → session-create unit test; PiP eligibility check on devices.
+
+### 15.10 Server voice (`Partial`)
+
+**Why:** `/api/audio/speak` + `/api/audio/transcribe` + `/api/audio/elevenlabs/voices` exist; desktop plays assistant audio. On-device STT is done; server TTS opens ElevenLabs-quality replies.
+
+**Done when:** Assistant replies can render as audio attachments (`/api/audio/speak`, voice picker); server-transcribe fallback when on-device STT missing.
+
+**How:**
+1. `HermesApi`: `audioSpeak`, `audioTranscribe`, `elevenlabsVoices`.
+2. `AudioPlayer` (Media3) + voice picker in Settings → Voice.
+3. Compose: audio bubble in transcript (play/pause, duration); long-press reply → "Play aloud".
+4. Test: bubble state machine unit tests.
+
+### 15.11 System ops (`Partial`)
+
+**Why:** Desktop exposes gateway drain + ops; support/debug workflows need them on the go.
+
+**Done when:** System screen gains: gateway drain, `/api/ops/prompt-size` checker, debug-share (copies a shareable bundle link/JSON).
+
+**How:**
+1. `HermesApi`: `gatewayDrain`, `opsPromptSize`, `opsDebugShare`.
+2. SystemViewModel actions with confirm dialogs (drain warns like restart).
+3. Compose: rows in System screen; share sheet for debug bundle.
+
+### 15.12 Model management (`Partial`)
+
+**Why:** Desktop settings manage providers, fallback models, visibility, custom endpoints; the schema editor exposes the fields but curated forms beat raw JSON on mobile.
+
+**Done when:** Models screen: provider list (enabled/disabled), per-model fallback chain editor, visibility toggle (hide from picker), custom-endpoint CRUD — all via config schema PUT + `/api/model/*`.
+
+**How:**
+1. Map schema paths: `providers.*`, `models.fallback`, custom endpoints keys (re-check schema).
+2. `ModelsViewModel`: read/merge/write with schema validation (reuse ConfigScreen save path).
+3. Compose: grouped forms with switches + reorderable fallback list.
+4. Test: schema round-trip tests (existing fixture coverage extended).
+
+### 15.13 Terminal pane (`Partial`)
+
+**Why:** Desktop ships a real terminal pane; Talaria's PTY view is text-only.
+
+**Done when:** Terminal view gains: font size control, copy/paste (select mode), send-interrupt key row, and (where the backend supports it) alternate-screen-aware rendering.
+
+**How:**
+1. Extend `PtyWebSocketSession` output handling for terminal controls.
+2. Compose: selectable text + action bar (copy, interrupt `\x03`, clear).
+3. Test: ANSI control parsing (extend `AnsiStripper` tests).
+
+### 15.14 Keybinds / themes / i18n (`Missing` — low priority)
+
+**Why:** Desktop has rebindable keybinds, multiple themes, ja/en i18n; a phone mostly needs theme + locale.
+
+**Done when:** Material You dynamic color toggle; light/dark/auto; `strings.xml` restructure for future locales (en baseline); hardware-keyboard shortcuts for palette + send.
+
+**How:**
+1. Theme: dynamic color option in Settings → Appearance.
+2. i18n: extract all user-facing strings to resources (en only for now; structure ready).
+3. Keybinds: `onPreviewKeyEvent` for connected keyboards (palette, new chat, send).
 
 ---
 
