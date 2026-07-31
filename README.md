@@ -63,6 +63,7 @@ app/src/main/java/com/nousresearch/talaria/
 ## Docs
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — layers, auth, chat transport, notifications
+- [ROADMAP.md](ROADMAP.md) — step-by-step path to full Web Dashboard parity
 - [SETUP.md](SETUP.md) — SDK, signing, Hermes server tips
 - [PRIVACY.md](PRIVACY.md) — data handling & telemetry stance
 - [CONTRIBUTING.md](CONTRIBUTING.md) — development workflow
