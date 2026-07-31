@@ -17,6 +17,7 @@
 
 package com.nousresearch.talaria.core.data.repo
 
+import android.content.Context
 import com.nousresearch.talaria.core.data.db.ActivityEventEntity
 import com.nousresearch.talaria.core.data.db.CachedMessageEntity
 import com.nousresearch.talaria.core.data.db.CachedSessionEntity
@@ -44,6 +45,7 @@ import com.nousresearch.talaria.domain.model.WebhookRoute
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -58,6 +60,7 @@ class HermesRepository(
     private val clientFactory: HermesClientFactory,
     private val db: TalariaDatabase,
     private val connectionStore: SecureConnectionStore,
+    private val appContext: Context? = null,
 ) {
     private val json = JsonConfig.json
     private fun connId() = connectionStore.activeProfile()?.id ?: "none"
@@ -168,8 +171,56 @@ class HermesRepository(
     }
 
     suspend fun getEnv(): Result<Map<String, EnvVarInfo>> = withContext(Dispatchers.IO) {
-        runCatching { api().getEnv() }
+        runCatching {
+            val live = api().getEnv()
+            mergeEnvCatalog(live)
+        }
     }
+
+    /** Merge bundled `env_catalog.json` metadata with live `/api/env` set/redacted state. */
+    private fun mergeEnvCatalog(live: Map<String, EnvVarInfo>): Map<String, EnvVarInfo> {
+        val ctx = appContext ?: return live
+        val catalog = runCatching {
+            ctx.assets.open("env_catalog.json").bufferedReader().use { it.readText() }
+                .let { json.decodeFromString<EnvCatalogFile>(it) }
+        }.getOrNull() ?: return live
+        val out = linkedMapOf<String, EnvVarInfo>()
+        for (group in catalog.groups) {
+            for (entry in group.keys) {
+                val existing = live[entry.key]
+                out[entry.key] = EnvVarInfo(
+                    key = entry.key,
+                    is_set = existing?.is_set,
+                    redacted_value = existing?.redacted_value,
+                    description = entry.description ?: existing?.description,
+                    category = group.title,
+                    url = entry.url ?: existing?.url,
+                    advanced = entry.advanced ?: existing?.advanced,
+                )
+            }
+        }
+        // Preserve any live keys not in the catalog.
+        live.forEach { (k, v) -> if (k !in out) out[k] = v }
+        return out
+    }
+
+    @Serializable
+    private data class EnvCatalogFile(val groups: List<EnvCatalogGroup> = emptyList())
+
+    @Serializable
+    private data class EnvCatalogGroup(
+        val id: String? = null,
+        val title: String = "General",
+        val keys: List<EnvCatalogKey> = emptyList(),
+    )
+
+    @Serializable
+    private data class EnvCatalogKey(
+        val key: String,
+        val description: String? = null,
+        val url: String? = null,
+        val advanced: Boolean? = null,
+    )
 
     suspend fun setEnv(key: String, value: String): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {

@@ -15,14 +15,17 @@
  */
 package com.nousresearch.talaria.feature.manage.cron
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -63,7 +66,22 @@ fun CronScreen() {
 
     ScreenScaffold("Cron", "Scheduled automations") {
         OutlinedTextField(prompt, { prompt = it }, label = { Text("Prompt") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(schedule, { schedule = it }, label = { Text("Schedule") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(schedule, { schedule = it }, label = { Text("Schedule (cron)") }, modifier = Modifier.fillMaxWidth())
+        Row(modifier = Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp)) {
+            listOf(
+                "Every 15m" to "*/15 * * * *",
+                "Hourly" to "0 * * * *",
+                "Daily 9:00" to "0 9 * * *",
+                "Weekdays 9:00" to "0 9 * * 1-5",
+            ).forEach { (label, cron) ->
+                FilterChip(
+                    selected = schedule == cron,
+                    onClick = { schedule = cron },
+                    label = { Text(label) },
+                    modifier = Modifier.padding(end = 4.dp),
+                )
+            }
+        }
         Button(onClick = {
             scope.launch {
                 repo.createCron(prompt, schedule, null, "local")
@@ -85,6 +103,11 @@ fun CronScreen() {
                         Text(job.name ?: job.id, style = MaterialTheme.typography.titleLarge)
                         Text(job.prompt ?: "")
                         Text("${job.schedule} · ${job.state} · ${job.deliver}")
+                        Text(
+                            "last=${job.last_run ?: "—"} · next=${job.next_run ?: "—"}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         Row {
                             TextButton(onClick = {
                                 editJob = job

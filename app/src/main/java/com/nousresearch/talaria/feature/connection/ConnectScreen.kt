@@ -17,6 +17,8 @@
 
 package com.nousresearch.talaria.feature.connection
 
+import android.net.Uri
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,12 +40,14 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nousresearch.talaria.domain.model.AuthMode
@@ -53,11 +57,17 @@ import com.nousresearch.talaria.ui.components.ScreenScaffold
 @Composable
 fun ConnectScreen(
     onConnected: () -> Unit,
+    initialProfile: String? = null,
     vm: ConnectViewModel = viewModel(factory = ConnectViewModel.factory()),
 ) {
     val ui by vm.ui.collectAsState()
     val profiles by vm.profiles.collectAsState()
     var authExpanded by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    LaunchedEffect(initialProfile) {
+        vm.applyDeepLinkProfile(initialProfile)
+    }
 
     ScreenScaffold(
         title = "Talaria",
@@ -138,6 +148,19 @@ fun ConnectScreen(
                     label = { Text("Bearer token") },
                     modifier = Modifier.fillMaxWidth(),
                 )
+            }
+            if (ui.authMode == AuthMode.OIDC_BROWSER) {
+                Text(
+                    "Opens the dashboard login in a Custom Tab. After the browser redirects to talaria://, cookies are kept in the app jar — then Save & connect. If login doesn’t round-trip, paste a session token under SESSION_TOKEN instead.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedButton(
+                    onClick = {
+                        CustomTabsIntent.Builder().build()
+                            .launchUrl(context, Uri.parse(vm.portalLoginUrl()))
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Open portal login") }
             }
             OutlinedTextField(
                 value = ui.managementProfile,

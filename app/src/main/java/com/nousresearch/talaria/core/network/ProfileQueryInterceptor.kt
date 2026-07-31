@@ -49,6 +49,8 @@ class ProfileQueryInterceptor(
             "/api/tools/toolsets", "/api/config", "/api/env", "/api/mcp",
             "/api/messaging/platforms", "/api/model/", "/api/pairing",
             "/api/sessions", "/api/logs", "/api/memory", "/api/portal",
+            "/api/cron", "/api/webhooks", "/api/ops", "/api/hermes",
+            "/api/curator", "/api/system",
         )
     }
 }

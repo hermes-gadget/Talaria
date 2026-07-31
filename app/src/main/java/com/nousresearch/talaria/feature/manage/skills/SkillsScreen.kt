@@ -15,6 +15,8 @@
  */
 package com.nousresearch.talaria.feature.manage.skills
 
+import android.net.Uri
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,6 +27,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Switch
@@ -42,6 +45,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.domain.model.SkillInfo
@@ -52,6 +56,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun SkillsScreen() {
     val repo = TalariaApp.instance.container.hermesRepository
+    val context = LocalContext.current
     var skills by remember { mutableStateOf<List<SkillInfo>>(emptyList()) }
     var toolsets by remember { mutableStateOf<List<ToolsetInfo>>(emptyList()) }
     var tab by remember { mutableIntStateOf(0) }
@@ -92,16 +97,37 @@ fun SkillsScreen() {
 
     ScreenScaffold("Skills", "Skills & toolsets", actions = {
         TextButton(onClick = {
-            if (tab == 0) reloadSkills() else reloadToolsets()
+            when (tab) {
+                0 -> reloadSkills()
+                1 -> reloadToolsets()
+                else -> Unit
+            }
         }) { Text("Refresh") }
     }) {
         PrimaryTabRow(selectedTabIndex = tab) {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Skills") })
             Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Toolsets") })
+            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Hub") })
         }
         message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
-        if (tab == 0) {
+        if (tab == 2) {
+            Text(
+                "Hermes Skills Hub install APIs are not stable in the dashboard yet. " +
+                    "Browse docs in a Custom Tab, then install skills on the host.",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(vertical = 12.dp),
+            )
+            OutlinedButton(
+                onClick = {
+                    CustomTabsIntent.Builder().build().launchUrl(
+                        context,
+                        Uri.parse("https://hermes-agent.nousresearch.com/docs/user-guide/features/skills"),
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Browse Skills Hub docs") }
+        } else if (tab == 0) {
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },

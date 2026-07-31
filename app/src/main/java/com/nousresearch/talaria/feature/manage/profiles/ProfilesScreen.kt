@@ -84,11 +84,16 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
                 message?.let {
                     Text(it, color = MaterialTheme.colorScheme.secondary)
                 }
+                Text(
+                    "Gateway processes stay per-profile on the host — switching here scopes Manage/Chat API calls.",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
                 if (onShortcut != null) {
                     Row(modifier = Modifier.padding(bottom = 8.dp)) {
-                        OutlinedButton(onClick = { onShortcut("status") }) { Text("Status") }
+                        OutlinedButton(onClick = { onShortcut("skills") }) { Text("Manage skills") }
+                        OutlinedButton(onClick = { onShortcut("config") }) { Text("Open config") }
                         OutlinedButton(onClick = { onShortcut("sessions") }) { Text("Sessions") }
-                        OutlinedButton(onClick = { onShortcut("config") }) { Text("Config") }
                     }
                 }
                 OutlinedButton(onClick = { switchActive("") }) {
@@ -113,6 +118,18 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
                                 )
                                 Button(onClick = { switchActive(p.name) }) {
                                     Text(if (p.is_active == true) "Active · switch local" else "Switch active")
+                                }
+                                if (onShortcut != null) {
+                                    Row {
+                                        TextButton(onClick = {
+                                            switchActive(p.name)
+                                            onShortcut("skills")
+                                        }) { Text("Manage skills") }
+                                        TextButton(onClick = {
+                                            switchActive(p.name)
+                                            onShortcut("config")
+                                        }) { Text("Open config") }
+                                    }
                                 }
                             }
                         }

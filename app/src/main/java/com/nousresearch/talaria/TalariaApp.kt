@@ -30,6 +30,7 @@ class TalariaApp : Application() {
         container = AppContainer(this)
         NotificationChannels.ensure(this)
         SyncScheduler.ensurePeriodic(this)
+        container.foregroundObserver.install()
     }
 
     companion object {

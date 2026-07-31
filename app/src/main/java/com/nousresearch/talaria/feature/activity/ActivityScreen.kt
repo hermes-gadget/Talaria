@@ -16,6 +16,7 @@
 
 package com.nousresearch.talaria.feature.activity
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -50,7 +51,7 @@ private enum class ActivityFilter(val label: String, val match: (String) -> Bool
 }
 
 @Composable
-fun ActivityScreen() {
+fun ActivityScreen(onOpen: ((String) -> Unit)? = null) {
     val events by TalariaApp.instance.container.hermesRepository.observeActivity()
         .collectAsState(initial = emptyList())
     var filter by remember { mutableStateOf(ActivityFilter.All) }
@@ -77,7 +78,13 @@ fun ActivityScreen() {
             LazyColumn {
                 items(filtered, key = { it.id }) { e ->
                     Surface(
-                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .then(
+                                if (onOpen != null) Modifier.clickable { onOpen(e.type) }
+                                else Modifier,
+                            ),
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
                         shape = MaterialTheme.shapes.medium,
                     ) {

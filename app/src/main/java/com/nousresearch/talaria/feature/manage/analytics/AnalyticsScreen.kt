@@ -136,10 +136,44 @@ fun AnalyticsScreen() {
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    } else {
+                        Text(
+                            "No usage yet for this window.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    val modelLines = parseModelBreakdown(a.models)
+                    if (modelLines.isNotEmpty()) {
+                        Text("By model / provider", style = MaterialTheme.typography.titleMedium)
+                        modelLines.forEach { line ->
+                            Text(line, style = MaterialTheme.typography.bodyMedium)
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+private fun parseModelBreakdown(models: kotlinx.serialization.json.JsonElement?): List<String> {
+    if (models == null) return emptyList()
+    return when (models) {
+        is kotlinx.serialization.json.JsonArray -> models.mapNotNull { el ->
+            val obj = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull el.toString()
+            val name = obj["name"]?.toString()?.trim('"')
+                ?: obj["model"]?.toString()?.trim('"')
+                ?: obj["provider"]?.toString()?.trim('"')
+                ?: "model"
+            val tokens = obj["tokens"]?.toString()?.trim('"')
+                ?: obj["total_tokens"]?.toString()?.trim('"')
+            val cost = obj["cost"]?.toString()?.trim('"')
+            listOfNotNull(name, tokens?.let { "$it tok" }, cost?.let { "\$$it" }).joinToString(" · ")
+        }
+        is kotlinx.serialization.json.JsonObject -> models.entries.map { (k, v) ->
+            "$k: $v"
+        }
+        else -> listOf(models.toString())
     }
 }
 

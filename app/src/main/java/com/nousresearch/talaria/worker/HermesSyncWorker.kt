@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 package com.nousresearch.talaria.worker
 
 import android.content.Context
@@ -39,15 +38,27 @@ class HermesSyncWorker(
             val gatewayRunning = snap.status.gateway?.running
             if (gatewayRunning == false) {
                 container.notifier.notifyGateway("Gateway stopped", "Hermes gateway is not running")
-            }
-            snap.pairing?.pending?.forEach { p ->
-                container.notifier.notifyPairing(
-                    "Pairing request",
-                    "${p.platform}: ${p.user_name ?: p.user_id}",
+                container.hermesRepository.recordActivity(
+                    "gateway",
+                    "Gateway stopped",
+                    "Hermes gateway is not running (pid=${snap.status.gateway?.pid})",
+                )
+            } else if (gatewayRunning == true) {
+                container.hermesRepository.recordActivity(
+                    "gateway",
+                    "Gateway running",
+                    "pid=${snap.status.gateway?.pid} state=${snap.status.gateway?.state}",
                 )
             }
+            snap.pairing?.pending?.forEach { p ->
+                val body = "${p.platform}: ${p.user_name ?: p.user_id}"
+                container.notifier.notifyPairing("Pairing request", body)
+                container.hermesRepository.recordActivity("pairing", "Pairing request", body)
+            }
             snap.cron.filter { it.state.equals("error", ignoreCase = true) }.forEach {
-                container.notifier.notifyCron("Cron error", it.name ?: it.id)
+                val body = it.name ?: it.id
+                container.notifier.notifyCron("Cron error", body)
+                container.hermesRepository.recordActivity("cron", "Cron error", body)
             }
             container.hermesRepository.recordActivity(
                 "sync",
@@ -57,6 +68,7 @@ class HermesSyncWorker(
             Result.success()
         } catch (t: Throwable) {
             container.notifier.notifyError("Sync failed", t.message ?: "unknown")
+            container.hermesRepository.recordActivity("sync", "Sync failed", t.message ?: "unknown")
             Result.retry()
         }
     }

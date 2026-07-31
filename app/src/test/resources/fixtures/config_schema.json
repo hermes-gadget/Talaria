@@ -1,0 +1,1 @@
+{"fields":{"model.default":{"type":"string","description":"Default model","category":"model"},"agent.verbose":{"type":"boolean","category":"agent"}},"category_order":["model","agent"]}

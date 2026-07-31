@@ -85,11 +85,19 @@ fun TalariaNavRoot(
             onShareConsumed()
         }
     }
+    var connectProfile by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(deepLink) {
         val link = deepLink ?: return@LaunchedEffect
         when {
             link.contains("pairing") -> navController.navigate(Routes.PAIRING)
-            link.contains("connect") -> navController.navigate(Routes.CONNECT)
+            link.contains("connect") -> {
+                val profile = link.substringAfter("profile=", "")
+                    .substringBefore('&')
+                    .substringBefore('#')
+                    .takeIf { it.isNotBlank() && !it.contains("://") }
+                connectProfile = profile
+                navController.navigate(Routes.CONNECT)
+            }
             link.contains("session/") -> {
                 val id = link.substringAfter("session/").substringBefore('?')
                 navController.navigate("session/$id")
@@ -152,10 +160,9 @@ fun TalariaNavRoot(
     ) {
         // Screens apply status/cutout insets via TopAppBar; suite handles bottom system bars.
         Column(modifier = Modifier.fillMaxSize()) {
-            if (profiles.isNotEmpty() && currentTop != TopDest.Chats.route) {
-                // Global management-profile switcher (web sidebar parity). Hidden on Chat
-                // top-level to keep composer chrome clean; Manage/You/Activity still show it.
-                // Chat reconnects pick up SecureConnectionStore.managementProfile on next connect.
+            if (profiles.isNotEmpty()) {
+                // Global management-profile switcher (web sidebar ?profile= parity).
+                // Switching stops the chat sidecar; reopen Chat to reconnect with the new profile.
                 ProfileSwitcherBar()
             }
             NavHost(
@@ -167,7 +174,9 @@ fun TalariaNavRoot(
             ) {
                 composable(Routes.CONNECT) {
                     ConnectScreen(
+                        initialProfile = connectProfile,
                         onConnected = {
+                            connectProfile = null
                             navController.navigate(TopDest.Chats.route) {
                                 popUpTo(Routes.CONNECT) { inclusive = true }
                             }
@@ -192,7 +201,26 @@ fun TalariaNavRoot(
                         onNeedConnection = { navController.navigate(Routes.CONNECT) },
                     )
                 }
-                composable(TopDest.Activity.route) { ActivityScreen() }
+                composable(TopDest.Activity.route) {
+                    ActivityScreen(
+                        onOpen = { type ->
+                            when {
+                                type.contains("pair", ignoreCase = true) ->
+                                    navController.navigate(Routes.PAIRING)
+                                type.contains("cron", ignoreCase = true) ->
+                                    navController.navigate(Routes.CRON)
+                                type.contains("gateway", ignoreCase = true) ->
+                                    navController.navigate(Routes.SYSTEM)
+                                type.contains("chat", ignoreCase = true) ||
+                                    type.contains("pty", ignoreCase = true) -> {
+                                    currentTop = TopDest.Chats.route
+                                    navController.navigate(TopDest.Chats.route)
+                                }
+                                else -> navController.navigate(TopDest.Manage.route)
+                            }
+                        },
+                    )
+                }
                 composable(TopDest.Manage.route) {
                     ManageHomeScreen(onOpen = { navController.navigate(it) })
                 }

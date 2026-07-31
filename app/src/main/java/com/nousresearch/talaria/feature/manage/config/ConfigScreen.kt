@@ -150,18 +150,45 @@ fun ConfigScreen() {
                             JsonConfig.json.parseToJsonElement(text).jsonObject
                         }.getOrNull()
                         keys.forEach { key ->
+                            val meta = fields[key]?.jsonObject
+                            val type = meta?.get("type")?.jsonPrimitive?.contentOrNull
+                            val desc = meta?.get("description")?.jsonPrimitive?.contentOrNull
                             val current = configObj?.get(key)?.toString()?.trim('"') ?: ""
-                            val desc = fields[key]?.jsonObject?.get("description")
-                                ?.jsonPrimitive?.contentOrNull
-                            OutlinedTextField(
-                                value = current,
-                                onValueChange = { newVal ->
-                                    text = updateConfigKey(text, key, newVal)
-                                },
-                                label = { Text(key) },
-                                supportingText = desc?.let { { Text(it) } },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
+                            when (type) {
+                                "boolean", "bool" -> {
+                                    val checked = current.equals("true", ignoreCase = true)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(key, style = MaterialTheme.typography.titleSmall)
+                                            desc?.let {
+                                                Text(it, style = MaterialTheme.typography.bodySmall)
+                                            }
+                                        }
+                                        androidx.compose.material3.Switch(
+                                            checked = checked,
+                                            onCheckedChange = { on ->
+                                                text = updateConfigKey(text, key, on.toString())
+                                            },
+                                        )
+                                    }
+                                }
+                                else -> {
+                                    OutlinedTextField(
+                                        value = current,
+                                        onValueChange = { newVal ->
+                                            text = updateConfigKey(text, key, newVal)
+                                        },
+                                        label = { Text(key) },
+                                        supportingText = desc?.let { { Text(it) } },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
+                            }
                         }
                     }
                 }

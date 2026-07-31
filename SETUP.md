@@ -107,3 +107,12 @@ apksigner verify app-release.apk
 ## Emulator networking
 
 `127.0.0.1` on the emulator is the emulator itself. Use `10.0.2.2:9119` to reach a dashboard on the host machine, or a LAN/Tailscale IP for physical devices.
+
+
+## OIDC / Custom Tabs login
+
+1. On Connect, set **Auth mode** to `OIDC_BROWSER`.
+2. Tap **Open portal login** — Chrome Custom Tabs opens `{dashboard}/auth/login`.
+3. Complete login in the browser. If the host redirects to `talaria://…`, the app resumes and keeps cookies in the OkHttp jar.
+4. Tap **Save & connect**. Talaria will mint WS tickets when `auth_required` is true.
+5. If the redirect never returns to the app, copy a session token from the dashboard loopback SPA and use **SESSION_TOKEN** mode instead.
