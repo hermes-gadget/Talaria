@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import com.nousresearch.talaria.BuildConfig
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.core.data.prefs.ThemeMode
+import com.nousresearch.talaria.ui.components.ProfileSwitcherBar
 import com.nousresearch.talaria.ui.components.ScreenScaffold
 import com.nousresearch.talaria.worker.SyncScheduler
 

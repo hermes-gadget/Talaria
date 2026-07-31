@@ -58,8 +58,9 @@ class HermesClientFactory(
     }
 
     fun api(): HermesApi {
+        // Prefer the active profile. Fallback matches Connect defaults (emulator host loopback).
         val base = connectionStore.activeProfile()?.baseUrl?.trimEnd('/')?.plus("/")
-            ?: "http://127.0.0.1:9119/"
+            ?: "http://10.0.2.2:9119/"
         cached?.let { if (it.first == base) return it.second }
         val retrofit = Retrofit.Builder()
             .baseUrl(base)

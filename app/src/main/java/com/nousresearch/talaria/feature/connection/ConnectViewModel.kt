@@ -22,6 +22,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.core.data.repo.ConnectionRepository
+import com.nousresearch.talaria.core.network.WsAuthHelper
 import com.nousresearch.talaria.domain.model.AuthMode
 import com.nousresearch.talaria.domain.model.ConnectionProfile
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,8 +44,10 @@ data class ConnectUiState(
     val managementProfile: String = "",
     val pinSha256: String = "",
     val testing: Boolean = false,
+    val diagnosing: Boolean = false,
     val error: String? = null,
     val statusLine: String? = null,
+    val doctorReport: String? = null,
 )
 
 class ConnectViewModel(
@@ -97,6 +100,94 @@ class ConnectViewModel(
 
     fun select(id: String) = repo.setActive(id)
     fun delete(id: String) = repo.delete(id)
+
+    /** Persist the draft profile and enter the app without a live /api/status probe. */
+    fun saveAndContinue(onSuccess: () -> Unit) {
+        val s = _ui.value
+        viewModelScope.launch {
+            _ui.value = s.copy(testing = true, error = null)
+            try {
+                val profile = repo.save(
+                    name = s.name,
+                    baseUrl = s.baseUrl,
+                    authMode = s.authMode,
+                    username = s.username.ifBlank { null },
+                    sessionToken = s.sessionToken.ifBlank { null },
+                    password = s.password.ifBlank { null },
+                    bearerToken = s.bearerToken.ifBlank { null },
+                    managementProfile = s.managementProfile,
+                    pinSha256 = s.pinSha256.ifBlank { null },
+                )
+                repo.setActive(profile.id)
+                _ui.value = _ui.value.copy(testing = false, statusLine = "Saved · ${profile.baseUrl}")
+                onSuccess()
+            } catch (t: Throwable) {
+                _ui.value = _ui.value.copy(testing = false, error = t.message)
+            }
+        }
+    }
+
+    /** Preflight: status reachability, auth gate, WS ticket — copy-pasteable fixes. */
+    fun runConnectionDoctor() {
+        val s = _ui.value
+        viewModelScope.launch {
+            _ui.value = s.copy(diagnosing = true, doctorReport = null, error = null)
+            val lines = mutableListOf<String>()
+            try {
+                repo.save(
+                    name = s.name,
+                    baseUrl = s.baseUrl,
+                    authMode = s.authMode,
+                    username = s.username.ifBlank { null },
+                    sessionToken = s.sessionToken.ifBlank { null },
+                    password = s.password.ifBlank { null },
+                    bearerToken = s.bearerToken.ifBlank { null },
+                    managementProfile = s.managementProfile,
+                    pinSha256 = s.pinSha256.ifBlank { null },
+                ).also { repo.setActive(it.id) }
+
+                lines += "URL: ${s.baseUrl.trimEnd('/')}"
+                if (s.baseUrl.contains("127.0.0.1") || s.baseUrl.contains("localhost")) {
+                    lines += "Hint: On emulator use http://10.0.2.2:9119 (host loopback), not 127.0.0.1."
+                }
+
+                val status = repo.testConnection()
+                status.fold(
+                    onSuccess = { st ->
+                        lines += "GET /api/status · OK · Hermes ${st.version ?: "?"}"
+                        lines += "auth_required=${st.auth_required} · providers=${st.auth_providers.joinToString().ifBlank { "—" }}"
+                        st.gateway?.let {
+                            lines += "gateway running=${it.running} pid=${it.pid} state=${it.state}"
+                        }
+                    },
+                    onFailure = { e ->
+                        lines += "GET /api/status · FAIL · ${e.message}"
+                        lines += "Fix: confirm dashboard is up (`hermes dashboard`), URL reachable, and auth mode matches."
+                    },
+                )
+
+                val container = TalariaApp.instance.container
+                container.wsAuthHelper.invalidate()
+                val authParam = container.wsAuthHelper.authQueryParam()
+                when {
+                    authParam.startsWith("ticket=") -> lines += "WS auth · ticket minted (gated dashboard path)"
+                    authParam.startsWith("token=") -> lines += "WS auth · session token attached"
+                    else -> {
+                        lines += "WS auth · no ticket/token available"
+                        lines += "Fix: sign in (basic/OIDC) or paste a valid session token."
+                    }
+                }
+                lines += "Close 4401: ${WsAuthHelper.explainCloseCode(4401)}"
+                lines += "Close 4403: ${WsAuthHelper.explainCloseCode(4403)}"
+            } catch (t: Throwable) {
+                lines += "Doctor error: ${t.message}"
+            }
+            _ui.value = _ui.value.copy(
+                diagnosing = false,
+                doctorReport = lines.joinToString("\n"),
+            )
+        }
+    }
 
     companion object {
         fun factory() = object : ViewModelProvider.Factory {

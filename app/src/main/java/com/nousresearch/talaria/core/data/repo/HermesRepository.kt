@@ -25,10 +25,13 @@ import com.nousresearch.talaria.core.data.prefs.SecureConnectionStore
 import com.nousresearch.talaria.core.network.HermesClientFactory
 import com.nousresearch.talaria.core.network.JsonConfig
 import com.nousresearch.talaria.domain.model.AnalyticsUsage
+import com.nousresearch.talaria.domain.model.ConfigSchemaResponse
 import com.nousresearch.talaria.domain.model.CronJob
 import com.nousresearch.talaria.domain.model.EnvVarInfo
 import com.nousresearch.talaria.domain.model.McpServer
 import com.nousresearch.talaria.domain.model.MessagingPlatform
+import com.nousresearch.talaria.domain.model.ModelInfo
+import com.nousresearch.talaria.domain.model.ModelOption
 import com.nousresearch.talaria.domain.model.PairingResponse
 import com.nousresearch.talaria.domain.model.ProfileInfo
 import com.nousresearch.talaria.domain.model.SessionMessage
@@ -36,6 +39,7 @@ import com.nousresearch.talaria.domain.model.SessionSummary
 import com.nousresearch.talaria.domain.model.SkillInfo
 import com.nousresearch.talaria.domain.model.StatusResponse
 import com.nousresearch.talaria.domain.model.SystemStats
+import com.nousresearch.talaria.domain.model.ToolsetInfo
 import com.nousresearch.talaria.domain.model.WebhookRoute
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -66,10 +70,13 @@ class HermesRepository(
         runCatching { api().getStatus() }
     }
 
-    suspend fun refreshSessions(): Result<List<SessionSummary>> = withContext(Dispatchers.IO) {
+    suspend fun refreshSessions(
+        source: String? = null,
+        limit: Int = 50,
+    ): Result<List<SessionSummary>> = withContext(Dispatchers.IO) {
         runCatching {
-            val element = api().getSessions()
-            val list = parseSessions(element)
+            val page = fetchSessionsPage(source = source, limit = limit)
+            val list = page.sessions
             val cid = connId()
             db.sessions().upsertAll(
                 list.map {
@@ -90,14 +97,42 @@ class HermesRepository(
         }
     }
 
-    private fun parseSessions(element: JsonElement): List<SessionSummary> = when (element) {
-        is JsonArray -> element.map { json.decodeFromJsonElement(it) }
-        is JsonObject -> {
-            val arr = element["sessions"]?.jsonArray
-            arr?.map { json.decodeFromJsonElement(it) } ?: emptyList()
-        }
-        else -> emptyList()
+    suspend fun getSessionsPage(
+        source: String? = null,
+        limit: Int = 50,
+        offset: Int = 0,
+    ): Result<com.nousresearch.talaria.domain.model.SessionsPage> = withContext(Dispatchers.IO) {
+        runCatching { fetchSessionsPage(source = source, limit = limit, offset = offset) }
     }
+
+    private suspend fun fetchSessionsPage(
+        source: String? = null,
+        limit: Int = 50,
+        offset: Int = 0,
+    ): com.nousresearch.talaria.domain.model.SessionsPage {
+        val element = api().getSessions(limit = limit, offset = offset, source = source)
+        return parseSessionsPage(element)
+    }
+
+    private fun parseSessions(element: JsonElement): List<SessionSummary> =
+        parseSessionsPage(element).sessions
+
+    private fun parseSessionsPage(element: JsonElement): com.nousresearch.talaria.domain.model.SessionsPage =
+        when (element) {
+            is JsonArray -> com.nousresearch.talaria.domain.model.SessionsPage(
+                sessions = element.map { json.decodeFromJsonElement(it) },
+                total = element.size,
+            )
+            is JsonObject -> {
+                val arr = element["sessions"]?.jsonArray
+                val sessions = arr?.map { json.decodeFromJsonElement<SessionSummary>(it) } ?: emptyList()
+                val total = element["total"]?.let {
+                    runCatching { it.toString().trim('"').toInt() }.getOrNull()
+                } ?: sessions.size
+                com.nousresearch.talaria.domain.model.SessionsPage(sessions = sessions, total = total)
+            }
+            else -> com.nousresearch.talaria.domain.model.SessionsPage()
+        }
 
     suspend fun loadMessages(sessionId: String): Result<List<SessionMessage>> = withContext(Dispatchers.IO) {
         runCatching {
@@ -153,8 +188,18 @@ class HermesRepository(
         }
     }
 
-    suspend fun getLogs(file: String, lines: Int): Result<List<String>> = withContext(Dispatchers.IO) {
-        runCatching { api().getLogs(file = file, lines = lines).lines }
+    suspend fun getLogs(
+        file: String,
+        lines: Int,
+        level: String? = null,
+        component: String? = null,
+        search: String? = null,
+    ): Result<List<String>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val raw = api().getLogs(file = file, lines = lines, level = level, component = component).lines
+            val q = search?.trim().orEmpty()
+            if (q.isEmpty()) raw else raw.filter { it.contains(q, ignoreCase = true) }
+        }
     }
 
     suspend fun getAnalytics(days: Int): Result<AnalyticsUsage> = withContext(Dispatchers.IO) {
@@ -235,6 +280,224 @@ class HermesRepository(
 
     suspend fun getProfiles(): Result<List<ProfileInfo>> = withContext(Dispatchers.IO) {
         runCatching { api().getProfiles().profiles }
+    }
+
+    suspend fun getActiveProfileName(): Result<String?> = withContext(Dispatchers.IO) {
+        runCatching { api().getActiveProfile().active }
+    }
+
+    suspend fun setActiveProfileName(name: String): Result<String?> = withContext(Dispatchers.IO) {
+        runCatching {
+            api().setActiveProfile(buildJsonObject { put("active", name) }).active
+        }
+    }
+
+    suspend fun renameSession(id: String, title: String) = withContext(Dispatchers.IO) {
+        runCatching {
+            api().patchSession(id, buildJsonObject { put("title", title) })
+            Unit
+        }
+    }
+
+    suspend fun deleteSession(id: String) = withContext(Dispatchers.IO) {
+        runCatching { api().deleteSession(id); Unit }
+    }
+
+    suspend fun searchSessions(query: String): Result<List<SessionSummary>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val el = api().searchSessions(query)
+            parseSessions(el)
+        }
+    }
+
+    suspend fun pruneSessions(): Result<JsonElement> = withContext(Dispatchers.IO) {
+        runCatching { api().pruneSessions(buildJsonObject {}) }
+    }
+
+    suspend fun getModelInfo(): Result<ModelInfo> = withContext(Dispatchers.IO) {
+        runCatching {
+            val el = api().getModelInfo()
+            runCatching { json.decodeFromJsonElement<ModelInfo>(el) }.getOrElse {
+                ModelInfo(model = el.jsonObject["model"]?.toString()?.trim('"'))
+            }
+        }
+    }
+
+    suspend fun getModelOptions(): Result<List<ModelOption>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val el = api().getModelOptions()
+            when (el) {
+                is JsonArray -> el.mapNotNull {
+                    runCatching { json.decodeFromJsonElement<ModelOption>(it) }.getOrNull()
+                        ?: ModelOption(id = it.jsonObject["id"]?.toString()?.trim('"'), name = it.toString())
+                }
+                is JsonObject -> {
+                    val arr = el["options"]?.jsonArray ?: el["models"]?.jsonArray
+                    arr?.mapNotNull { runCatching { json.decodeFromJsonElement<ModelOption>(it) }.getOrNull() }
+                        ?: emptyList()
+                }
+                else -> emptyList()
+            }
+        }
+    }
+
+    suspend fun setModel(modelId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            api().setModel(buildJsonObject { put("model", modelId) })
+            Unit
+        }
+    }
+
+    suspend fun getToolsets(): Result<List<ToolsetInfo>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val el = api().getToolsets()
+            val arr = when (el) {
+                is JsonArray -> el
+                is JsonObject -> el["toolsets"]?.jsonArray ?: el["items"]?.jsonArray
+                else -> null
+            }
+            arr?.mapNotNull { runCatching { json.decodeFromJsonElement<ToolsetInfo>(it) }.getOrNull() }
+                ?: emptyList()
+        }
+    }
+
+    suspend fun getConfigSchema(): Result<ConfigSchemaResponse> = withContext(Dispatchers.IO) {
+        runCatching { api().getConfigSchema() }
+    }
+
+    suspend fun getConfigDefaults(): Result<JsonElement> = withContext(Dispatchers.IO) {
+        runCatching { api().getConfigDefaults() }
+    }
+
+    suspend fun createWebhook(name: String, prompt: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            api().createWebhook(buildJsonObject {
+                put("name", name)
+                put("prompt", prompt)
+            })
+            Unit
+        }
+    }
+
+    suspend fun setWebhookEnabled(name: String, enabled: Boolean) = withContext(Dispatchers.IO) {
+        runCatching {
+            api().setWebhookEnabled(name, buildJsonObject { put("enabled", enabled) })
+            Unit
+        }
+    }
+
+    suspend fun deleteWebhook(name: String) = withContext(Dispatchers.IO) {
+        runCatching { api().deleteWebhook(name); Unit }
+    }
+
+    suspend fun addMcpServer(name: String, command: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            api().addMcpServer(buildJsonObject {
+                put("name", name)
+                put("command", command)
+            })
+            Unit
+        }
+    }
+
+    suspend fun setMcpEnabled(name: String, enabled: Boolean) = withContext(Dispatchers.IO) {
+        runCatching {
+            api().setMcpEnabled(name, buildJsonObject { put("enabled", enabled) })
+            Unit
+        }
+    }
+
+    suspend fun deleteMcpServer(name: String) = withContext(Dispatchers.IO) {
+        runCatching { api().deleteMcpServer(name); Unit }
+    }
+
+    suspend fun testMcp(name: String): Result<JsonElement> = withContext(Dispatchers.IO) {
+        runCatching { api().testMcp(name) }
+    }
+
+    suspend fun updateChannel(id: String, enabled: Boolean?, env: JsonObject?): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                api().updateMessagingPlatform(
+                    id,
+                    buildJsonObject {
+                        if (enabled != null) put("enabled", enabled)
+                        if (env != null) put("env", env)
+                    },
+                )
+                Unit
+            }
+        }
+
+    suspend fun testChannel(id: String): Result<JsonElement> = withContext(Dispatchers.IO) {
+        runCatching { api().testMessagingPlatform(id) }
+    }
+
+    suspend fun clearPendingPairing() = withContext(Dispatchers.IO) {
+        runCatching { api().clearPendingPairing(); Unit }
+    }
+
+    suspend fun updateCron(id: String, prompt: String, schedule: String) = withContext(Dispatchers.IO) {
+        runCatching {
+            api().updateCronJob(
+                id,
+                buildJsonObject {
+                    put("prompt", prompt)
+                    put("schedule", schedule)
+                },
+            )
+            Unit
+        }
+    }
+
+    suspend fun runDoctor(): Result<JsonElement> = withContext(Dispatchers.IO) {
+        runCatching { api().runDoctor() }
+    }
+
+    suspend fun runSecurityAudit(): Result<JsonElement> = withContext(Dispatchers.IO) {
+        runCatching { api().runSecurityAudit() }
+    }
+
+    suspend fun runBackup(): Result<JsonElement> = withContext(Dispatchers.IO) {
+        runCatching { api().runBackup() }
+    }
+
+    suspend fun checkUpdate(): Result<JsonElement> = withContext(Dispatchers.IO) {
+        runCatching { api().checkUpdate() }
+    }
+
+    suspend fun getPortal(): Result<JsonElement> = withContext(Dispatchers.IO) {
+        runCatching { api().getPortal() }
+    }
+
+    suspend fun getMemory(): Result<JsonElement> = withContext(Dispatchers.IO) {
+        runCatching { api().getMemory() }
+    }
+
+    suspend fun getCurator(): Result<JsonElement> = withContext(Dispatchers.IO) {
+        runCatching { api().getCurator() }
+    }
+
+    /** Export session messages as markdown for share sheet. */
+    suspend fun exportSessionMarkdown(sessionId: String): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val msgs = api().getSessionMessages(sessionId).messages
+            buildString {
+                appendLine("# Session $sessionId")
+                appendLine()
+                msgs.forEach { m ->
+                    appendLine("## ${m.role ?: "message"}")
+                    appendLine(m.content.orEmpty())
+                    if (m.tool_calls != null) {
+                        appendLine()
+                        appendLine("```json")
+                        appendLine(m.tool_calls.toString())
+                        appendLine("```")
+                    }
+                    appendLine()
+                }
+            }
+        }
     }
 
     suspend fun getSystemStats(): Result<SystemStats> = withContext(Dispatchers.IO) {

@@ -2,6 +2,21 @@
 
 All notable changes to Talaria are documented here.
 
+## [0.2.0] — 2026-07-31
+
+### Added
+
+- WebSocket gated auth via `POST /api/auth/ws-ticket` (`ticket=` vs `token=`).
+- Global Hermes management-profile switcher + amber “managing profile” banner.
+- Chat sidecar (`/api/ws` + `/api/events`): model badge/picker, tool-call cards, slash palette, approval dialogs, session rail, Terminal/Reading modes, PTY resize.
+- Status auto-refresh, Sessions filters/search/prune/export, schema-driven Config, API key catalog (`env_catalog.json`), Logs tail/filters, Analytics bars, Cron edit, Skills/toolsets, MCP CRUD+test, Channels/Webhooks forms, System doctor/portal/memory/curator.
+- In-app Connection doctor on Connect; Activity filters (All/Pairing/Cron/Gateway/Chat).
+
+### Notes
+
+- Roadmap Phases 0–11 + 12.2 landed; OIDC Custom Tabs (12.1) still open.
+- Emulator default dashboard URL remains `http://10.0.2.2:9119`.
+
 ## [0.1.0] — 2026-07-31
 
 ### Added

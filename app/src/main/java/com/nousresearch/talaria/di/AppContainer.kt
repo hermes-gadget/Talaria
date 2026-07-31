@@ -25,6 +25,8 @@ import com.nousresearch.talaria.core.data.repo.ChatRepository
 import com.nousresearch.talaria.core.data.repo.ConnectionRepository
 import com.nousresearch.talaria.core.data.repo.HermesRepository
 import com.nousresearch.talaria.core.network.HermesClientFactory
+import com.nousresearch.talaria.core.network.HermesEventClient
+import com.nousresearch.talaria.core.network.WsAuthHelper
 import com.nousresearch.talaria.core.notifications.TalariaNotifier
 import com.nousresearch.talaria.core.voice.SpeechCoordinator
 import com.nousresearch.talaria.core.voice.TtsSpeaker
@@ -45,9 +47,11 @@ class AppContainer(context: Context) {
     ).fallbackToDestructiveMigration().build()
 
     val clientFactory = HermesClientFactory(connectionStore, settingsStore)
+    val wsAuthHelper = WsAuthHelper(clientFactory, connectionStore)
+    val eventClient = HermesEventClient(clientFactory, connectionStore, wsAuthHelper)
     val connectionRepository = ConnectionRepository(connectionStore, clientFactory, settingsStore)
     val hermesRepository = HermesRepository(clientFactory, database, connectionStore)
-    val chatRepository = ChatRepository(clientFactory, database, connectionStore)
+    val chatRepository = ChatRepository(clientFactory, database, connectionStore, wsAuthHelper)
     val notifier = TalariaNotifier(appContext, settingsStore)
     val speechCoordinator = SpeechCoordinator(appContext, settingsStore)
     val ttsSpeaker = TtsSpeaker(appContext, settingsStore)

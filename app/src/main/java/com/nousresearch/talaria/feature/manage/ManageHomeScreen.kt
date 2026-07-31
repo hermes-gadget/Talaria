@@ -43,10 +43,10 @@ fun ManageHomeScreen(onOpen: (String) -> Unit) {
     val items = listOf(
         ManageItem("Status", "Version, gateway, live sessions", Routes.STATUS),
         ManageItem("Sessions", "Browse, search, resume, export", Routes.SESSIONS),
-        ManageItem("Config", "config.yaml form editor", Routes.CONFIG),
-        ManageItem("API Keys", ".env secrets (redacted)", Routes.API_KEYS),
+        ManageItem("Config", "Schema-driven config.yaml editor", Routes.CONFIG),
+        ManageItem("API Keys", ".env secrets (catalog + redacted)", Routes.API_KEYS),
         ManageItem("Cron", "Scheduled agent jobs", Routes.CRON),
-        ManageItem("Skills", "Toggle skills & hub", Routes.SKILLS),
+        ManageItem("Skills", "Skills, toolsets & Hub", Routes.SKILLS),
         ManageItem("MCP", "Model Context Protocol servers", Routes.MCP),
         ManageItem("Channels", "Messaging platforms", Routes.CHANNELS),
         ManageItem("Pairing", "Approve messaging users", Routes.PAIRING),
@@ -54,7 +54,7 @@ fun ManageHomeScreen(onOpen: (String) -> Unit) {
         ManageItem("Profiles", "Isolated Hermes homes", Routes.PROFILES),
         ManageItem("Logs", "Agent / gateway / errors", Routes.LOGS),
         ManageItem("Analytics", "Token usage & cost", Routes.ANALYTICS),
-        ManageItem("System", "Host stats, gateway ops, portal", Routes.SYSTEM),
+        ManageItem("System", "Host stats, doctor, portal", Routes.SYSTEM),
     )
     ScreenScaffold("Manage", "Dashboard surfaces adapted for mobile") {
         LazyColumn {

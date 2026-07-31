@@ -242,6 +242,18 @@ interface HermesApi {
     @GET("api/hermes/update/check")
     suspend fun checkUpdate(@Query("force") force: Boolean = false): JsonElement
 
+    @GET("api/model/info")
+    suspend fun getModelInfo(@Query("profile") profile: String? = null): JsonElement
+
+    @GET("api/model/options")
+    suspend fun getModelOptions(@Query("profile") profile: String? = null): JsonElement
+
+    @PUT("api/model/set")
+    suspend fun setModel(@Body body: JsonObject, @Query("profile") profile: String? = null): JsonElement
+
+    @GET("api/tools/toolsets")
+    suspend fun getToolsets(@Query("profile") profile: String? = null): JsonElement
+
     /** Password login for basic auth provider (form-encoded auth/password-login). */
     @POST("auth/password-login")
     suspend fun passwordLogin(@Body body: RequestBody): Response<ResponseBody>

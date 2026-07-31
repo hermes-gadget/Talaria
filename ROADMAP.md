@@ -2,7 +2,7 @@
 
 Goal: make Talaria feel like a first-class mobile client for the [Hermes Agent Web Dashboard](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard) — every major page and workflow, adapted for touch, offline, and battery — while staying a remote client (no embedded Python runtime).
 
-**Current baseline:** Talaria `0.1.0` · Hermes API `dashboard-v0.17+`  
+**Current baseline:** Talaria `0.2.0` · Hermes API `dashboard-v0.17+`  
 **Contract sources:** `docs/API.md`, upstream `web/src/lib/api.ts`, `hermes_cli/web_server.py`, dashboard docs.
 
 Use this file as the working backlog. Each item has **why**, **done when**, and **how** (ordered steps). Check boxes as you ship.
@@ -28,28 +28,29 @@ Use this file as the working backlog. Each item has **why**, **done when**, and 
 
 ---
 
-## Snapshot — where `0.1.0` stands
+## Snapshot — where `0.2.0` stands
 
 | Web Dashboard page | Talaria today |
 |--------------------|---------------|
-| Status | Partial — basic status load |
-| Chat | Partial — PTY text bridge only (no xterm / `/api/ws` sidecar) |
-| Config | Partial — raw JSON editor |
-| API Keys | Partial — flat set/delete, no grouping/catalog |
-| Sessions | Partial — list/detail; search/rename/export/prune thin |
-| Logs | Partial — reload/filter file; no live tail |
-| Analytics | Partial — dump usage JSON |
-| Cron | Stronger — create / pause / resume / run / delete |
-| Profiles | Partial — list/active read |
-| Skills | Partial — list + toggle; no Hub |
-| MCP | Partial — list; mutations API-ready |
-| Webhooks | Partial — list |
-| Pairing | Stronger — approve / revoke |
-| Channels | Partial — status list; no configure forms |
-| System | Partial — stats + gateway start/stop/restart |
-| Profile switcher (global) | Partial — connect-time `?profile=` only |
-| Auth (gated WS tickets) | Partial — REST ok; WS ticket path incomplete |
-| Events / live fan-out | Missing |
+| Status | Stronger — sections + 5s refresh + recent sessions |
+| Chat | Stronger — PTY + sidecar (model/tools/slash/approvals/rail/resize); Compose, not xterm |
+| Config | Stronger — schema categories + JSON escape hatch + reset/export/import |
+| API Keys | Stronger — grouped catalog + redacted env merge |
+| Sessions | Stronger — filters/search/rename/export/delete/prune |
+| Logs | Stronger — level/component filters + poll tail |
+| Analytics | Stronger — daily bars + totals |
+| Cron | Stronger — create/edit + lifecycle actions |
+| Profiles | Stronger — switch active + shortcuts |
+| Skills | Stronger — search/categories + toolsets tab + Hub link |
+| MCP | Stronger — CRUD + test sheet |
+| Webhooks | Stronger — create / enable / delete |
+| Pairing | Stronger — approve / revoke / clear-pending |
+| Channels | Stronger — configure sheet + test |
+| System | Stronger — doctor / audit / backup / portal / memory / curator |
+| Profile switcher (global) | Done — Manage/You/Activity bar + amber banner |
+| Auth (gated WS tickets) | Done for WS; OIDC Custom Tabs still open |
+| Events / live fan-out | Done — `HermesEventClient` |
+| Connection doctor | Done — Connect screen preflight |
 
 ---
 
@@ -547,44 +548,44 @@ Talaria `1.0.0` vs Web Dashboard is complete when:
 
 ```text
 Phase 0
-- [ ] 0.1 WS tickets for gated auth
-- [ ] 0.2 Global profile switcher + banner
-- [ ] 0.3 Typed models + fixtures
-- [ ] 0.4 /api/ws + /api/events clients
+- [x] 0.1 WS tickets for gated auth
+- [x] 0.2 Global profile switcher + banner
+- [x] 0.3 Typed models + fixtures
+- [x] 0.4 /api/ws + /api/events clients
 
 Phase 1 Chat
-- [ ] 1.1 channel + sidecar wiring
-- [ ] 1.2 in-chat session rail
-- [ ] 1.3 model badge/picker
-- [ ] 1.4 tool-call cards
-- [ ] 1.5 slash palette
-- [ ] 1.6 approval/clarify dialogs
-- [ ] 1.7 markdown reading mode
-- [ ] 1.8 PTY resize
+- [x] 1.1 channel + sidecar wiring
+- [x] 1.2 in-chat session rail
+- [x] 1.3 model badge/picker
+- [x] 1.4 tool-call cards
+- [x] 1.5 slash palette
+- [x] 1.6 approval/clarify dialogs
+- [x] 1.7 markdown reading mode
+- [x] 1.8 PTY resize
 
 Phase 2–3 Overview & Sessions
-- [ ] 2.1 Status parity + 5s refresh
-- [ ] 2.2 Activity from real signals
-- [ ] 3.1 filters/search/stats
-- [ ] 3.2 rich session detail
-- [ ] 3.3 rename/export/delete/prune
+- [x] 2.1 Status parity + 5s refresh
+- [x] 2.2 Activity from real signals
+- [x] 3.1 filters/search/stats
+- [x] 3.2 rich session detail
+- [x] 3.3 rename/export/delete/prune
 
 Phase 4–7 Config → Cron
-- [ ] 4.x schema-driven config
-- [ ] 5.x grouped API keys catalog
-- [ ] 6.1 logs filters/tail
-- [ ] 6.2 analytics charts
-- [ ] 7.1 cron edit UX
+- [x] 4.x schema-driven config
+- [x] 5.x grouped API keys catalog
+- [x] 6.1 logs filters/tail
+- [x] 6.2 analytics charts
+- [x] 7.1 cron edit UX
 
 Phase 8–11 Extensibility & admin
-- [ ] 8.x skills + toolsets + Hub
-- [ ] 9.x MCP CRUD + test
-- [ ] 10.x channels forms, pairing polish, webhooks wizard
-- [ ] 11.x profiles + system/doctor/portal/memory
+- [x] 8.x skills + toolsets + Hub
+- [x] 9.x MCP CRUD + test
+- [x] 10.x channels forms, pairing polish, webhooks wizard
+- [x] 11.x profiles + system/doctor/portal/memory
 
 Phase 12 Auth polish
 - [ ] 12.1 OIDC/Portal Custom Tabs
-- [ ] 12.2 in-app connection doctor
+- [x] 12.2 in-app connection doctor
 ```
 
 ---

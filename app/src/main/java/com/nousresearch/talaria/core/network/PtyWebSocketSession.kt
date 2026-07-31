@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 package com.nousresearch.talaria.core.network
 
 import com.nousresearch.talaria.core.data.prefs.SecureConnectionStore
@@ -22,6 +21,7 @@ import com.nousresearch.talaria.core.util.AnsiStripper
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -32,7 +32,7 @@ import java.util.UUID
 
 sealed class PtyEvent {
     data class Output(val text: String, val raw: String) : PtyEvent()
-    data class Connected(val sessionKey: String) : PtyEvent()
+    data class Connected(val sessionKey: String, val channel: String) : PtyEvent()
     data class Closed(val code: Int, val reason: String) : PtyEvent()
     data class Failure(val message: String) : PtyEvent()
 }
@@ -40,16 +40,25 @@ sealed class PtyEvent {
 /**
  * Mobile chat transport over Hermes `/api/pty` WebSocket.
  *
- * The dashboard Chat tab spawns `hermes --tui` behind a PTY. Talaria strips ANSI
- * for a readable Compose transcript while still forwarding keystrokes / pasted text.
+ * Auth: gated dashboards use `ticket=` (via [WsAuthHelper]); loopback uses `token=`.
+ * Sidecar correlation: `channel=` matches `/api/events`.
  */
 class PtyWebSocketSession(
     private val client: OkHttpClient,
     private val connectionStore: SecureConnectionStore,
+    private val wsAuth: WsAuthHelper,
 ) {
     private var socket: WebSocket? = null
+    var channel: String = UUID.randomUUID().toString()
+        private set
 
-    fun connect(resumeSessionId: String? = null): Flow<PtyEvent> = callbackFlow {
+    fun connect(
+        resumeSessionId: String? = null,
+        channelId: String = UUID.randomUUID().toString(),
+        cols: Int = 80,
+        rows: Int = 24,
+    ): Flow<PtyEvent> = callbackFlow {
+        this@PtyWebSocketSession.channel = channelId
         val profile = connectionStore.activeProfile()
             ?: run {
                 trySend(PtyEvent.Failure("No active connection profile"))
@@ -62,27 +71,24 @@ class PtyWebSocketSession(
             base.startsWith("http://") -> "ws://" + base.removePrefix("http://")
             else -> "ws://$base"
         }
-        val secrets = connectionStore.secretsFor(profile.id)
-        val authQuery = when {
-            !secrets.sessionToken.isNullOrBlank() -> "token=${secrets.sessionToken}"
-            else -> ""
-        }
+        val auth = runBlocking { wsAuth.authQueryParam() }
         val params = buildList {
-            if (authQuery.isNotEmpty()) add(authQuery)
+            if (auth.isNotBlank()) add(auth)
+            add("channel=$channelId")
             if (profile.managementProfile.isNotBlank()) {
                 add("profile=${profile.managementProfile}")
             }
             if (!resumeSessionId.isNullOrBlank()) add("resume=$resumeSessionId")
-            add("cols=80")
-            add("rows=24")
+            add("cols=$cols")
+            add("rows=$rows")
         }.joinToString("&")
-        val url = "$wsBase/api/pty" + if (params.isNotEmpty()) "?$params" else ""
+        val url = "$wsBase/api/pty?$params"
         val key = UUID.randomUUID().toString()
         val request = Request.Builder().url(url).build()
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 socket = webSocket
-                trySend(PtyEvent.Connected(key))
+                trySend(PtyEvent.Connected(key, channelId))
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -99,13 +105,16 @@ class PtyWebSocketSession(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                trySend(PtyEvent.Closed(code, reason))
+                val hint = WsAuthHelper.explainCloseCode(code)
+                if (hint != null) {
+                    trySend(PtyEvent.Failure(hint))
+                } else {
+                    trySend(PtyEvent.Closed(code, reason))
+                }
                 close()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                // Emit Failure for the UI; do NOT close the flow with [t] — that would
-                // crash viewModelScope collectors (ConnectException becomes FATAL).
                 trySend(PtyEvent.Failure(t.message ?: "WebSocket failure"))
                 close()
             }
@@ -116,7 +125,6 @@ class PtyWebSocketSession(
     }
 
     fun sendText(text: String) {
-        // Most PTY bridges expect raw input; append newline for chat-like send.
         val payload = if (text.endsWith('\n')) text else text + '\n'
         socket?.send(payload)
     }
@@ -126,7 +134,8 @@ class PtyWebSocketSession(
     }
 
     fun resize(cols: Int, rows: Int) {
-        // xterm resize protocol varies; Hermes accepts a JSON control frame in some builds.
+        // Match dashboard xterm resize control used by ChatPage.
+        socket?.send("\u001b[RESIZE:$cols;$rows]")
         socket?.send("""{"type":"resize","cols":$cols,"rows":$rows}""")
     }
 
