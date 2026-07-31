@@ -1,0 +1,56 @@
+name: Build APK
+
+# Builds the Talaria debug APK on every version tag (v*) and attaches it to
+# the GitHub release (stable or pre-release). 0.x series ships as
+# pre-releases; flip the prerelease input to tag-derived when 1.0 lands.
+"on":
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install SDK components
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          yes | sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Build debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Rename APK with version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ -n "$VERSION" ] || VERSION="ci"
+          cp app/build/outputs/apk/debug/app-debug.apk "Talaria-v${VERSION}-debug.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: talaria-apk
+          path: Talaria-*-debug.apk
+          retention-days: 30
+
+      - name: Attach APK to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Talaria-*-debug.apk
+          prerelease: true
+          generate_release_notes: true
