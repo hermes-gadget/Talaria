@@ -104,8 +104,10 @@ class PtyWebSocketSession(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                // Emit Failure for the UI; do NOT close the flow with [t] — that would
+                // crash viewModelScope collectors (ConnectException becomes FATAL).
                 trySend(PtyEvent.Failure(t.message ?: "WebSocket failure"))
-                close(t)
+                close()
             }
         }
         val ws = client.newWebSocket(request, listener)

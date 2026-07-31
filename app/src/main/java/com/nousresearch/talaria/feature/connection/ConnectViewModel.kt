@@ -33,7 +33,8 @@ import kotlinx.coroutines.launch
 
 data class ConnectUiState(
     val name: String = "Home Hermes",
-    val baseUrl: String = "http://127.0.0.1:9119",
+    // 10.0.2.2 is the emulator alias for the host loopback; 127.0.0.1 is the emulator itself.
+    val baseUrl: String = "http://10.0.2.2:9119",
     val authMode: AuthMode = AuthMode.SESSION_TOKEN,
     val username: String = "",
     val password: String = "",

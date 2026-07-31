@@ -75,40 +75,50 @@ class ChatViewModel(
         val (pty, flow) = chatRepository.openPty(resume)
         session = pty
         collectJob = viewModelScope.launch {
-            flow.collect { event ->
-                when (event) {
-                    is PtyEvent.Connected -> _ui.update { it.copy(connecting = false, connected = true) }
-                    is PtyEvent.Output -> {
-                        assistantBuffer.append(event.text)
-                        val text = event.text
-                        if (text.isNotBlank()) {
-                            _ui.update { state ->
-                                val last = state.lines.lastOrNull()
-                                if (last?.role == "assistant" && last.streaming) {
-                                    state.copy(
-                                        lines = state.lines.dropLast(1) + last.copy(text = last.text + text),
-                                    )
-                                } else {
-                                    state.copy(
-                                        lines = state.lines + ChatLine(
-                                            id = UUID.randomUUID().toString(),
-                                            role = "assistant",
-                                            text = text,
-                                            streaming = true,
-                                        ),
-                                    )
+            try {
+                flow.collect { event ->
+                    when (event) {
+                        is PtyEvent.Connected -> _ui.update { it.copy(connecting = false, connected = true) }
+                        is PtyEvent.Output -> {
+                            assistantBuffer.append(event.text)
+                            val text = event.text
+                            if (text.isNotBlank()) {
+                                _ui.update { state ->
+                                    val last = state.lines.lastOrNull()
+                                    if (last?.role == "assistant" && last.streaming) {
+                                        state.copy(
+                                            lines = state.lines.dropLast(1) + last.copy(text = last.text + text),
+                                        )
+                                    } else {
+                                        state.copy(
+                                            lines = state.lines + ChatLine(
+                                                id = UUID.randomUUID().toString(),
+                                                role = "assistant",
+                                                text = text,
+                                                streaming = true,
+                                            ),
+                                        )
+                                    }
                                 }
                             }
                         }
+                        is PtyEvent.Closed -> {
+                            finalizeAssistant()
+                            _ui.update { it.copy(connected = false, connecting = false) }
+                        }
+                        is PtyEvent.Failure -> {
+                            _ui.update { it.copy(error = event.message, connecting = false, connected = false) }
+                            notifier.notifyError("Chat disconnected", event.message)
+                        }
                     }
-                    is PtyEvent.Closed -> {
-                        finalizeAssistant()
-                        _ui.update { it.copy(connected = false, connecting = false) }
-                    }
-                    is PtyEvent.Failure -> {
-                        _ui.update { it.copy(error = event.message, connecting = false, connected = false) }
-                        notifier.notifyError("Chat disconnected", event.message)
-                    }
+                }
+            } catch (t: Throwable) {
+                _ui.update {
+                    it.copy(
+                        error = t.message ?: "Chat connection failed",
+                        connecting = false,
+                        connected = false,
+                    )
                 }
             }
         }
