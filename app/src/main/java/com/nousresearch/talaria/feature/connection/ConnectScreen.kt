@@ -32,6 +32,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -42,11 +43,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nousresearch.talaria.domain.model.AuthMode
 import com.nousresearch.talaria.ui.components.ScreenScaffold
-import androidx.compose.ui.Modifier
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -81,7 +82,9 @@ fun ConnectScreen(
                 onValueChange = { v -> vm.update { it.copy(baseUrl = v) } },
                 label = { Text("Dashboard URL") },
                 modifier = Modifier.fillMaxWidth(),
-                supportingText = { Text("e.g. http://100.x.y.z:9119 via Tailscale") },
+                supportingText = {
+                    Text("Tailscale/LAN host, or http://10.0.2.2:9119 from the Android emulator (not 127.0.0.1)")
+                },
             )
             ExposedDropdownMenuBox(expanded = authExpanded, onExpandedChange = { authExpanded = it }) {
                 OutlinedTextField(
@@ -90,7 +93,9 @@ fun ConnectScreen(
                     readOnly = true,
                     label = { Text("Auth mode") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(authExpanded) },
-                    modifier = Modifier.menuAnchor().fillMaxWidth(),
+                    modifier = Modifier
+                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, enabled = true)
+                        .fillMaxWidth(),
                 )
                 ExposedDropdownMenu(expanded = authExpanded, onDismissRequest = { authExpanded = false }) {
                     AuthMode.entries.forEach { mode ->

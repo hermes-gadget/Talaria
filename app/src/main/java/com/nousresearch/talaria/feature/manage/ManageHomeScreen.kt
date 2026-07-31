@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 package com.nousresearch.talaria.feature.manage
 
 import androidx.compose.foundation.clickable
@@ -22,14 +21,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.nousresearch.talaria.ui.components.ScreenScaffold
 import com.nousresearch.talaria.ui.navigation.Routes
-import androidx.compose.ui.Modifier
 
 private data class ManageItem(val title: String, val subtitle: String, val route: String)
 
@@ -54,18 +59,33 @@ fun ManageHomeScreen(onOpen: (String) -> Unit) {
     ScreenScaffold("Manage", "Dashboard surfaces adapted for mobile") {
         LazyColumn {
             items(items) { item ->
-                Surface(
-                    Modifier
+                Card(
+                    modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 4.dp)
                         .clickable { onOpen(item.route) },
-                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ),
                     shape = MaterialTheme.shapes.medium,
                 ) {
-                    androidx.compose.foundation.layout.Column(modifier = Modifier.padding(14.dp)) {
-                        Text(item.title, style = MaterialTheme.typography.titleLarge)
-                        Text(item.subtitle, style = MaterialTheme.typography.bodyMedium)
-                    }
+                    ListItem(
+                        headlineContent = {
+                            Text(item.title, style = MaterialTheme.typography.titleMedium)
+                        },
+                        supportingContent = {
+                            Text(item.subtitle, style = MaterialTheme.typography.bodyMedium)
+                        },
+                        trailingContent = {
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                            )
+                        },
+                        colors = ListItemDefaults.colors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        ),
+                    )
                 }
             }
         }

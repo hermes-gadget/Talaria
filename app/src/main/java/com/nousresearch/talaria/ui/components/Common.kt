@@ -15,72 +15,118 @@
  */
 package com.nousresearch.talaria.ui.components
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.unit.dp
-import com.nousresearch.talaria.ui.theme.HermesVoid
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 
+/**
+ * Standard screen chrome: Material 3 Scaffold + TopAppBar with status/cutout insets.
+ *
+ * Bottom padding for the system nav / gesture bar is applied when [padNavigationBars]
+ * is true. Inside [NavigationSuiteScaffold], leave it false so the suite owns bottom inset.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScreenScaffold(
     title: String,
     subtitle: String? = null,
     actions: @Composable (() -> Unit)? = null,
+    padNavigationBars: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(HermesVoid)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-    ) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+    val topBarInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout)
+    val contentInsets = if (padNavigationBars) {
+        ScaffoldDefaults.contentWindowInsets
+    } else {
+        // Exclude bottom system bars — NavigationSuiteScaffold already pads them.
+        ScaffoldDefaults.contentWindowInsets.only(WindowInsetsSides.Horizontal)
+    }
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onBackground,
+        contentWindowInsets = contentInsets,
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(title, style = MaterialTheme.typography.titleLarge)
+                        if (subtitle != null) {
+                            Text(
+                                subtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                },
+                actions = {
+                    if (actions != null) {
+                        Row(
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            actions()
+                        }
+                    }
+                },
+                windowInsets = topBarInsets,
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+            )
+        },
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                if (subtitle != null) {
-                    Text(
-                        subtitle,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            actions?.invoke()
+            content()
         }
-        Spacer(modifier = Modifier.height(12.dp))
-        content()
     }
 }
 
 @Composable
 fun LoadingBox() {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
         CircularProgressIndicator()
     }
 }
@@ -106,11 +152,13 @@ fun ErrorBox(message: String, onRetry: (() -> Unit)? = null) {
 fun KeyValueList(rows: List<Pair<String, String>>) {
     LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
         items(rows) { (k, v) ->
-            Surface(
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 4.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                ),
                 shape = MaterialTheme.shapes.medium,
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {

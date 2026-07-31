@@ -14,63 +14,146 @@
  * limitations under the License.
  */
 
-
 package com.nousresearch.talaria.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import com.nousresearch.talaria.TalariaApp
+import com.nousresearch.talaria.core.data.prefs.ThemeMode
 
-private val HermesDark = darkColorScheme(
+private val HermesDarkScheme = darkColorScheme(
     primary = HermesEmber,
     onPrimary = HermesVoid,
+    primaryContainer = HermesEmberContainer,
+    onPrimaryContainer = HermesEmber,
     secondary = HermesWing,
     onSecondary = HermesVoid,
+    secondaryContainer = HermesWingContainer,
+    onSecondaryContainer = HermesWing,
     tertiary = HermesMist,
+    onTertiary = HermesVoid,
+    tertiaryContainer = HermesPanelHigh,
+    onTertiaryContainer = HermesMist,
     background = HermesVoid,
     onBackground = HermesMist,
     surface = HermesInk,
     onSurface = HermesMist,
     surfaceVariant = HermesPanel,
     onSurfaceVariant = HermesMist,
+    surfaceTint = HermesEmber,
+    surfaceBright = HermesPanelHigh,
+    surfaceDim = HermesVoid,
+    surfaceContainer = HermesInk,
+    surfaceContainerHigh = HermesPanel,
+    surfaceContainerHighest = HermesPanelHigh,
+    surfaceContainerLow = Color(0xFF0E1118),
+    surfaceContainerLowest = HermesVoid,
+    inverseSurface = HermesMist,
+    inverseOnSurface = HermesVoid,
+    inversePrimary = HermesLightPrimary,
     error = HermesDanger,
+    onError = Color.White,
+    errorContainer = Color(0xFF5C1A1A),
+    onErrorContainer = Color(0xFFFFDAD6),
+    outline = HermesOutline,
+    outlineVariant = Color(0xFF2A3140),
+    scrim = Color.Black,
 )
 
-private val HermesLight = lightColorScheme(
-    primary = Color(0xFF8A5520),
+private val HermesLightScheme = lightColorScheme(
+    primary = HermesLightPrimary,
     onPrimary = Color.White,
-    secondary = Color(0xFF2F5F99),
-    background = Color(0xFFF4F6FA),
-    surface = Color.White,
-    onBackground = Color(0xFF12151C),
-    onSurface = Color(0xFF12151C),
+    primaryContainer = Color(0xFFFFDDB8),
+    onPrimaryContainer = Color(0xFF2C1600),
+    secondary = HermesLightSecondary,
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFD3E4FF),
+    onSecondaryContainer = Color(0xFF001D36),
+    tertiary = Color(0xFF5B5B7A),
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFE1E0FF),
+    onTertiaryContainer = Color(0xFF181833),
+    background = HermesLightBg,
+    onBackground = HermesLightOn,
+    surface = HermesLightSurface,
+    onSurface = HermesLightOn,
+    surfaceVariant = Color(0xFFE8EAF0),
+    onSurfaceVariant = Color(0xFF44474F),
+    surfaceTint = HermesLightPrimary,
+    surfaceBright = Color.White,
+    surfaceDim = Color(0xFFDDDFE5),
+    surfaceContainer = Color(0xFFEEF0F6),
+    surfaceContainerHigh = Color(0xFFE8EAF0),
+    surfaceContainerHighest = Color(0xFFE2E4EA),
+    surfaceContainerLow = Color(0xFFF4F6FA),
+    surfaceContainerLowest = Color.White,
+    inverseSurface = Color(0xFF2F3036),
+    inverseOnSurface = Color(0xFFF1F0F7),
+    inversePrimary = HermesEmber,
+    error = Color(0xFFBA1A1A),
+    onError = Color.White,
+    errorContainer = Color(0xFFFFDAD6),
+    onErrorContainer = Color(0xFF410002),
+    outline = HermesLightOutline,
+    outlineVariant = Color(0xFFC4C6D0),
+    scrim = Color.Black,
 )
 
 @Composable
 fun TalariaTheme(content: @Composable () -> Unit) {
-    val dynamic = TalariaApp.instance.container.settingsStore.dynamicColor
-    val dark = isSystemInDarkTheme() || true // Hermes aesthetic defaults to dark
-    val context = LocalContext.current
-    val scheme = when {
-        dynamic && Build.VERSION.SDK_INT >= 31 && !dark -> dynamicLightColorScheme(context)
-        dynamic && Build.VERSION.SDK_INT >= 31 && dark -> dynamicDarkColorScheme(context).copy(
-            background = HermesVoid,
-            surface = HermesInk,
-        )
-        dark -> HermesDark
-        else -> HermesLight
+    val settings = TalariaApp.instance.container.settingsStore
+    val themeMode by settings.themeModeFlow.collectAsState()
+    val dynamicColor by settings.dynamicColorFlow.collectAsState()
+    val dark = when (themeMode) {
+        ThemeMode.DARK -> true
+        ThemeMode.LIGHT -> false
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
     }
+    val scheme = talariaColorScheme(
+        darkTheme = dark,
+        dynamicColor = dynamicColor,
+    )
     MaterialTheme(
         colorScheme = scheme,
         typography = TalariaTypography,
+        shapes = TalariaShapes,
         content = content,
     )
+}
+
+@Composable
+@ReadOnlyComposable
+fun talariaColorScheme(darkTheme: Boolean, dynamicColor: Boolean): ColorScheme {
+    val context = LocalContext.current
+    return when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        }
+        darkTheme -> HermesDarkScheme
+        else -> HermesLightScheme
+    }
+}
+
+/** Whether the active scheme is dark (for system bar icon contrast). */
+@Composable
+@ReadOnlyComposable
+fun isTalariaDarkTheme(): Boolean {
+    val settings = TalariaApp.instance.container.settingsStore
+    return when (settings.themeMode) {
+        ThemeMode.DARK -> true
+        ThemeMode.LIGHT -> false
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+    }
 }

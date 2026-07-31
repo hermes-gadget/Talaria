@@ -19,12 +19,33 @@ package com.nousresearch.talaria.core.data.prefs
 
 import android.content.Context
 import androidx.core.content.edit
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+enum class ThemeMode {
+    SYSTEM,
+    DARK,
+    LIGHT,
+}
 
 /**
  * Non-secret app preferences. Telemetry remains off by default (BuildConfig + this flag).
  */
 class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("talaria_settings", Context.MODE_PRIVATE)
+
+    private fun readThemeMode(): ThemeMode = when (prefs.getString("theme_mode", ThemeMode.DARK.name)) {
+        ThemeMode.LIGHT.name -> ThemeMode.LIGHT
+        ThemeMode.SYSTEM.name -> ThemeMode.SYSTEM
+        else -> ThemeMode.DARK
+    }
+
+    private val _dynamicColor = MutableStateFlow(prefs.getBoolean("dynamic_color", true))
+    val dynamicColorFlow: StateFlow<Boolean> = _dynamicColor.asStateFlow()
+
+    private val _themeMode = MutableStateFlow(readThemeMode())
+    val themeModeFlow: StateFlow<ThemeMode> = _themeMode.asStateFlow()
 
     var telemetryEnabled: Boolean
         get() = prefs.getBoolean("telemetry", false)
@@ -79,6 +100,17 @@ class SettingsStore(context: Context) {
         set(value) = prefs.edit { putBoolean("http_log", value) }
 
     var dynamicColor: Boolean
-        get() = prefs.getBoolean("dynamic_color", true)
-        set(value) = prefs.edit { putBoolean("dynamic_color", value) }
+        get() = _dynamicColor.value
+        set(value) {
+            prefs.edit { putBoolean("dynamic_color", value) }
+            _dynamicColor.value = value
+        }
+
+    /** Material You / system / forced light-dark. Defaults to dark Hermes aesthetic. */
+    var themeMode: ThemeMode
+        get() = _themeMode.value
+        set(value) {
+            prefs.edit { putString("theme_mode", value.name) }
+            _themeMode.value = value
+        }
 }
