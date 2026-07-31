@@ -16,6 +16,7 @@
 
 package com.nousresearch.talaria.feature.chat
 
+import com.nousresearch.talaria.domain.model.ChatLine
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -114,13 +115,27 @@ fun ChatScreen(
     }
     val active = ui.active
     // Reading mode shows only the clean conversation (never the raw PTY/TUI dump).
+    // Terminal mode appends the in-flight streaming turn as one keyed line so
+    // chunks only recompose that single item, not the whole list.
     val displayLines = if (ui.transcriptMode == TranscriptMode.READING) {
         active?.readingMessages.orEmpty()
     } else {
-        active?.lines.orEmpty()
+        val finished = active?.lines.orEmpty()
+        val streaming = active?.streamingText
+        if (streaming.isNullOrEmpty()) {
+            finished
+        } else {
+            finished + ChatLine(
+                id = "streaming-${active.id}",
+                role = "assistant",
+                text = streaming,
+            )
+        }
     }
-    LaunchedEffect(displayLines.size, ui.activeTabId) {
-        if (displayLines.isNotEmpty()) listState.animateScrollToItem(displayLines.lastIndex)
+    // Follow the transcript only when the last line actually changed; instant
+    // scroll (no animation) keeps up with stream-rate updates without jank.
+    LaunchedEffect(displayLines.lastOrNull()?.let { it.id to it.text }, ui.activeTabId) {
+        if (displayLines.isNotEmpty()) listState.scrollToItem(displayLines.lastIndex)
     }
 
     val status = when {

@@ -18,6 +18,7 @@ package com.nousresearch.talaria.ui.components
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -30,7 +31,11 @@ import androidx.compose.ui.text.withStyle
 @Composable
 fun SimpleMarkdownText(markdown: String, modifier: Modifier = Modifier) {
     val codeColor = MaterialTheme.colorScheme.tertiary
-    val annotated = buildAnnotatedString {
+    // Parse once per distinct input: streaming transcripts re-compose the same
+    // text repeatedly, and re-running the regex walk on every frame is the top
+    // recomposition cost on the chat screen.
+    val annotated = remember(markdown) {
+        buildAnnotatedString {
         var i = 0
         val src = markdown.replace(Regex("```[\\s\\S]*?```")) { match ->
             "\n" + match.value.removePrefix("```").substringAfter('\n').removeSuffix("```").trim() + "\n"
@@ -74,6 +79,7 @@ fun SimpleMarkdownText(markdown: String, modifier: Modifier = Modifier) {
                     i++
                 }
             }
+        }
         }
     }
     Text(annotated, modifier = modifier, style = MaterialTheme.typography.bodyMedium)

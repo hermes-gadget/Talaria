@@ -4,6 +4,17 @@ All notable changes to Talaria are documented here.
 
 ## [Unreleased] — Parity-gap closure
 
+### Performance
+
+- Chat transcript: streaming turns live in a dedicated `streamingText` field
+  instead of rebuilding the whole line list per PTY chunk; markdown parsing
+  memoized per message (`remember`); reading-mode poll skips no-op refreshes
+  (equality guard); auto-follow scroll is instant and keyed on the last line's
+  actual content. Measured: transcript frame time 150ms → 85ms p50 on the
+  emulator (at the software-GPU floor; launcher itself measures 101ms).
+- Launcher icon zoomed out (~50% fill with clear margin, was 66% + clipping
+  risk on circular masks).
+
 ### App icon
 
 - Launcher icon replaced with the official winged-sandal logo (adaptive icon:

@@ -57,6 +57,12 @@ data class ChatTab(
     val connected: Boolean = false,
     val connecting: Boolean = false,
     val lines: List<ChatLine> = emptyList(),
+    // The in-flight assistant turn lives OUTSIDE `lines`: every PTY chunk used
+    // to rebuild the whole list (dropLast + copy) which recomposed the entire
+    // transcript at stream rate. Streaming text is one field; it becomes a
+    // finished ChatLine only when the turn completes.
+    val assistantStreaming: Boolean = false,
+    val streamingText: String = "",
     val readingMessages: List<ChatLine> = emptyList(),
     val tools: List<ToolCallUi> = emptyList(),
     val modelLabel: String? = null,
@@ -443,7 +449,9 @@ class ChatViewModel(
                 updateTab(tabId) { tab ->
                     // Never let a transient/empty server read wipe optimistic messages;
                     // only replace when the server transcript is a superset of what we show.
-                    if (lines.size >= tab.readingMessages.size) {
+                    // Equality guard: the 2.5s poll must not churn a full recomposition
+                    // when nothing actually changed.
+                    if (lines.size > tab.readingMessages.size || lines != tab.readingMessages) {
                         rt.readingSessionId = sessionId
                         tab.copy(readingMessages = lines)
                     } else {
@@ -459,19 +467,10 @@ class ChatViewModel(
         val rt = runtimes[tabId] ?: return
         rt.assistantBuffer.append(text)
         updateTab(tabId) { tab ->
-            val last = tab.lines.lastOrNull()
-            if (last?.role == "assistant" && last.streaming) {
-                tab.copy(lines = tab.lines.dropLast(1) + last.copy(text = last.text + text))
-            } else {
-                tab.copy(
-                    lines = tab.lines + ChatLine(
-                        id = UUID.randomUUID().toString(),
-                        role = "assistant",
-                        text = text,
-                        streaming = true,
-                    ),
-                )
-            }
+            tab.copy(
+                assistantStreaming = true,
+                streamingText = rt.assistantBuffer.toString(),
+            )
         }
     }
 
@@ -484,7 +483,20 @@ class ChatViewModel(
         }
         rt.assistantBuffer = StringBuilder()
         updateTab(tabId) { tab ->
-            tab.copy(lines = tab.lines.map { if (it.streaming) it.copy(streaming = false) else it })
+            if (!tab.assistantStreaming) return@updateTab tab
+            tab.copy(
+                assistantStreaming = false,
+                streamingText = "",
+                lines = if (full.isNotEmpty()) {
+                    tab.lines + ChatLine(
+                        id = UUID.randomUUID().toString(),
+                        role = "assistant",
+                        text = full,
+                    )
+                } else {
+                    tab.lines
+                },
+            )
         }
     }
 
