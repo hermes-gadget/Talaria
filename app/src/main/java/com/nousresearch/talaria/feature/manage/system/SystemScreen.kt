@@ -13,58 +13,245 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
 package com.nousresearch.talaria.feature.manage.system
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.domain.model.SystemStats
-import com.nousresearch.talaria.feature.manage.SimpleManageViewModel
 import com.nousresearch.talaria.ui.components.ErrorBox
-import com.nousresearch.talaria.ui.components.KeyValueList
 import com.nousresearch.talaria.ui.components.LoadingBox
 import com.nousresearch.talaria.ui.components.ScreenScaffold
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonElement
 
 @Composable
-fun SystemScreen(
-    vm: SimpleManageViewModel = viewModel(factory = SimpleManageViewModel.factory { getSystemStats() }),
-) {
-    val ui by vm.ui.collectAsState()
-    val scope = rememberCoroutineScope()
+fun SystemScreen() {
     val repo = TalariaApp.instance.container.hermesRepository
+    var stats by remember { mutableStateOf<SystemStats?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    var doctor by remember { mutableStateOf<String?>(null) }
+    var audit by remember { mutableStateOf<String?>(null) }
+    var backup by remember { mutableStateOf<String?>(null) }
+    var update by remember { mutableStateOf<String?>(null) }
+    var portal by remember { mutableStateOf<String?>(null) }
+    var memory by remember { mutableStateOf<String?>(null) }
+    var curator by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    fun reloadStats() = scope.launch {
+        loading = true
+        repo.getSystemStats()
+            .onSuccess {
+                stats = it
+                error = null
+                loading = false
+            }
+            .onFailure {
+                error = it.message
+                loading = false
+            }
+    }
+
+    LaunchedEffect(Unit) {
+        reloadStats()
+        repo.getPortal().onSuccess { portal = pretty(it) }
+        repo.getMemory().onSuccess { memory = pretty(it) }
+        repo.getCurator().onSuccess { curator = pretty(it) }
+    }
+
     ScreenScaffold("System", "Host stats & gateway ops", actions = {
-        TextButton(onClick = vm::refresh) { Text("Refresh") }
+        TextButton(onClick = { reloadStats() }) { Text("Refresh") }
     }) {
         when {
-            ui.loading -> LoadingBox()
-            ui.error != null -> ErrorBox(ui.error!!, vm::refresh)
+            loading && stats == null -> LoadingBox()
+            error != null && stats == null -> ErrorBox(error!!, onRetry = { reloadStats() })
             else -> {
-                val s = ui.data as SystemStats
-                KeyValueList(
-                    listOf(
-                        "OS" to (s.os ?: "—"),
-                        "Host" to (s.hostname ?: "—"),
-                        "Python" to (s.python ?: "—"),
-                        "Hermes" to (s.hermes_version ?: "—"),
-                        "CPU %" to (s.cpu_percent?.toString() ?: "—"),
-                    ),
-                )
-                Row {
-                    Button(onClick = { scope.launch { repo.gateway("start") } }) { Text("Start GW") }
-                    Button(onClick = { scope.launch { repo.gateway("stop") } }) { Text("Stop") }
-                    Button(onClick = { scope.launch { repo.gateway("restart") } }) { Text("Restart") }
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    val s = stats
+                    if (s != null) {
+                        Section("Host") {
+                            Text("OS: ${s.os ?: "—"}")
+                            Text("Host: ${s.hostname ?: "—"}")
+                            Text("Python: ${s.python ?: "—"}")
+                            Text("Hermes: ${s.hermes_version ?: "—"}")
+                            Text("CPU %: ${s.cpu_percent ?: "—"}")
+                            s.memory?.let { Text("Memory: $it") }
+                            s.disk?.let { Text("Disk: $it") }
+                            s.uptime?.let { Text("Uptime: $it") }
+                        }
+                    }
+
+                    Section("Gateway") {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                enabled = !busy,
+                                onClick = {
+                                    scope.launch {
+                                        busy = true
+                                        repo.gateway("start")
+                                        busy = false
+                                        reloadStats()
+                                    }
+                                },
+                            ) { Text("Start") }
+                            Button(
+                                enabled = !busy,
+                                onClick = {
+                                    scope.launch {
+                                        busy = true
+                                        repo.gateway("stop")
+                                        busy = false
+                                        reloadStats()
+                                    }
+                                },
+                            ) { Text("Stop") }
+                            Button(
+                                enabled = !busy,
+                                onClick = {
+                                    scope.launch {
+                                        busy = true
+                                        repo.gateway("restart")
+                                        busy = false
+                                        reloadStats()
+                                    }
+                                },
+                            ) { Text("Restart") }
+                        }
+                    }
+
+                    Section("Doctor") {
+                        OutlinedButton(onClick = {
+                            scope.launch {
+                                repo.runDoctor()
+                                    .onSuccess { doctor = pretty(it) }
+                                    .onFailure { doctor = it.message }
+                            }
+                        }) { Text("Run doctor") }
+                        doctor?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    }
+
+                    Section("Security audit") {
+                        OutlinedButton(onClick = {
+                            scope.launch {
+                                repo.runSecurityAudit()
+                                    .onSuccess { audit = pretty(it) }
+                                    .onFailure { audit = it.message }
+                            }
+                        }) { Text("Run audit") }
+                        audit?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    }
+
+                    Section("Backup") {
+                        OutlinedButton(onClick = {
+                            scope.launch {
+                                repo.runBackup()
+                                    .onSuccess { backup = pretty(it) }
+                                    .onFailure { backup = it.message }
+                            }
+                        }) { Text("Run backup") }
+                        backup?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    }
+
+                    Section("Update check") {
+                        OutlinedButton(onClick = {
+                            scope.launch {
+                                repo.checkUpdate()
+                                    .onSuccess { update = pretty(it) }
+                                    .onFailure { update = it.message }
+                            }
+                        }) { Text("Check for updates") }
+                        update?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    }
+
+                    Section("Portal") {
+                        OutlinedButton(onClick = {
+                            scope.launch {
+                                repo.getPortal()
+                                    .onSuccess { portal = pretty(it) }
+                                    .onFailure { portal = it.message }
+                            }
+                        }) { Text("Refresh portal") }
+                        portal?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    }
+
+                    Section("Memory") {
+                        OutlinedButton(onClick = {
+                            scope.launch {
+                                repo.getMemory()
+                                    .onSuccess { memory = pretty(it) }
+                                    .onFailure { memory = it.message }
+                            }
+                        }) { Text("Refresh memory") }
+                        memory?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    }
+
+                    Section("Curator") {
+                        OutlinedButton(onClick = {
+                            scope.launch {
+                                repo.getCurator()
+                                    .onSuccess { curator = pretty(it) }
+                                    .onFailure { curator = it.message }
+                            }
+                        }) { Text("Refresh curator") }
+                        curator?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun Section(title: String, content: @Composable () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ),
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+            content()
+        }
+    }
+}
+
+private fun pretty(el: JsonElement): String {
+    val raw = el.toString()
+    return if (raw.length > 2_000) raw.take(2_000) + "…" else raw
 }

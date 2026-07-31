@@ -147,6 +147,8 @@ data class MessagingPlatform(
     val configured: Boolean? = null,
     val state: String? = null,
     val error_message: String? = null,
+    val env_keys: List<String> = emptyList(),
+    val docs_url: String? = null,
 )
 
 @Serializable
@@ -249,3 +251,54 @@ data class ChatLine(
     val streaming: Boolean = false,
     val timestamp: Long = System.currentTimeMillis(),
 )
+
+@Serializable
+data class ModelInfo(
+    val model: String? = null,
+    val provider: String? = null,
+    val connected: Boolean? = null,
+    val base_url: String? = null,
+)
+
+@Serializable
+data class ModelOption(
+    val id: String? = null,
+    val name: String? = null,
+    val provider: String? = null,
+    val label: String? = null,
+)
+
+@Serializable
+data class ToolsetInfo(
+    val name: String,
+    val label: String? = null,
+    val description: String? = null,
+    val active: Boolean? = null,
+    val configured: Boolean? = null,
+    val tools: List<String> = emptyList(),
+)
+
+data class ToolCallUi(
+    val id: String,
+    val name: String,
+    val status: String,
+    val argsPreview: String? = null,
+    val message: String? = null,
+)
+
+data class SlashCommand(
+    val command: String,
+    val description: String,
+)
+
+object SlashCommands {
+    val defaults = listOf(
+        SlashCommand("/help", "Show TUI help"),
+        SlashCommand("/model", "Open model picker / set model"),
+        SlashCommand("/reload", "Reload .env / API keys"),
+        SlashCommand("/clear", "Clear the conversation view"),
+        SlashCommand("/compact", "Compact context"),
+        SlashCommand("/stop", "Stop the current generation"),
+        SlashCommand("/new", "Start a fresh session"),
+    )
+}

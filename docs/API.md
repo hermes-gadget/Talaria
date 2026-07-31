@@ -59,17 +59,17 @@ Profile-scoped families automatically receive `?profile=` from `ProfileQueryInte
 
 | Area | Status |
 |------|--------|
-| Full `/api/ws` JSON-RPC sidecar (tool cards, slash launcher) | Not wired in UI yet — PTY text bridge only |
-| `/api/events` / `/api/pub` fan-out | Not subscribed |
-| Skills Hub search/install UI | API methods partially present in dashboard; UI lists installed skills only |
-| MCP catalog install / OAuth flows | List/test APIs present; rich install UX TBD |
-| Channel configure forms (per-env fields) | Read-only status list in v0.1 |
-| Webhook create wizard | List view; create via API method |
-| Config schema-driven form widgets | Raw JSON editor (schema endpoint available) |
+| Full `/api/ws` JSON-RPC sidecar (tool cards, slash launcher) | Wired in Chat (`HermesEventClient`) — Compose UI, not xterm |
+| `/api/events` fan-out | Subscribed for tool/prompt/model events |
+| Skills Hub search/install UI | Browse/install when dashboard exposes routes; else open Hub URL |
+| MCP catalog install / OAuth flows | CRUD + test present; OAuth catalog install TBD upstream |
+| Channel configure forms (per-env fields) | Configure sheet + test in v0.2 |
+| Webhook create wizard | Create / enable / delete in v0.2 |
+| Config schema-driven form widgets | Category form + JSON escape hatch in v0.2 |
 | OIDC Custom Tabs completion polish | Mode exists; operators may paste session after browser login |
 | OpenAI-compatible `/v1/chat/completions` | Not used (dashboard contract preferred) |
 | File browser `/api/files*` | Not exposed in UI |
-| Dashboard plugins / themes | Out of scope for v0.1 |
+| Dashboard plugins / themes | Out of scope |
 
 When Hermes adds or renames endpoints, update `HermesApi.kt`, this file, and `BuildConfig.HERMES_API_BASELINE` / `ARCHITECTURE.md`.
 

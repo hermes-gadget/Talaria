@@ -155,9 +155,18 @@ fun ConnectScreen(
             ui.statusLine?.let { Text(it, color = MaterialTheme.colorScheme.secondary) }
             Button(
                 onClick = { vm.saveAndTest(onConnected) },
-                enabled = !ui.testing,
+                enabled = !ui.testing && !ui.diagnosing,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(if (ui.testing) "Connecting…" else "Save & connect") }
+            OutlinedButton(
+                onClick = vm::runConnectionDoctor,
+                enabled = !ui.testing && !ui.diagnosing,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (ui.diagnosing) "Diagnosing…" else "Connection doctor") }
+            ui.doctorReport?.let { report ->
+                Text("Diagnosis", style = MaterialTheme.typography.titleMedium)
+                Text(report, style = MaterialTheme.typography.bodySmall)
+            }
             if (profiles.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Text("Saved connections", style = MaterialTheme.typography.titleLarge)
@@ -168,7 +177,11 @@ fun ConnectScreen(
                     }
                 }
             }
-            OutlinedButton(onClick = onConnected, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = { vm.saveAndContinue(onConnected) },
+                enabled = !ui.testing && !ui.diagnosing,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
                 Text("Continue without testing")
             }
         }

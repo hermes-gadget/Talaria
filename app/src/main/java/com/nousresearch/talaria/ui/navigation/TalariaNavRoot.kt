@@ -17,6 +17,7 @@
 
 package com.nousresearch.talaria.ui.navigation
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
@@ -64,6 +65,7 @@ import com.nousresearch.talaria.feature.manage.system.SystemScreen
 import com.nousresearch.talaria.feature.manage.webhooks.WebhooksScreen
 import com.nousresearch.talaria.feature.you.PrivacyScreen
 import com.nousresearch.talaria.feature.you.YouScreen
+import com.nousresearch.talaria.ui.components.ProfileSwitcherBar
 
 @Composable
 fun TalariaNavRoot(
@@ -149,74 +151,88 @@ fun TalariaNavRoot(
         },
     ) {
         // Screens apply status/cutout insets via TopAppBar; suite handles bottom system bars.
-        NavHost(
-            navController = navController,
-            startDestination = start,
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            composable(Routes.CONNECT) {
-                ConnectScreen(
-                    onConnected = {
-                        navController.navigate(TopDest.Chats.route) {
-                            popUpTo(Routes.CONNECT) { inclusive = true }
-                        }
-                    },
-                )
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (profiles.isNotEmpty() && currentTop != TopDest.Chats.route) {
+                // Global management-profile switcher (web sidebar parity). Hidden on Chat
+                // top-level to keep composer chrome clean; Manage/You/Activity still show it.
+                // Chat reconnects pick up SecureConnectionStore.managementProfile on next connect.
+                ProfileSwitcherBar()
             }
-            composable(TopDest.Chats.route) {
-                ChatScreen(
-                    initialShare = shareText,
-                    onOpenSessions = { navController.navigate(Routes.SESSIONS) },
-                    onNeedConnection = { navController.navigate(Routes.CONNECT) },
-                )
+            NavHost(
+                navController = navController,
+                startDestination = start,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxSize(),
+            ) {
+                composable(Routes.CONNECT) {
+                    ConnectScreen(
+                        onConnected = {
+                            navController.navigate(TopDest.Chats.route) {
+                                popUpTo(Routes.CONNECT) { inclusive = true }
+                            }
+                        },
+                    )
+                }
+                composable(TopDest.Chats.route) {
+                    ChatScreen(
+                        initialShare = shareText,
+                        onOpenSessions = { navController.navigate(Routes.SESSIONS) },
+                        onNeedConnection = { navController.navigate(Routes.CONNECT) },
+                    )
+                }
+                composable(
+                    route = "chat?resume={resume}",
+                    arguments = listOf(navArgument("resume") { type = NavType.StringType; defaultValue = "" }),
+                ) { entry ->
+                    ChatScreen(
+                        resumeSessionId = entry.arguments?.getString("resume")?.ifBlank { null },
+                        initialShare = shareText,
+                        onOpenSessions = { navController.navigate(Routes.SESSIONS) },
+                        onNeedConnection = { navController.navigate(Routes.CONNECT) },
+                    )
+                }
+                composable(TopDest.Activity.route) { ActivityScreen() }
+                composable(TopDest.Manage.route) {
+                    ManageHomeScreen(onOpen = { navController.navigate(it) })
+                }
+                composable(TopDest.You.route) {
+                    YouScreen(
+                        onConnect = { navController.navigate(Routes.CONNECT) },
+                        onPrivacy = { navController.navigate(Routes.PRIVACY) },
+                    )
+                }
+                composable(Routes.STATUS) {
+                    StatusScreen(onOpenSession = { navController.navigate("session/$it") })
+                }
+                composable(Routes.CONFIG) { ConfigScreen() }
+                composable(Routes.API_KEYS) { ApiKeysScreen() }
+                composable(Routes.SESSIONS) {
+                    SessionsScreen(
+                        onOpen = { navController.navigate("session/$it") },
+                        onResume = { navController.navigate(Routes.chat(it)) },
+                    )
+                }
+                composable(
+                    Routes.SESSION_DETAIL,
+                    arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                ) { entry ->
+                    SessionDetailScreen(sessionId = entry.arguments!!.getString("id")!!)
+                }
+                composable(Routes.LOGS) { LogsScreen() }
+                composable(Routes.ANALYTICS) { AnalyticsScreen() }
+                composable(Routes.CRON) { CronScreen() }
+                composable(Routes.PROFILES) {
+                    ProfilesScreen(onShortcut = { navController.navigate(it) })
+                }
+                composable(Routes.SKILLS) { SkillsScreen() }
+                composable(Routes.MCP) { McpScreen() }
+                composable(Routes.WEBHOOKS) { WebhooksScreen() }
+                composable(Routes.PAIRING) { PairingScreen() }
+                composable(Routes.CHANNELS) { ChannelsScreen() }
+                composable(Routes.SYSTEM) { SystemScreen() }
+                composable(Routes.PRIVACY) { PrivacyScreen() }
             }
-            composable(
-                route = "chat?resume={resume}",
-                arguments = listOf(navArgument("resume") { type = NavType.StringType; defaultValue = "" }),
-            ) { entry ->
-                ChatScreen(
-                    resumeSessionId = entry.arguments?.getString("resume")?.ifBlank { null },
-                    initialShare = shareText,
-                    onOpenSessions = { navController.navigate(Routes.SESSIONS) },
-                    onNeedConnection = { navController.navigate(Routes.CONNECT) },
-                )
-            }
-            composable(TopDest.Activity.route) { ActivityScreen() }
-            composable(TopDest.Manage.route) {
-                ManageHomeScreen(onOpen = { navController.navigate(it) })
-            }
-            composable(TopDest.You.route) {
-                YouScreen(
-                    onConnect = { navController.navigate(Routes.CONNECT) },
-                    onPrivacy = { navController.navigate(Routes.PRIVACY) },
-                )
-            }
-            composable(Routes.STATUS) { StatusScreen() }
-            composable(Routes.CONFIG) { ConfigScreen() }
-            composable(Routes.API_KEYS) { ApiKeysScreen() }
-            composable(Routes.SESSIONS) {
-                SessionsScreen(
-                    onOpen = { navController.navigate("session/$it") },
-                    onResume = { navController.navigate(Routes.chat(it)) },
-                )
-            }
-            composable(
-                Routes.SESSION_DETAIL,
-                arguments = listOf(navArgument("id") { type = NavType.StringType }),
-            ) { entry ->
-                SessionDetailScreen(sessionId = entry.arguments!!.getString("id")!!)
-            }
-            composable(Routes.LOGS) { LogsScreen() }
-            composable(Routes.ANALYTICS) { AnalyticsScreen() }
-            composable(Routes.CRON) { CronScreen() }
-            composable(Routes.PROFILES) { ProfilesScreen() }
-            composable(Routes.SKILLS) { SkillsScreen() }
-            composable(Routes.MCP) { McpScreen() }
-            composable(Routes.WEBHOOKS) { WebhooksScreen() }
-            composable(Routes.PAIRING) { PairingScreen() }
-            composable(Routes.CHANNELS) { ChannelsScreen() }
-            composable(Routes.SYSTEM) { SystemScreen() }
-            composable(Routes.PRIVACY) { PrivacyScreen() }
         }
     }
     }

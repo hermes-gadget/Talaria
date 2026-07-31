@@ -13,16 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
 package com.nousresearch.talaria.feature.manage.pairing
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -33,30 +34,60 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.domain.model.PairingResponse
 import com.nousresearch.talaria.ui.components.ScreenScaffold
 import kotlinx.coroutines.launch
-import androidx.compose.ui.Modifier
 
 @Composable
 fun PairingScreen() {
     val repo = TalariaApp.instance.container.hermesRepository
     var data by remember { mutableStateOf<PairingResponse?>(null) }
+    var message by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    fun reload() = scope.launch { repo.getPairing().onSuccess { data = it } }
+
+    fun reload() = scope.launch {
+        repo.getPairing()
+            .onSuccess { data = it }
+            .onFailure { message = it.message }
+    }
     LaunchedEffect(Unit) { reload() }
+
     ScreenScaffold("Pairing", "Approve messaging users", actions = {
         TextButton(onClick = { reload() }) { Text("Refresh") }
     }) {
-        Text("Pending", style = MaterialTheme.typography.titleLarge)
+        Row {
+            OutlinedButton(onClick = {
+                scope.launch {
+                    repo.clearPendingPairing()
+                        .onSuccess {
+                            message = "Cleared pending"
+                            reload()
+                        }
+                        .onFailure { message = it.message }
+                }
+            }) { Text("Clear pending") }
+        }
+        message?.let {
+            Text(it, color = MaterialTheme.colorScheme.secondary)
+        }
         LazyColumn {
+            item {
+                Text("Pending", style = MaterialTheme.typography.titleLarge)
+            }
             items(data?.pending.orEmpty()) { p ->
-                Surface(Modifier.fillMaxWidth().padding(vertical = 4.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                Surface(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shape = MaterialTheme.shapes.medium,
+                ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text("${p.platform}: ${p.user_name ?: p.user_id}")
-                        TextButton(onClick = {
+                        Button(onClick = {
                             scope.launch {
                                 val code = p.code ?: p.request_id ?: return@launch
                                 repo.approvePairing(p.platform, code)
@@ -66,11 +97,21 @@ fun PairingScreen() {
                     }
                 }
             }
-        }
-        Text("Approved", style = MaterialTheme.typography.titleLarge)
-        LazyColumn {
+            item {
+                Text(
+                    "Approved",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+            }
             items(data?.approved.orEmpty()) { p ->
-                Surface(Modifier.fillMaxWidth().padding(vertical = 4.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                Surface(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shape = MaterialTheme.shapes.medium,
+                ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text("${p.platform}: ${p.user_name ?: p.user_id}")
                         TextButton(onClick = {

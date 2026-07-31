@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 package com.nousresearch.talaria.core.data.repo
 
 import com.nousresearch.talaria.core.data.db.ChatDraftEntity
@@ -23,16 +22,24 @@ import com.nousresearch.talaria.core.data.prefs.SecureConnectionStore
 import com.nousresearch.talaria.core.network.HermesClientFactory
 import com.nousresearch.talaria.core.network.PtyEvent
 import com.nousresearch.talaria.core.network.PtyWebSocketSession
+import com.nousresearch.talaria.core.network.WsAuthHelper
 import kotlinx.coroutines.flow.Flow
+import java.util.UUID
 
 class ChatRepository(
     private val clientFactory: HermesClientFactory,
     private val db: TalariaDatabase,
     private val connectionStore: SecureConnectionStore,
+    private val wsAuth: WsAuthHelper,
 ) {
-    fun openPty(resumeSessionId: String? = null): Pair<PtyWebSocketSession, Flow<PtyEvent>> {
-        val session = PtyWebSocketSession(clientFactory.webSocketClient(), connectionStore)
-        return session to session.connect(resumeSessionId)
+    fun openPty(
+        resumeSessionId: String? = null,
+        channelId: String = UUID.randomUUID().toString(),
+        cols: Int = 80,
+        rows: Int = 24,
+    ): Pair<PtyWebSocketSession, Flow<PtyEvent>> {
+        val session = PtyWebSocketSession(clientFactory.webSocketClient(), connectionStore, wsAuth)
+        return session to session.connect(resumeSessionId, channelId, cols, rows)
     }
 
     suspend fun saveDraft(text: String) {

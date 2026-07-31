@@ -1,0 +1,151 @@
+{
+  "groups": [
+    {
+      "id": "llm",
+      "title": "LLM Providers",
+      "keys": [
+        {
+          "key": "OPENAI_API_KEY",
+          "description": "OpenAI API key",
+          "url": "https://platform.openai.com/api-keys",
+          "advanced": false
+        },
+        {
+          "key": "ANTHROPIC_API_KEY",
+          "description": "Anthropic Claude API key",
+          "url": "https://console.anthropic.com/",
+          "advanced": false
+        },
+        {
+          "key": "GOOGLE_API_KEY",
+          "description": "Google AI / Gemini API key",
+          "url": "https://aistudio.google.com/apikey",
+          "advanced": false
+        },
+        {
+          "key": "OPENROUTER_API_KEY",
+          "description": "OpenRouter API key",
+          "url": "https://openrouter.ai/keys",
+          "advanced": false
+        },
+        {
+          "key": "GROQ_API_KEY",
+          "description": "Groq API key",
+          "url": "https://console.groq.com/keys",
+          "advanced": true
+        },
+        {
+          "key": "DEEPSEEK_API_KEY",
+          "description": "DeepSeek API key",
+          "url": "https://platform.deepseek.com/",
+          "advanced": true
+        },
+        {
+          "key": "TOGETHER_API_KEY",
+          "description": "Together AI API key",
+          "url": "https://api.together.xyz/",
+          "advanced": true
+        },
+        {
+          "key": "MISTRAL_API_KEY",
+          "description": "Mistral API key",
+          "url": "https://console.mistral.ai/",
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "id": "tools",
+      "title": "Tool APIs",
+      "keys": [
+        {
+          "key": "GITHUB_TOKEN",
+          "description": "GitHub personal access token",
+          "url": "https://github.com/settings/tokens",
+          "advanced": false
+        },
+        {
+          "key": "BRAVE_API_KEY",
+          "description": "Brave Search API key",
+          "url": "https://brave.com/search/api/",
+          "advanced": false
+        },
+        {
+          "key": "SERPER_API_KEY",
+          "description": "Serper search API key",
+          "url": "https://serper.dev/",
+          "advanced": true
+        },
+        {
+          "key": "TAVILY_API_KEY",
+          "description": "Tavily search API key",
+          "url": "https://tavily.com/",
+          "advanced": true
+        },
+        {
+          "key": "FIRECRAWL_API_KEY",
+          "description": "Firecrawl API key",
+          "url": "https://www.firecrawl.dev/",
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "id": "messaging",
+      "title": "Messaging",
+      "keys": [
+        {
+          "key": "TELEGRAM_BOT_TOKEN",
+          "description": "Telegram bot token from @BotFather",
+          "url": "https://t.me/BotFather",
+          "advanced": false
+        },
+        {
+          "key": "DISCORD_BOT_TOKEN",
+          "description": "Discord bot token",
+          "url": "https://discord.com/developers/applications",
+          "advanced": false
+        },
+        {
+          "key": "SLACK_BOT_TOKEN",
+          "description": "Slack bot token",
+          "url": "https://api.slack.com/apps",
+          "advanced": false
+        },
+        {
+          "key": "WHATSAPP_TOKEN",
+          "description": "WhatsApp Cloud API token",
+          "url": "https://developers.facebook.com/",
+          "advanced": true
+        },
+        {
+          "key": "SIGNAL_PHONE_NUMBER",
+          "description": "Signal CLI phone number",
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "id": "agent",
+      "title": "Agent",
+      "keys": [
+        {
+          "key": "HERMES_API_KEY",
+          "description": "Optional Hermes dashboard / agent key",
+          "advanced": false
+        },
+        {
+          "key": "NOUS_PORTAL_TOKEN",
+          "description": "Nous Portal access token",
+          "url": "https://portal.nousresearch.com/",
+          "advanced": false
+        },
+        {
+          "key": "HERMES_HOME",
+          "description": "Override Hermes home directory on the host",
+          "advanced": true
+        }
+      ]
+    }
+  ]
+}

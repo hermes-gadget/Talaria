@@ -13,11 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
 package com.nousresearch.talaria.feature.manage.logs
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -29,41 +28,78 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.ui.components.ScreenScaffold
-import kotlinx.coroutines.launch
-import androidx.compose.ui.Modifier
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 @Composable
 fun LogsScreen() {
     var file by remember { mutableStateOf("agent") }
+    var level by remember { mutableStateOf<String?>(null) }
+    var component by remember { mutableStateOf<String?>(null) }
     var lines by remember { mutableStateOf<List<String>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-    fun reload() {
-        scope.launch {
-            TalariaApp.instance.container.hermesRepository.getLogs(file, 200)
-                .onSuccess { lines = it }
+
+    LaunchedEffect(file, level, component) {
+        while (isActive) {
+            TalariaApp.instance.container.hermesRepository
+                .getLogs(file = file, lines = 200, level = level, component = component)
+                .onSuccess {
+                    lines = it
+                    error = null
+                }
                 .onFailure { error = it.message }
+            delay(3_000)
         }
     }
-    LaunchedEffect(file) { reload() }
-    ScreenScaffold("Logs", "Agent / gateway / errors", actions = {
-        TextButton(onClick = { reload() }) { Text("Reload") }
+
+    ScreenScaffold("Logs", "Auto-tail · 3s", actions = {
+        TextButton(onClick = { /* poll loop handles refresh */ }) { Text("Live") }
     }) {
-        Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
-            listOf("agent", "gateway", "errors").forEach { f ->
-                FilterChip(selected = file == f, onClick = { file = f }, label = { Text(f) })
+        Column {
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                listOf("agent", "gateway", "errors").forEach { f ->
+                    FilterChip(selected = file == f, onClick = { file = f }, label = { Text(f) })
+                }
             }
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                FilterChip(
+                    selected = level == null,
+                    onClick = { level = null },
+                    label = { Text("level:all") },
+                )
+                listOf("debug", "info", "warn", "error").forEach { lv ->
+                    FilterChip(
+                        selected = level == lv,
+                        onClick = { level = lv },
+                        label = { Text(lv) },
+                    )
+                }
+            }
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                FilterChip(
+                    selected = component == null,
+                    onClick = { component = null },
+                    label = { Text("component:all") },
+                )
+                listOf("gateway", "agent", "tools", "cron").forEach { c ->
+                    FilterChip(
+                        selected = component == c,
+                        onClick = { component = c },
+                        label = { Text(c) },
+                    )
+                }
+            }
+            error?.let { Text(it) }
+            Text(
+                lines.joinToString(separator = "\n"),
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            )
         }
-        error?.let { Text(it) }
-        Text(
-            lines.joinToString(separator = "\n"),
-            fontFamily = FontFamily.Monospace,
-            modifier = Modifier.verticalScroll(rememberScrollState()),
-        )
     }
 }

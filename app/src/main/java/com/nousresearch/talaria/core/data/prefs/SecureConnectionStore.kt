@@ -79,6 +79,12 @@ class SecureConnectionStore(context: Context) {
         _activeId.value = id
     }
 
+    /** Updates the Hermes management profile (`?profile=`) for the active connection. */
+    fun setManagementProfile(profileName: String) {
+        val active = activeProfile() ?: return
+        upsert(active.copy(managementProfile = profileName.trim()))
+    }
+
     fun delete(id: String) {
         persistProfiles(_profiles.value.filterNot { it.id == id })
         prefs.edit().remove(secretKey(id)).apply()
