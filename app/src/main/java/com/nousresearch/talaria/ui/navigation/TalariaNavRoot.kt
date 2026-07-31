@@ -17,14 +17,17 @@
 
 package com.nousresearch.talaria.ui.navigation
 
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.ManageAccounts
 import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -33,11 +36,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.Modifier
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.nousresearch.talaria.TalariaApp
@@ -62,7 +64,6 @@ import com.nousresearch.talaria.feature.manage.system.SystemScreen
 import com.nousresearch.talaria.feature.manage.webhooks.WebhooksScreen
 import com.nousresearch.talaria.feature.you.PrivacyScreen
 import com.nousresearch.talaria.feature.you.YouScreen
-import androidx.compose.ui.Modifier
 
 @Composable
 fun TalariaNavRoot(
@@ -75,7 +76,6 @@ fun TalariaNavRoot(
     val profiles by TalariaApp.instance.container.connectionStore.profiles.collectAsState()
     val start = if (profiles.isEmpty()) Routes.CONNECT else TopDest.Chats.route
     var currentTop by remember { mutableStateOf(TopDest.Chats.route) }
-    val backStack by navController.currentBackStackEntryAsState()
 
     LaunchedEffect(shareText) {
         if (!shareText.isNullOrBlank()) {
@@ -97,7 +97,18 @@ fun TalariaNavRoot(
         onDeepLinkConsumed()
     }
 
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+    ) {
     NavigationSuiteScaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onBackground,
+        navigationSuiteColors = NavigationSuiteDefaults.colors(
+            navigationBarContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+            navigationRailContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+            navigationDrawerContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+        ),
         navigationSuiteItems = {
             item(
                 selected = currentTop == TopDest.Chats.route,
@@ -105,7 +116,7 @@ fun TalariaNavRoot(
                     currentTop = TopDest.Chats.route
                     navController.navigate(TopDest.Chats.route) { launchSingleTop = true }
                 },
-                icon = { Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null) },
+                icon = { Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = TopDest.Chats.label) },
                 label = { Text(TopDest.Chats.label) },
             )
             item(
@@ -114,7 +125,7 @@ fun TalariaNavRoot(
                     currentTop = TopDest.Activity.route
                     navController.navigate(TopDest.Activity.route) { launchSingleTop = true }
                 },
-                icon = { Icon(Icons.Outlined.NotificationsNone, contentDescription = null) },
+                icon = { Icon(Icons.Outlined.NotificationsNone, contentDescription = TopDest.Activity.label) },
                 label = { Text(TopDest.Activity.label) },
             )
             item(
@@ -123,7 +134,7 @@ fun TalariaNavRoot(
                     currentTop = TopDest.Manage.route
                     navController.navigate(TopDest.Manage.route) { launchSingleTop = true }
                 },
-                icon = { Icon(Icons.Outlined.ManageAccounts, contentDescription = null) },
+                icon = { Icon(Icons.Outlined.ManageAccounts, contentDescription = TopDest.Manage.label) },
                 label = { Text(TopDest.Manage.label) },
             )
             item(
@@ -132,12 +143,17 @@ fun TalariaNavRoot(
                     currentTop = TopDest.You.route
                     navController.navigate(TopDest.You.route) { launchSingleTop = true }
                 },
-                icon = { Icon(Icons.Outlined.PersonOutline, contentDescription = null) },
+                icon = { Icon(Icons.Outlined.PersonOutline, contentDescription = TopDest.You.label) },
                 label = { Text(TopDest.You.label) },
             )
         },
     ) {
-        NavHost(navController = navController, startDestination = start, modifier = Modifier.padding()) {
+        // Screens apply status/cutout insets via TopAppBar; suite handles bottom system bars.
+        NavHost(
+            navController = navController,
+            startDestination = start,
+            modifier = Modifier.fillMaxSize(),
+        ) {
             composable(Routes.CONNECT) {
                 ConnectScreen(
                     onConnected = {
@@ -202,5 +218,6 @@ fun TalariaNavRoot(
             composable(Routes.SYSTEM) { SystemScreen() }
             composable(Routes.PRIVACY) { PrivacyScreen() }
         }
+    }
     }
 }

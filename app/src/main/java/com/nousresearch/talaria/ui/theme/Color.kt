@@ -14,17 +14,29 @@
  * limitations under the License.
  */
 
-
 package com.nousresearch.talaria.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
+// Hermes brand tokens (fallback when Material You dynamic color is off)
 val HermesVoid = Color(0xFF0B0D12)
 val HermesInk = Color(0xFF12151C)
 val HermesPanel = Color(0xFF1A1F2B)
+val HermesPanelHigh = Color(0xFF242B3A)
 val HermesEmber = Color(0xFFE8A45C)
+val HermesEmberContainer = Color(0xFF3D2A14)
 val HermesWing = Color(0xFF7EB8FF)
+val HermesWingContainer = Color(0xFF1A3355)
 val HermesMist = Color(0xFFB8C0D0)
+val HermesOutline = Color(0xFF3E4656)
 val HermesOk = Color(0xFF6FCF97)
 val HermesWarn = Color(0xFFF2C94C)
 val HermesDanger = Color(0xFFEB5757)
+
+// Light brand tokens
+val HermesLightBg = Color(0xFFF4F6FA)
+val HermesLightSurface = Color(0xFFFFFFFF)
+val HermesLightPrimary = Color(0xFF8A5520)
+val HermesLightSecondary = Color(0xFF2F5F99)
+val HermesLightOn = Color(0xFF12151C)
+val HermesLightOutline = Color(0xFFC5CAD6)

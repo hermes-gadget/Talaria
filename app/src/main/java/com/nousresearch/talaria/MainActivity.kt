@@ -19,11 +19,20 @@ package com.nousresearch.talaria
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.core.view.WindowCompat
+import com.nousresearch.talaria.core.data.prefs.ThemeMode
 import com.nousresearch.talaria.ui.navigation.TalariaNavRoot
 import com.nousresearch.talaria.ui.theme.TalariaTheme
 
@@ -32,11 +41,22 @@ class MainActivity : ComponentActivity() {
     private var deepLink by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.auto(
+                lightScrim = Color.Transparent.toArgb(),
+                darkScrim = Color.Transparent.toArgb(),
+            ),
+            navigationBarStyle = SystemBarStyle.auto(
+                lightScrim = Color.Transparent.toArgb(),
+                darkScrim = Color.Transparent.toArgb(),
+            ),
+        )
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         handleIntent(intent)
         setContent {
             TalariaTheme {
+                SystemBarsForTheme(this)
                 TalariaNavRoot(
                     shareText = shareText,
                     deepLink = deepLink,
@@ -61,5 +81,37 @@ class MainActivity : ComponentActivity() {
             }
             Intent.ACTION_VIEW -> deepLink = intent.data?.toString()
         }
+    }
+}
+
+@Composable
+private fun SystemBarsForTheme(activity: ComponentActivity) {
+    val settings = TalariaApp.instance.container.settingsStore
+    val themeMode by settings.themeModeFlow.collectAsState()
+    val dark = when (themeMode) {
+        ThemeMode.DARK -> true
+        ThemeMode.LIGHT -> false
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+    }
+    DisposableEffect(dark) {
+        activity.enableEdgeToEdge(
+            statusBarStyle = if (dark) {
+                SystemBarStyle.dark(Color.Transparent.toArgb())
+            } else {
+                SystemBarStyle.light(
+                    Color.Transparent.toArgb(),
+                    Color.Transparent.toArgb(),
+                )
+            },
+            navigationBarStyle = if (dark) {
+                SystemBarStyle.dark(Color.Transparent.toArgb())
+            } else {
+                SystemBarStyle.light(
+                    Color.Transparent.toArgb(),
+                    Color.Transparent.toArgb(),
+                )
+            },
+        )
+        onDispose { }
     }
 }
