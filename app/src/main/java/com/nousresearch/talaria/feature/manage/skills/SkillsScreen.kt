@@ -193,19 +193,36 @@ fun SkillsScreen() {
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
                         shape = MaterialTheme.shapes.medium,
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(ts.label ?: ts.name, style = MaterialTheme.typography.titleLarge)
-                            Text(ts.description ?: "")
-                            Text(
-                                "active=${ts.active} configured=${ts.configured}",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                            if (ts.tools.isNotEmpty()) {
-                                Text(
-                                    "tools: ${ts.tools.joinToString()}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(ts.label ?: ts.name, style = MaterialTheme.typography.titleMedium)
+                                ts.description?.takeIf { it.isNotBlank() }?.let {
+                                    Text(
+                                        it,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                if (ts.tools.isNotEmpty()) {
+                                    Text(
+                                        ts.tools.joinToString(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
+                            val on = ts.enabled ?: ts.active ?: false
+                            Switch(
+                                checked = on,
+                                enabled = ts.available != false,
+                                onCheckedChange = { enabled ->
+                                    scope.launch {
+                                        repo.setToolsetEnabled(ts.name, enabled)
+                                            .onSuccess { reloadToolsets() }
+                                            .onFailure { message = it.message }
+                                    }
+                                },
+                            )
                         }
                     }
                 }

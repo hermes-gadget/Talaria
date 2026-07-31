@@ -57,8 +57,6 @@ fun SystemScreen() {
     var backup by remember { mutableStateOf<String?>(null) }
     var update by remember { mutableStateOf<String?>(null) }
     var portal by remember { mutableStateOf<String?>(null) }
-    var memory by remember { mutableStateOf<String?>(null) }
-    var curator by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -79,8 +77,6 @@ fun SystemScreen() {
     LaunchedEffect(Unit) {
         reloadStats()
         repo.getPortal().onSuccess { portal = pretty(it) }
-        repo.getMemory().onSuccess { memory = pretty(it) }
-        repo.getCurator().onSuccess { curator = pretty(it) }
     }
 
     ScreenScaffold("System", "Host stats & gateway ops", actions = {
@@ -200,28 +196,8 @@ fun SystemScreen() {
                         }) { Text("Refresh portal") }
                         portal?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
-
-                    Section("Memory") {
-                        OutlinedButton(onClick = {
-                            scope.launch {
-                                repo.getMemory()
-                                    .onSuccess { memory = pretty(it) }
-                                    .onFailure { memory = it.message }
-                            }
-                        }) { Text("Refresh memory") }
-                        memory?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                    }
-
-                    Section("Curator") {
-                        OutlinedButton(onClick = {
-                            scope.launch {
-                                repo.getCurator()
-                                    .onSuccess { curator = pretty(it) }
-                                    .onFailure { curator = it.message }
-                            }
-                        }) { Text("Refresh curator") }
-                        curator?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                    }
+                    // Memory & Curator now have dedicated structured screens
+                    // (Manage → System group), not raw-JSON sections here.
                 }
             }
         }

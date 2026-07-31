@@ -59,7 +59,7 @@ fun ActivityScreen(onOpen: ((String) -> Unit)? = null) {
         events.filter { filter.match(it.type) || filter.match(it.title) }
     }
 
-    ScreenScaffold("Activity", "Local timeline of sync, pairing, and errors") {
+    ScreenScaffold("Activity", showProfileSwitcher = true) {
         Column {
             Row(
                 Modifier

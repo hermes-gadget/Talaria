@@ -48,6 +48,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.nousresearch.talaria.ui.theme.LocalSpacing
 
 /**
  * Standard screen chrome: Material 3 Scaffold + TopAppBar with status/cutout insets.
@@ -61,9 +62,11 @@ fun ScreenScaffold(
     title: String,
     subtitle: String? = null,
     actions: @Composable (() -> Unit)? = null,
+    showProfileSwitcher: Boolean = false,
     padNavigationBars: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    val spacing = LocalSpacing.current
     val topBarInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout)
     val contentInsets = if (padNavigationBars) {
         ScaffoldDefaults.contentWindowInsets
@@ -79,11 +82,13 @@ fun ScreenScaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(title, style = MaterialTheme.typography.titleLarge)
+                    // Single dense line: sans titleMedium. Subtitle only when it
+                    // adds live info (status/time) rather than restating the tab.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(title, style = MaterialTheme.typography.titleMedium)
                         if (subtitle != null) {
                             Text(
-                                subtitle,
+                                "  ·  $subtitle",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -91,13 +96,12 @@ fun ScreenScaffold(
                     }
                 },
                 actions = {
-                    if (actions != null) {
-                        Row(
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            actions()
-                        }
+                    Row(
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        actions?.invoke()
+                        if (showProfileSwitcher) ProfileSwitcherChip()
                     }
                 },
                 windowInsets = topBarInsets,
@@ -114,7 +118,7 @@ fun ScreenScaffold(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = spacing.screenH, vertical = spacing.screenV),
         ) {
             content()
         }

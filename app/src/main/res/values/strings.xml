@@ -17,5 +17,6 @@
     <string name="notif_action_reply">Reply</string>
     <string name="notif_action_open">Open</string>
     <string name="notif_action_dismiss">Dismiss</string>
+    <string name="notif_action_approve">Approve</string>
     <string name="privacy_zero_telemetry">Talaria sends no telemetry by default.</string>
 </resources>

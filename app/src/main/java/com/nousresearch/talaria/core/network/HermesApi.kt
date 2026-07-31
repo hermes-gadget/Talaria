@@ -254,6 +254,13 @@ interface HermesApi {
     @GET("api/tools/toolsets")
     suspend fun getToolsets(@Query("profile") profile: String? = null): JsonElement
 
+    @PUT("api/tools/toolsets/{name}")
+    suspend fun setToolset(
+        @Path("name") name: String,
+        @Body body: JsonObject,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
+
     /** Password login for basic auth provider (form-encoded auth/password-login). */
     @POST("auth/password-login")
     suspend fun passwordLogin(@Body body: RequestBody): Response<ResponseBody>

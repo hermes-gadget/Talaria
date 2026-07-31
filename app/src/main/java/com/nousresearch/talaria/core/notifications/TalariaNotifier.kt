@@ -57,9 +57,21 @@ class TalariaNotifier(
         show(NotificationChannels.GATEWAY, "gateway".hashCode(), title, body, "talaria://connect")
     }
 
-    fun notifyPairing(title: String, body: String) {
+    fun notifyPairing(
+        title: String,
+        body: String,
+        platform: String? = null,
+        code: String? = null,
+    ) {
         if (!settings.notificationsEnabled || !settings.notifyPairing) return
-        show(NotificationChannels.PAIRING, body.hashCode(), title, body, "talaria://pairing")
+        show(
+            channel = NotificationChannels.PAIRING,
+            id = body.hashCode(),
+            title = title,
+            body = body,
+            deepLink = "talaria://pairing",
+            approvePairing = if (platform != null && code != null) platform to code else null,
+        )
     }
 
     fun notifyError(title: String, body: String) {
@@ -79,6 +91,7 @@ class TalariaNotifier(
         body: String,
         deepLink: String,
         actionableReply: Boolean = false,
+        approvePairing: Pair<String, String>? = null,
     ) {
         if (!hasPermission()) return
         val openIntent = Intent(context, MainActivity::class.java).apply {
@@ -127,6 +140,21 @@ class TalariaNotifier(
                     .addRemoteInput(remoteInput)
                     .build(),
             )
+        }
+
+        if (approvePairing != null) {
+            val (platform, code) = approvePairing
+            val approvePi = PendingIntent.getBroadcast(
+                context, id + 33,
+                Intent(context, NotificationActionReceiver::class.java).apply {
+                    action = NotificationActionReceiver.ACTION_APPROVE_PAIRING
+                    putExtra(NotificationActionReceiver.EXTRA_NOTIF_ID, id)
+                    putExtra(NotificationActionReceiver.EXTRA_PAIR_PLATFORM, platform)
+                    putExtra(NotificationActionReceiver.EXTRA_PAIR_CODE, code)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            builder.addAction(0, context.getString(R.string.notif_action_approve), approvePi)
         }
         NotificationManagerCompat.from(context).notify(id, builder.build())
     }

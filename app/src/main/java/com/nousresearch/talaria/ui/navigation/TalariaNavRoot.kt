@@ -18,7 +18,10 @@
 package com.nousresearch.talaria.ui.navigation
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.ManageAccounts
@@ -61,11 +64,11 @@ import com.nousresearch.talaria.feature.manage.sessions.SessionDetailScreen
 import com.nousresearch.talaria.feature.manage.sessions.SessionsScreen
 import com.nousresearch.talaria.feature.manage.skills.SkillsScreen
 import com.nousresearch.talaria.feature.manage.status.StatusScreen
+import com.nousresearch.talaria.feature.manage.curator.CuratorScreen
+import com.nousresearch.talaria.feature.manage.memory.MemoryScreen
 import com.nousresearch.talaria.feature.manage.system.SystemScreen
 import com.nousresearch.talaria.feature.manage.webhooks.WebhooksScreen
-import com.nousresearch.talaria.feature.you.PrivacyScreen
 import com.nousresearch.talaria.feature.you.YouScreen
-import com.nousresearch.talaria.ui.components.ProfileSwitcherBar
 
 @Composable
 fun TalariaNavRoot(
@@ -158,13 +161,15 @@ fun TalariaNavRoot(
             )
         },
     ) {
-        // Screens apply status/cutout insets via TopAppBar; suite handles bottom system bars.
-        Column(modifier = Modifier.fillMaxSize()) {
-            if (profiles.isNotEmpty()) {
-                // Global management-profile switcher (web sidebar ?profile= parity).
-                // Switching stops the chat sidecar; reopen Chat to reconnect with the new profile.
-                ProfileSwitcherBar()
-            }
+        // Apply the status-bar inset ONCE here (and consume it) so per-screen
+        // TopAppBars don't add a second status-bar band of empty space beneath it.
+        // The management-profile switcher now lives as a compact chip in each
+        // top-level screen's top bar (ProfileSwitcherChip), not a global strip.
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.statusBars),
+        ) {
             NavHost(
                 navController = navController,
                 startDestination = start,
@@ -227,7 +232,6 @@ fun TalariaNavRoot(
                 composable(TopDest.You.route) {
                     YouScreen(
                         onConnect = { navController.navigate(Routes.CONNECT) },
-                        onPrivacy = { navController.navigate(Routes.PRIVACY) },
                     )
                 }
                 composable(Routes.STATUS) {
@@ -259,7 +263,8 @@ fun TalariaNavRoot(
                 composable(Routes.PAIRING) { PairingScreen() }
                 composable(Routes.CHANNELS) { ChannelsScreen() }
                 composable(Routes.SYSTEM) { SystemScreen() }
-                composable(Routes.PRIVACY) { PrivacyScreen() }
+                composable(Routes.MEMORY) { MemoryScreen() }
+                composable(Routes.CURATOR) { CuratorScreen() }
             }
         }
     }

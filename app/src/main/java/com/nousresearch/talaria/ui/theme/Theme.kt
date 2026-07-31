@@ -25,6 +25,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -47,9 +48,9 @@ private val HermesDarkScheme = darkColorScheme(
     tertiaryContainer = HermesPanelHigh,
     onTertiaryContainer = HermesMist,
     background = HermesVoid,
-    onBackground = HermesMist,
+    onBackground = HermesText,
     surface = HermesInk,
-    onSurface = HermesMist,
+    onSurface = HermesText,
     surfaceVariant = HermesPanel,
     onSurfaceVariant = HermesMist,
     surfaceTint = HermesEmber,
@@ -125,12 +126,14 @@ fun TalariaTheme(content: @Composable () -> Unit) {
         darkTheme = dark,
         dynamicColor = dynamicColor,
     )
-    MaterialTheme(
-        colorScheme = scheme,
-        typography = TalariaTypography,
-        shapes = TalariaShapes,
-        content = content,
-    )
+    CompositionLocalProvider(LocalSpacing provides Spacing()) {
+        MaterialTheme(
+            colorScheme = scheme,
+            typography = TalariaTypography,
+            shapes = TalariaShapes,
+            content = content,
+        )
+    }
 }
 
 @Composable

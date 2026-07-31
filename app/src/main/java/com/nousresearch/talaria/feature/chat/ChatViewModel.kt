@@ -27,7 +27,6 @@ import com.nousresearch.talaria.core.network.HermesSideEvent
 import com.nousresearch.talaria.core.network.PromptKind
 import com.nousresearch.talaria.core.network.PtyEvent
 import com.nousresearch.talaria.core.network.PtyWebSocketSession
-import com.nousresearch.talaria.core.network.ToolCallStatus
 import com.nousresearch.talaria.core.notifications.TalariaNotifier
 import com.nousresearch.talaria.core.voice.SpeechCoordinator
 import com.nousresearch.talaria.core.voice.SttEvent
@@ -48,128 +47,190 @@ import java.util.UUID
 
 enum class TranscriptMode { TERMINAL, READING }
 
-data class ChatUiState(
-    val lines: List<ChatLine> = emptyList(),
-    val draft: String = "",
+/** One running Hermes agent (its own PTY + sidecar), shown as a tab. */
+data class ChatTab(
+    val id: String,
+    val title: String,
+    val channelId: String,
+    val resumeSessionId: String? = null,
+    val liveSessionId: String? = null,
     val connected: Boolean = false,
     val connecting: Boolean = false,
-    val error: String? = null,
-    val listening: Boolean = false,
-    val partialDictation: String = "",
+    val lines: List<ChatLine> = emptyList(),
+    val readingMessages: List<ChatLine> = emptyList(),
+    val tools: List<ToolCallUi> = emptyList(),
     val modelLabel: String? = null,
     val modelConnected: Boolean? = null,
-    val tools: List<ToolCallUi> = emptyList(),
+    // Live agent status from the sidecar `session.info` frame.
+    val provider: String? = null,
+    val reasoningEffort: String? = null,
+    val approvalMode: String? = null,
+    val yolo: Boolean = false,
+    // Token/cost accounting when the provider emits it.
+    val totalTokens: Long? = null,
+    val costUsd: Double? = null,
+    val prompt: ChatPromptUi? = null,
+    val error: String? = null,
+    val draft: String = "",
+    val hasSent: Boolean = false,
+)
+
+data class ChatUiState(
+    val tabs: List<ChatTab> = emptyList(),
+    val activeTabId: String? = null,
+    val transcriptMode: TranscriptMode = TranscriptMode.READING,
+    val listening: Boolean = false,
+    val partialDictation: String = "",
     val sessions: List<SessionSummary> = emptyList(),
     val modelOptions: List<ModelOption> = emptyList(),
     val showSessionRail: Boolean = false,
     val showModelPicker: Boolean = false,
     val showSlashPalette: Boolean = false,
     val slashSuggestions: List<SlashCommand> = emptyList(),
-    val prompt: ChatPromptUi? = null,
-    val resumeSessionId: String? = null,
-    val transcriptMode: TranscriptMode = TranscriptMode.TERMINAL,
-    val readingMessages: List<ChatLine> = emptyList(),
-    val channelId: String? = null,
-)
+) {
+    val active: ChatTab? get() = tabs.firstOrNull { it.id == activeTabId } ?: tabs.firstOrNull()
+}
 
 data class ChatPromptUi(
     val kind: PromptKind,
     val message: String,
 )
 
+private class SessionRuntime(
+    val session: PtyWebSocketSession,
+    val eventClient: HermesEventClient,
+    var collectJob: Job? = null,
+    var sideJob: Job? = null,
+    var readingJob: Job? = null,
+    var assistantBuffer: StringBuilder = StringBuilder(),
+    var readingSessionId: String? = null,
+    // Sessions that already existed when this tab opened; its own session is a
+    // NEW id that appears afterwards, which lets concurrent tabs each claim theirs.
+    var baselineSessions: Set<String> = emptySet(),
+    var baselineReady: Boolean = false,
+)
+
 class ChatViewModel(
     private val chatRepository: ChatRepository = TalariaApp.instance.container.chatRepository,
     private val hermesRepository: HermesRepository = TalariaApp.instance.container.hermesRepository,
-    private val eventClient: HermesEventClient = TalariaApp.instance.container.eventClient,
     private val speech: SpeechCoordinator = TalariaApp.instance.container.speechCoordinator,
     private val tts: TtsSpeaker = TalariaApp.instance.container.ttsSpeaker,
     private val notifier: TalariaNotifier = TalariaApp.instance.container.notifier,
 ) : ViewModel() {
+    private val container = TalariaApp.instance.container
     private val _ui = MutableStateFlow(ChatUiState())
     val ui: StateFlow<ChatUiState> = _ui.asStateFlow()
 
-    private var session: PtyWebSocketSession? = null
-    private var collectJob: Job? = null
-    private var sideJob: Job? = null
+    private val runtimes = mutableMapOf<String, SessionRuntime>()
+    /** Hermes session ids already mapped to a tab, so concurrent tabs don't collide. */
+    private val claimedSessions = mutableSetOf<String>()
+    private var sessionCounter = 0
     private var sttJob: Job? = null
-    private var assistantBuffer = StringBuilder()
+    private var lastCols = 80
+    private var lastRows = 24
+    private var initialDraft: String = ""
 
     init {
-        viewModelScope.launch {
-            val draft = chatRepository.loadDraft()
-            _ui.update { it.copy(draft = draft) }
-        }
-        viewModelScope.launch {
-            hermesRepository.getModelInfo().onSuccess { info ->
-                _ui.update { it.copy(modelLabel = info.model, modelConnected = info.connected) }
-            }
+        viewModelScope.launch { initialDraft = chatRepository.loadDraft() }
+    }
+
+    /** Called by the screen: make sure at least one session exists (optionally resuming). */
+    fun ensureStarted(resume: String? = null) {
+        if (_ui.value.tabs.isEmpty()) {
+            newSession(resume = resume, draft = initialDraft)
+        } else if (!resume.isNullOrBlank() && _ui.value.tabs.none { it.resumeSessionId == resume }) {
+            newSession(resume = resume)
         }
     }
 
-    fun connect(resume: String? = null) {
-        collectJob?.cancel()
-        sideJob?.cancel()
-        session?.close()
-        eventClient.stop()
+    /** Open a brand-new concurrent agent in its own tab and focus it. */
+    fun newSession(resume: String? = null, titleOverride: String? = null, draft: String = "") {
+        val id = UUID.randomUUID().toString()
         val channel = UUID.randomUUID().toString()
+        sessionCounter += 1
+        val title = titleOverride ?: "Agent $sessionCounter"
+        val eventClient = HermesEventClient(
+            container.clientFactory,
+            container.connectionStore,
+            container.wsAuthHelper,
+        )
+        val (pty, flow) = chatRepository.openPty(resume, channel, lastCols, lastRows)
+        val rt = SessionRuntime(session = pty, eventClient = eventClient)
+        runtimes[id] = rt
+
         _ui.update {
             it.copy(
-                connecting = true,
-                error = null,
-                connected = false,
-                resumeSessionId = resume,
-                channelId = channel,
-                tools = emptyList(),
-                lines = if (resume != null) it.lines else emptyList(),
+                tabs = it.tabs + ChatTab(
+                    id = id,
+                    title = title,
+                    channelId = channel,
+                    resumeSessionId = resume,
+                    liveSessionId = resume,
+                    connecting = true,
+                    draft = draft,
+                ),
+                activeTabId = id,
             )
         }
-        eventClient.start(channel)
-        sideJob = viewModelScope.launch {
-            eventClient.events.collect { handleSideEvent(it) }
+        resume?.let { claimedSessions.add(it) }
+
+        viewModelScope.launch {
+            hermesRepository.getModelInfo().onSuccess { info ->
+                updateTab(id) { it.copy(modelLabel = info.model, modelConnected = info.connected) }
+            }
         }
-        val (pty, flow) = chatRepository.openPty(resume, channel)
-        session = pty
-        collectJob = viewModelScope.launch {
+
+        eventClient.start(channel)
+        rt.sideJob = viewModelScope.launch {
+            eventClient.events.collect { handleSideEvent(id, it) }
+        }
+        rt.collectJob = viewModelScope.launch {
             try {
-                flow.collect { event ->
-                    when (event) {
-                        is PtyEvent.Connected -> _ui.update {
-                            it.copy(connecting = false, connected = true, channelId = event.channel)
-                        }
-                        is PtyEvent.Output -> appendAssistant(event.text)
-                        is PtyEvent.Closed -> {
-                            finalizeAssistant()
-                            _ui.update { it.copy(connected = false, connecting = false) }
-                        }
-                        is PtyEvent.Failure -> {
-                            _ui.update {
-                                it.copy(error = event.message, connecting = false, connected = false)
-                            }
-                            notifier.notifyError("Chat disconnected", event.message)
-                        }
-                    }
-                }
+                flow.collect { event -> handlePtyEvent(id, event) }
             } catch (t: Throwable) {
-                _ui.update {
-                    it.copy(
-                        error = t.message ?: "Chat connection failed",
-                        connecting = false,
-                        connected = false,
-                    )
+                updateTab(id) {
+                    it.copy(error = t.message ?: "Chat connection failed", connecting = false, connected = false)
                 }
             }
         }
-        if (!resume.isNullOrBlank()) loadReading(resume)
-        refreshSessions()
+        // Snapshot existing sessions so this tab only claims the new one it creates.
+        viewModelScope.launch {
+            val list = hermesRepository.refreshSessions().getOrNull().orEmpty()
+            rt.baselineSessions = list.map { it.id }.toSet()
+            rt.baselineReady = true
+            _ui.update { it.copy(sessions = list.take(40)) }
+        }
+        if (!resume.isNullOrBlank()) loadReading(id, resume)
+        startReadingPoll(id)
     }
 
-    fun newChat() {
-        connect(resume = null)
+    fun switchTab(tabId: String) {
+        _ui.update { it.copy(activeTabId = tabId) }
+    }
+
+    fun closeTab(tabId: String) {
+        val rt = runtimes.remove(tabId)
+        rt?.collectJob?.cancel()
+        rt?.sideJob?.cancel()
+        rt?.readingJob?.cancel()
+        rt?.session?.close()
+        rt?.eventClient?.dispose()
+        _ui.value.tabs.firstOrNull { it.id == tabId }?.liveSessionId?.let { claimedSessions.remove(it) }
+        _ui.update { state ->
+            val remaining = state.tabs.filterNot { it.id == tabId }
+            state.copy(
+                tabs = remaining,
+                activeTabId = if (state.activeTabId == tabId) remaining.lastOrNull()?.id else state.activeTabId,
+            )
+        }
+        // Never leave the user on an empty Chats tab.
+        if (_ui.value.tabs.isEmpty()) newSession()
     }
 
     fun resumeSession(id: String) {
         _ui.update { it.copy(showSessionRail = false) }
-        connect(resume = id)
+        val existing = _ui.value.tabs.firstOrNull { it.resumeSessionId == id || it.liveSessionId == id }
+        if (existing != null) switchTab(existing.id) else newSession(resume = id)
     }
 
     fun refreshSessions() {
@@ -197,80 +258,92 @@ class ChatViewModel(
     }
 
     fun selectModel(option: ModelOption) {
-        val id = option.id ?: option.name ?: option.label ?: return
+        val modelId = option.id ?: option.name ?: option.label ?: return
+        val tabId = _ui.value.active?.id ?: return
         viewModelScope.launch {
-            hermesRepository.setModel(id).onSuccess {
-                _ui.update { it.copy(modelLabel = id, showModelPicker = false) }
-                session?.sendText("/model $id")
+            hermesRepository.setModel(modelId).onSuccess {
+                updateTab(tabId) { it.copy(modelLabel = modelId) }
+                _ui.update { it.copy(showModelPicker = false) }
+                runtimes[tabId]?.session?.sendText("/model $modelId")
             }.onFailure { e ->
-                _ui.update { it.copy(error = e.message ?: "Failed to set model") }
+                updateTab(tabId) { it.copy(error = e.message ?: "Failed to set model") }
             }
         }
     }
 
     fun setTranscriptMode(mode: TranscriptMode) {
         _ui.update { it.copy(transcriptMode = mode) }
-        val resume = _ui.value.resumeSessionId
-        if (mode == TranscriptMode.READING && !resume.isNullOrBlank()) loadReading(resume)
+        val tab = _ui.value.active ?: return
+        val resume = tab.liveSessionId ?: tab.resumeSessionId
+        if (mode == TranscriptMode.READING && !resume.isNullOrBlank()) loadReading(tab.id, resume)
     }
 
     fun updateDraft(text: String) {
+        val tabId = _ui.value.active?.id ?: return
         val slash = text.startsWith('/') && !text.contains(' ')
         val suggestions = if (slash) {
             SlashCommands.defaults.filter { it.command.startsWith(text, ignoreCase = true) }
         } else {
             emptyList()
         }
+        updateTab(tabId) { it.copy(draft = text) }
         _ui.update {
-            it.copy(
-                draft = text,
-                showSlashPalette = suggestions.isNotEmpty(),
-                slashSuggestions = suggestions,
-            )
+            it.copy(showSlashPalette = suggestions.isNotEmpty(), slashSuggestions = suggestions)
         }
         viewModelScope.launch { chatRepository.saveDraft(text) }
     }
 
     fun pickSlash(cmd: SlashCommand) {
-        // Bare commands (no trailing args placeholder) send immediately; others insert for editing.
         val needsArgs = cmd.command.trimEnd().endsWith(" ") ||
             (cmd.description?.contains("arg", ignoreCase = true) == true)
+        val tabId = _ui.value.active?.id ?: return
         if (!needsArgs && !cmd.command.contains(' ')) {
-            _ui.update { it.copy(draft = "", showSlashPalette = false) }
+            updateTab(tabId) { it.copy(draft = "") }
+            _ui.update { it.copy(showSlashPalette = false) }
             send(cmd.command)
         } else {
-            _ui.update { it.copy(draft = cmd.command.trimEnd() + " ", showSlashPalette = false) }
+            updateTab(tabId) { it.copy(draft = cmd.command.trimEnd() + " ") }
+            _ui.update { it.copy(showSlashPalette = false) }
         }
     }
 
-    fun send(text: String = _ui.value.draft) {
+    fun send(text: String = _ui.value.active?.draft.orEmpty()) {
         val payload = text.trim()
         if (payload.isEmpty()) return
-        _ui.update {
+        val tabId = _ui.value.active?.id ?: return
+        val rt = runtimes[tabId] ?: return
+        val userLine = ChatLine(UUID.randomUUID().toString(), "user", payload)
+        updateTab(tabId) {
             it.copy(
                 draft = "",
-                showSlashPalette = false,
-                lines = it.lines + ChatLine(UUID.randomUUID().toString(), "user", payload),
+                lines = it.lines + userLine,
+                readingMessages = it.readingMessages + userLine,
+                hasSent = true,
             )
         }
-        assistantBuffer = StringBuilder()
-        session?.sendText(payload)
+        _ui.update { it.copy(showSlashPalette = false) }
+        rt.assistantBuffer = StringBuilder()
+        rt.session.sendText(payload)
         viewModelScope.launch { chatRepository.saveDraft("") }
     }
 
     fun resizePty(cols: Int, rows: Int) {
-        session?.resize(cols.coerceIn(20, 200), rows.coerceIn(10, 80))
+        lastCols = cols.coerceIn(20, 200)
+        lastRows = rows.coerceIn(10, 80)
+        runtimes.values.forEach { it.session.resize(lastCols, lastRows) }
     }
 
     fun respondPrompt(approved: Boolean, text: String? = null) {
-        eventClient.respondPrompt(approved, text)
-        if (text != null) session?.sendText(text)
-        else session?.sendText(if (approved) "y" else "n")
-        _ui.update { it.copy(prompt = null) }
+        val tabId = _ui.value.active?.id ?: return
+        val rt = runtimes[tabId] ?: return
+        rt.eventClient.respondPrompt(approved, text)
+        if (text != null) rt.session.sendText(text) else rt.session.sendText(if (approved) "y" else "n")
+        updateTab(tabId) { it.copy(prompt = null) }
     }
 
     fun dismissPrompt() {
-        _ui.update { it.copy(prompt = null) }
+        val tabId = _ui.value.active?.id ?: return
+        updateTab(tabId) { it.copy(prompt = null) }
     }
 
     fun toggleListen() {
@@ -285,42 +358,113 @@ class ChatViewModel(
                 when (event) {
                     is SttEvent.Partial -> _ui.update { it.copy(partialDictation = event.text) }
                     is SttEvent.Final -> {
-                        val merged = (_ui.value.draft + " " + event.text).trim()
+                        val merged = (_ui.value.active?.draft.orEmpty() + " " + event.text).trim()
                         updateDraft(merged)
                         _ui.update { it.copy(partialDictation = "") }
                     }
-                    is SttEvent.Error -> _ui.update { it.copy(listening = false, error = event.message) }
+                    is SttEvent.Error -> {
+                        _ui.update { it.copy(listening = false) }
+                        _ui.value.active?.id?.let { id -> updateTab(id) { t -> t.copy(error = event.message) } }
+                    }
                     else -> Unit
                 }
             }
         }
     }
 
-    private fun loadReading(sessionId: String) {
-        viewModelScope.launch {
-            hermesRepository.loadMessages(sessionId).onSuccess { msgs ->
-                val lines = msgs.mapIndexed { idx, m ->
-                    ChatLine(
-                        id = "$sessionId-$idx",
-                        role = m.role ?: "assistant",
-                        text = m.content.orEmpty(),
-                    )
-                }
-                _ui.update { it.copy(readingMessages = lines) }
+    private fun updateTab(tabId: String, transform: (ChatTab) -> ChatTab) {
+        _ui.update { state ->
+            state.copy(tabs = state.tabs.map { if (it.id == tabId) transform(it) else it })
+        }
+    }
+
+    private fun handlePtyEvent(tabId: String, event: PtyEvent) {
+        when (event) {
+            is PtyEvent.Connected -> updateTab(tabId) { it.copy(connecting = false, connected = true) }
+            is PtyEvent.Output -> appendAssistant(tabId, event.text)
+            is PtyEvent.Closed -> {
+                finalizeAssistant(tabId)
+                updateTab(tabId) { it.copy(connected = false, connecting = false) }
+            }
+            is PtyEvent.Failure -> {
+                updateTab(tabId) { it.copy(error = event.message, connecting = false, connected = false) }
+                notifier.notifyError("Chat disconnected", event.message)
             }
         }
     }
 
-    private fun appendAssistant(text: String) {
+    /** Reading mode = clean transcript from the sessions REST API, per tab. */
+    private fun startReadingPoll(tabId: String) {
+        val rt = runtimes[tabId] ?: return
+        rt.readingJob?.cancel()
+        rt.readingJob = viewModelScope.launch {
+            while (runtimes.containsKey(tabId)) {
+                val id = discoverSessionForTab(tabId)
+                if (id != null) {
+                    if (id != _ui.value.tabs.firstOrNull { it.id == tabId }?.liveSessionId) {
+                        updateTab(tabId) { it.copy(liveSessionId = id) }
+                    }
+                    loadReading(tabId, id)
+                }
+                kotlinx.coroutines.delay(2500)
+            }
+        }
+    }
+
+    /**
+     * Map a tab to its Hermes session. Resumed tabs know it up front; new tabs
+     * claim the most-recent session not already owned by another tab (so several
+     * concurrent agents each read their own transcript).
+     */
+    private suspend fun discoverSessionForTab(tabId: String): String? {
+        val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return null
+        tab.resumeSessionId?.let { return it }
+        tab.liveSessionId?.let { return it }
+        val rt = runtimes[tabId] ?: return null
+        if (!tab.hasSent || !rt.baselineReady) return null
+        val list = hermesRepository.refreshSessions().getOrNull().orEmpty()
+        // This tab's session is one that appeared AFTER it opened and isn't owned
+        // by another tab — so several concurrent agents each map to their own.
+        val candidate = list
+            .filter { it.id !in claimedSessions && it.id !in rt.baselineSessions }
+            .maxByOrNull { it.last_active ?: it.started_at ?: "" }
+            ?: return null
+        claimedSessions.add(candidate.id)
+        return candidate.id
+    }
+
+    private fun loadReading(tabId: String, sessionId: String) {
+        viewModelScope.launch {
+            hermesRepository.loadMessages(sessionId).onSuccess { msgs ->
+                val lines = msgs.mapIndexed { idx, m ->
+                    ChatLine(id = "$sessionId-$idx", role = m.role ?: "assistant", text = m.content.orEmpty())
+                }.filter { it.text.isNotBlank() }
+                val rt = runtimes[tabId] ?: return@onSuccess
+                updateTab(tabId) { tab ->
+                    // Never let a transient/empty server read wipe optimistic messages;
+                    // only replace when the server transcript is a superset of what we show.
+                    if (lines.size >= tab.readingMessages.size) {
+                        rt.readingSessionId = sessionId
+                        tab.copy(readingMessages = lines)
+                    } else {
+                        tab
+                    }
+                }
+            }
+        }
+    }
+
+    private fun appendAssistant(tabId: String, text: String) {
         if (text.isBlank()) return
-        assistantBuffer.append(text)
-        _ui.update { state ->
-            val last = state.lines.lastOrNull()
+        val rt = runtimes[tabId] ?: return
+        rt.assistantBuffer.append(text)
+        updateTab(tabId) { tab ->
+            val last = tab.lines.lastOrNull()
             if (last?.role == "assistant" && last.streaming) {
-                state.copy(lines = state.lines.dropLast(1) + last.copy(text = last.text + text))
+                tab.copy(lines = tab.lines.dropLast(1) + last.copy(text = last.text + text))
             } else {
-                state.copy(
-                    lines = state.lines + ChatLine(
+                tab.copy(
+                    lines = tab.lines + ChatLine(
                         id = UUID.randomUUID().toString(),
                         role = "assistant",
                         text = text,
@@ -331,23 +475,24 @@ class ChatViewModel(
         }
     }
 
-    private fun finalizeAssistant() {
-        val full = assistantBuffer.toString().trim()
+    private fun finalizeAssistant(tabId: String) {
+        val rt = runtimes[tabId] ?: return
+        val full = rt.assistantBuffer.toString().trim()
         if (full.isNotEmpty()) {
             tts.speak(full)
             notifier.notifyReply("Hermes", full.take(180))
         }
-        assistantBuffer = StringBuilder()
-        _ui.update { state ->
-            state.copy(lines = state.lines.map { if (it.streaming) it.copy(streaming = false) else it })
+        rt.assistantBuffer = StringBuilder()
+        updateTab(tabId) { tab ->
+            tab.copy(lines = tab.lines.map { if (it.streaming) it.copy(streaming = false) else it })
         }
     }
 
-    private fun handleSideEvent(event: HermesSideEvent) {
+    private fun handleSideEvent(tabId: String, event: HermesSideEvent) {
         when (event) {
             is HermesSideEvent.Tool -> {
-                _ui.update { state ->
-                    val existing = state.tools.indexOfFirst { it.id == event.id }
+                updateTab(tabId) { tab ->
+                    val existing = tab.tools.indexOfFirst { it.id == event.id }
                     val item = ToolCallUi(
                         id = event.id,
                         name = event.name,
@@ -355,22 +500,35 @@ class ChatViewModel(
                         argsPreview = event.argsPreview?.take(240),
                         message = event.message,
                     )
-                    val tools = state.tools.toMutableList()
+                    val tools = tab.tools.toMutableList()
                     if (existing >= 0) tools[existing] = item else tools.add(0, item)
-                    state.copy(tools = tools.take(20))
+                    tab.copy(tools = tools.take(20))
                 }
             }
-            is HermesSideEvent.Prompt -> {
-                _ui.update { it.copy(prompt = ChatPromptUi(event.kind, event.message)) }
+            is HermesSideEvent.Prompt -> updateTab(tabId) {
+                it.copy(prompt = ChatPromptUi(event.kind, event.message))
             }
-            is HermesSideEvent.Model -> {
-                _ui.update { it.copy(modelLabel = event.name, modelConnected = event.connected) }
+            is HermesSideEvent.Model -> updateTab(tabId) {
+                it.copy(modelLabel = event.name, modelConnected = event.connected)
             }
-            is HermesSideEvent.TransportError -> {
-                // Best-effort: PTY can still work without sidecar.
-                if (_ui.value.error == null) {
-                    _ui.update { it.copy(error = "Sidecar ${event.socket}: ${event.message}") }
-                }
+            is HermesSideEvent.SessionInfo -> updateTab(tabId) {
+                it.copy(
+                    modelLabel = event.model ?: it.modelLabel,
+                    modelConnected = it.modelConnected ?: true,
+                    provider = event.provider ?: it.provider,
+                    reasoningEffort = event.reasoningEffort ?: it.reasoningEffort,
+                    approvalMode = event.approvalMode ?: it.approvalMode,
+                    yolo = event.yolo ?: it.yolo,
+                )
+            }
+            is HermesSideEvent.Usage -> updateTab(tabId) {
+                it.copy(
+                    totalTokens = event.totalTokens ?: it.totalTokens,
+                    costUsd = event.costUsd ?: it.costUsd,
+                )
+            }
+            is HermesSideEvent.TransportError -> updateTab(tabId) {
+                if (it.error == null) it.copy(error = "Sidecar ${event.socket}: ${event.message}") else it
             }
             is HermesSideEvent.Raw -> Unit
         }
@@ -378,10 +536,14 @@ class ChatViewModel(
 
     override fun onCleared() {
         sttJob?.cancel()
-        collectJob?.cancel()
-        sideJob?.cancel()
-        session?.close()
-        eventClient.stop()
+        runtimes.values.forEach {
+            it.collectJob?.cancel()
+            it.sideJob?.cancel()
+            it.readingJob?.cancel()
+            it.session.close()
+            it.eventClient.dispose()
+        }
+        runtimes.clear()
         super.onCleared()
     }
 

@@ -142,7 +142,9 @@ class HermesEventClient(
         eventsSocket = clientFactory.webSocketClient().newWebSocket(
             req,
             object : WebSocketListener() {
-                override fun onMessage(webSocket: WebSocket, text: String) = parseSidePayload(text)
+                // The events socket speaks the same JSON-RPC `event` envelope as
+                // /api/ws, so unwrap via parseRpc (which also handles flat frames).
+                override fun onMessage(webSocket: WebSocket, text: String) = parseRpc(text)
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     _events.tryEmit(HermesSideEvent.TransportError("events", t.message ?: "events WS failed"))
                 }
@@ -178,58 +180,117 @@ class HermesEventClient(
             pendingRpc.remove(id)?.invoke(el["result"])
             return
         }
-        val method = el["method"]?.jsonPrimitive?.contentOrNull ?: return
-        val params = (el["params"] as? JsonObject) ?: JsonObject(emptyMap())
-        val merged = JsonObject(params + ("type" to JsonPrimitive(method)))
-        parseSidePayload(merged.toString())
+        // Non-result frames: classify into a typed event (pure logic below).
+        SidecarFrameParser.parse(el)?.let { _events.tryEmit(it) }
     }
+}
 
-    private fun parseSidePayload(text: String) {
-        val el = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
-        val type = el["type"]?.jsonPrimitive?.contentOrNull
-            ?: el["event"]?.jsonPrimitive?.contentOrNull
-            ?: return
-        when {
+/**
+ * Pure classifier for sidecar frames (both flat and JSON-RPC `event` envelopes).
+ * Kept side-effect-free so it can be unit-tested without sockets.
+ */
+object SidecarFrameParser {
+    fun parse(raw: String): HermesSideEvent? =
+        runCatching { JsonConfig.json.parseToJsonElement(raw).jsonObject }.getOrNull()?.let { parse(it) }
+
+    fun parse(el: JsonObject): HermesSideEvent? {
+        // Unwrap a JSON-RPC envelope. `event`-method frames carry the real event
+        // name in params.type (session.info, sessions.changed) — keep it rather
+        // than clobbering with the outer "event" method name.
+        val method = el["method"]?.jsonPrimitive?.contentOrNull
+        val frame: JsonObject = when {
+            method == null -> el
+            method == "event" -> (el["params"] as? JsonObject) ?: return null
+            else -> {
+                val params = (el["params"] as? JsonObject) ?: JsonObject(emptyMap())
+                JsonObject(params + ("type" to JsonPrimitive(method)))
+            }
+        }
+        val type = frame["type"]?.jsonPrimitive?.contentOrNull
+            ?: frame["event"]?.jsonPrimitive?.contentOrNull
+            ?: return null
+        return when {
             type.contains("tool") -> {
-                val name = el["name"]?.jsonPrimitive?.contentOrNull
-                    ?: el["tool"]?.jsonPrimitive?.contentOrNull
+                val name = frame["name"]?.jsonPrimitive?.contentOrNull
+                    ?: frame["tool"]?.jsonPrimitive?.contentOrNull
                     ?: "tool"
-                val id = el["id"]?.jsonPrimitive?.contentOrNull
-                    ?: el["call_id"]?.jsonPrimitive?.contentOrNull
+                val id = frame["id"]?.jsonPrimitive?.contentOrNull
+                    ?: frame["call_id"]?.jsonPrimitive?.contentOrNull
                     ?: name
                 val status = when {
                     type.endsWith("complete") || type.endsWith("end") || type.endsWith("done") -> ToolCallStatus.DONE
                     type.endsWith("error") || type.endsWith("fail") -> ToolCallStatus.ERROR
                     else -> ToolCallStatus.RUNNING
                 }
-                val args = el["args"]?.toString() ?: el["arguments"]?.toString()
-                _events.tryEmit(
-                    HermesSideEvent.Tool(id, name, status, args, el["message"]?.jsonPrimitive?.contentOrNull),
-                )
+                val args = frame["args"]?.toString() ?: frame["arguments"]?.toString()
+                HermesSideEvent.Tool(id, name, status, args, frame["message"]?.jsonPrimitive?.contentOrNull)
             }
             type.contains("prompt") || type.contains("approval") || type.contains("clarify") || type.contains("sudo") -> {
-                val message = el["message"]?.jsonPrimitive?.contentOrNull
-                    ?: el["prompt"]?.jsonPrimitive?.contentOrNull
+                val message = frame["message"]?.jsonPrimitive?.contentOrNull
+                    ?: frame["prompt"]?.jsonPrimitive?.contentOrNull
                     ?: "Approval required"
                 val kind = when {
                     type.contains("sudo") -> PromptKind.SUDO
                     type.contains("clarify") -> PromptKind.CLARIFY
                     else -> PromptKind.APPROVAL
                 }
-                _events.tryEmit(HermesSideEvent.Prompt(kind, message, el))
+                HermesSideEvent.Prompt(kind, message, frame)
             }
-            type.contains("model") -> {
-                val model = el["model"]?.jsonPrimitive?.contentOrNull
-                    ?: el["name"]?.jsonPrimitive?.contentOrNull
-                if (model != null) {
-                    _events.tryEmit(
-                        HermesSideEvent.Model(model, el["connected"]?.jsonPrimitive?.booleanOrNull),
-                    )
+            // Rich per-session status pushed on connect / model change.
+            type == "session.info" -> {
+                val payload = (frame["payload"] as? JsonObject) ?: frame
+                HermesSideEvent.SessionInfo(
+                    sessionId = frame["session_id"]?.jsonPrimitive?.contentOrNull,
+                    model = payload["model"]?.jsonPrimitive?.contentOrNull,
+                    provider = payload["provider"]?.jsonPrimitive?.contentOrNull,
+                    reasoningEffort = payload["reasoning_effort"]?.jsonPrimitive?.contentOrNull,
+                    approvalMode = payload["approval_mode"]?.jsonPrimitive?.contentOrNull,
+                    yolo = payload["yolo"]?.jsonPrimitive?.booleanOrNull,
+                    fast = payload["fast"]?.jsonPrimitive?.booleanOrNull,
+                )
+            }
+            // Token/cost accounting when a provider emits it (not all do).
+            type.contains("usage") || type.contains("cost") || frame.containsKey("usage") -> {
+                val usage = (frame["usage"] as? JsonObject) ?: frame
+                val prompt = usage.longField("prompt_tokens", "input_tokens", "prompt")
+                val completion = usage.longField("completion_tokens", "output_tokens", "completion")
+                val total = usage.longField("total_tokens", "tokens")
+                    ?: if (prompt != null || completion != null) (prompt ?: 0) + (completion ?: 0) else null
+                val cost = usage.doubleField("cost", "cost_usd", "total_cost")
+                if (total != null || cost != null) {
+                    HermesSideEvent.Usage(prompt, completion, total, cost)
+                } else {
+                    HermesSideEvent.Raw(type, frame)
                 }
             }
-            else -> _events.tryEmit(HermesSideEvent.Raw(type, el))
+            type.contains("model") -> {
+                val model = frame["model"]?.jsonPrimitive?.contentOrNull
+                    ?: frame["name"]?.jsonPrimitive?.contentOrNull
+                if (model != null) {
+                    HermesSideEvent.Model(model, frame["connected"]?.jsonPrimitive?.booleanOrNull)
+                } else {
+                    HermesSideEvent.Raw(type, frame)
+                }
+            }
+            else -> HermesSideEvent.Raw(type, frame)
         }
     }
+}
+
+private fun JsonObject.longField(vararg names: String): Long? {
+    for (n in names) {
+        val v = this[n]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+        if (v != null) return v
+    }
+    return null
+}
+
+private fun JsonObject.doubleField(vararg names: String): Double? {
+    for (n in names) {
+        val v = this[n]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()
+        if (v != null) return v
+    }
+    return null
 }
 
 enum class ToolCallStatus { RUNNING, DONE, ERROR }
@@ -246,6 +307,26 @@ sealed class HermesSideEvent {
 
     data class Prompt(val kind: PromptKind, val message: String, val raw: JsonObject) : HermesSideEvent()
     data class Model(val name: String, val connected: Boolean?) : HermesSideEvent()
+
+    /** Live agent config for a session (model, provider, reasoning, approval mode). */
+    data class SessionInfo(
+        val sessionId: String?,
+        val model: String?,
+        val provider: String?,
+        val reasoningEffort: String?,
+        val approvalMode: String?,
+        val yolo: Boolean?,
+        val fast: Boolean?,
+    ) : HermesSideEvent()
+
+    /** Token/cost accounting when the provider emits it. */
+    data class Usage(
+        val promptTokens: Long?,
+        val completionTokens: Long?,
+        val totalTokens: Long?,
+        val costUsd: Double?,
+    ) : HermesSideEvent()
+
     data class TransportError(val socket: String, val message: String) : HermesSideEvent()
     data class Raw(val type: String, val payload: JsonObject) : HermesSideEvent()
 }

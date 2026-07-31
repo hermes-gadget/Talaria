@@ -41,7 +41,9 @@ class SettingsStore(context: Context) {
         else -> ThemeMode.DARK
     }
 
-    private val _dynamicColor = MutableStateFlow(prefs.getBoolean("dynamic_color", true))
+    // Default OFF so the curated Hermes brand palette is what ships; users can
+    // opt into Material You dynamic color from the You screen.
+    private val _dynamicColor = MutableStateFlow(prefs.getBoolean("dynamic_color", false))
     val dynamicColorFlow: StateFlow<Boolean> = _dynamicColor.asStateFlow()
 
     private val _themeMode = MutableStateFlow(readThemeMode())
@@ -93,7 +95,7 @@ class SettingsStore(context: Context) {
 
     var cloudSttOptIn: Boolean
         get() = prefs.getBoolean("cloud_stt", false)
-        set(value) = prefs.edit { putBoolean("cloud_stt", false).putBoolean("cloud_stt", value) }
+        set(value) = prefs.edit { putBoolean("cloud_stt", value) }
 
     var httpLoggingEnabled: Boolean
         get() = prefs.getBoolean("http_log", false)
@@ -113,4 +115,21 @@ class SettingsStore(context: Context) {
             prefs.edit { putString("theme_mode", value.name) }
             _themeMode.value = value
         }
+
+    // --- Offline snapshot (Phase 13): last-good status for the widget / offline UI ---
+
+    /** One-line status summary from the last successful poll (widget + offline fallback). */
+    var cachedStatusLine: String?
+        get() = prefs.getString("cache_status_line", null)
+        set(value) = prefs.edit { putString("cache_status_line", value) }
+
+    /** Epoch millis of the last successful status poll, 0 if never. */
+    var cachedStatusUpdatedAt: Long
+        get() = prefs.getLong("cache_status_at", 0L)
+        set(value) = prefs.edit { putLong("cache_status_at", value) }
+
+    /** Pending pairing requests seen at the last poll (widget badge). */
+    var pendingPairingCount: Int
+        get() = prefs.getInt("cache_pending_pairing", 0)
+        set(value) = prefs.edit { putInt("cache_pending_pairing", value) }
 }
