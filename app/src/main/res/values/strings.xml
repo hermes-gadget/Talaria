@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Talaria</string>
+    <string name="nav_chats">Chats</string>
+    <string name="nav_activity">Activity</string>
+    <string name="nav_manage">Manage</string>
+    <string name="nav_you">You</string>
+    <string name="widget_status_label">Hermes status</string>
+    <string name="qs_tile_label">Hermes</string>
+    <string name="notif_channel_replies">Agent replies</string>
+    <string name="notif_channel_cron">Cron jobs</string>
+    <string name="notif_channel_gateway">Gateway status</string>
+    <string name="notif_channel_pairing">Pairing requests</string>
+    <string name="notif_channel_errors">Errors</string>
+    <string name="notif_channel_tasks">Long tasks</string>
+    <string name="notif_channel_sync">Background sync</string>
+    <string name="notif_action_reply">Reply</string>
+    <string name="notif_action_open">Open</string>
+    <string name="notif_action_dismiss">Dismiss</string>
+    <string name="privacy_zero_telemetry">Talaria sends no telemetry by default.</string>
+</resources>
