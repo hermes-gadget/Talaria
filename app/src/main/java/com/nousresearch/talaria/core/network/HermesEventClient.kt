@@ -22,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -60,6 +61,14 @@ class HermesEventClient(
     private var rpcSocket: WebSocket? = null
     private var job: Job? = null
 
+    /** Set false by [start] and true by [stop] so late close callbacks never reconnect. */
+    @Volatile
+    private var stopped = true
+
+    /** Consecutive failures per socket name; reset on a successful open. */
+    private val reconnectAttempts = ConcurrentHashMap<String, Int>()
+    private val reconnectBackoff = longArrayOf(1_000L, 2_000L, 4_000L, 8_000L, 15_000L, 30_000L)
+
     private val _events = MutableSharedFlow<HermesSideEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<HermesSideEvent> = _events.asSharedFlow()
 
@@ -70,6 +79,7 @@ class HermesEventClient(
     fun start(channel: String = UUID.randomUUID().toString()) {
         stop()
         channelId = channel
+        stopped = false
         job = scope.launch {
             val auth = wsAuth.authQueryParam()
             openEvents(channel, auth)
@@ -78,6 +88,9 @@ class HermesEventClient(
     }
 
     fun stop() {
+        // Guard first: close callbacks must not schedule reconnects.
+        stopped = true
+        reconnectAttempts.clear()
         job?.cancel()
         job = null
         eventsSocket?.close(1000, "stop")
@@ -129,6 +142,36 @@ class HermesEventClient(
         }
     }
 
+    /**
+     * Reopens one socket after a transport failure. Backs off exponentially,
+     * re-mints auth (single-use WS tickets may have expired), and gives up
+     * after [MAX_RECONNECT_ATTEMPTS] consecutive failures.
+     */
+    private fun scheduleReconnect(name: String) {
+        if (stopped) return
+        val attempt = reconnectAttempts.merge(name, 1, Int::plus) ?: 1
+        if (attempt > MAX_RECONNECT_ATTEMPTS) {
+            reconnectAttempts.remove(name)
+            _events.tryEmit(
+                HermesSideEvent.TransportError(name, "reconnect failed after $MAX_RECONNECT_ATTEMPTS attempts"),
+            )
+            return
+        }
+        val delayMs = reconnectBackoff.getOrElse(attempt - 1) { reconnectBackoff.last() }
+        scope.launch {
+            delay(delayMs)
+            if (stopped) return@launch
+            val auth = runCatching { wsAuth.authQueryParam() }.getOrNull() ?: return@launch
+            when (name) {
+                "events" -> {
+                    val ch = channelId ?: return@launch
+                    openEvents(ch, auth)
+                }
+                "rpc" -> openRpc(auth)
+            }
+        }
+    }
+
     private fun openEvents(channel: String, auth: String) {
         val base = wsBase() ?: return
         val qs = buildList {
@@ -142,11 +185,18 @@ class HermesEventClient(
         eventsSocket = clientFactory.webSocketClient().newWebSocket(
             req,
             object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    reconnectAttempts.remove("events")
+                }
                 // The events socket speaks the same JSON-RPC `event` envelope as
                 // /api/ws, so unwrap via parseRpc (which also handles flat frames).
                 override fun onMessage(webSocket: WebSocket, text: String) = parseRpc(text)
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     _events.tryEmit(HermesSideEvent.TransportError("events", t.message ?: "events WS failed"))
+                    scheduleReconnect("events")
+                }
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    if (!stopped) scheduleReconnect("events")
                 }
             },
         )
@@ -165,9 +215,27 @@ class HermesEventClient(
         rpcSocket = clientFactory.webSocketClient().newWebSocket(
             req,
             object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    reconnectAttempts.remove("rpc")
+                    // Proactive model-state probe: some dashboards only push
+                    // model notifies on change, so ask once on connect.
+                    sendRpc("model.info") { result ->
+                        val obj = (result as? JsonObject) ?: return@sendRpc
+                        val name = obj["model"]?.jsonPrimitive?.contentOrNull
+                            ?: obj["name"]?.jsonPrimitive?.contentOrNull
+                            ?: return@sendRpc
+                        _events.tryEmit(
+                            HermesSideEvent.Model(name, obj["connected"]?.jsonPrimitive?.booleanOrNull),
+                        )
+                    }
+                }
                 override fun onMessage(webSocket: WebSocket, text: String) = parseRpc(text)
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     _events.tryEmit(HermesSideEvent.TransportError("ws", t.message ?: "rpc WS failed"))
+                    scheduleReconnect("rpc")
+                }
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    if (!stopped) scheduleReconnect("rpc")
                 }
             },
         )
@@ -182,6 +250,10 @@ class HermesEventClient(
         }
         // Non-result frames: classify into a typed event (pure logic below).
         SidecarFrameParser.parse(el)?.let { _events.tryEmit(it) }
+    }
+
+    companion object {
+        const val MAX_RECONNECT_ATTEMPTS = 6
     }
 }
 

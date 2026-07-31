@@ -20,6 +20,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -39,6 +40,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -47,15 +49,22 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.domain.model.SessionMessage
+import com.nousresearch.talaria.domain.model.SessionSummary
 import com.nousresearch.talaria.ui.components.ScreenScaffold
+import com.nousresearch.talaria.ui.components.SimpleMarkdownText
 import java.io.File
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 @Composable
 fun SessionDetailScreen(sessionId: String, onDeleted: (() -> Unit)? = null) {
     val repo = TalariaApp.instance.container.hermesRepository
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var session by remember { mutableStateOf<SessionSummary?>(null) }
     var messages by remember { mutableStateOf<List<SessionMessage>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -65,6 +74,11 @@ fun SessionDetailScreen(sessionId: String, onDeleted: (() -> Unit)? = null) {
     var expandedTools by remember { mutableStateOf(setOf<Int>()) }
 
     fun reload() {
+        scope.launch {
+            repo.getSession(sessionId)
+                .onSuccess { session = it }
+                .onFailure { error = it.message }
+        }
         scope.launch {
             repo.loadMessages(sessionId)
                 .onSuccess { messages = it; error = null }
@@ -156,6 +170,7 @@ fun SessionDetailScreen(sessionId: String, onDeleted: (() -> Unit)? = null) {
     ) {
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         message?.let { Text(it, color = MaterialTheme.colorScheme.secondary) }
+        session?.let { s -> SessionHeaderCard(s) }
         LazyColumn {
             itemsIndexed(messages, key = { idx, _ -> "$sessionId-$idx" }) { idx, m ->
                 val roleColor = roleColor(m.role)
@@ -172,7 +187,7 @@ fun SessionDetailScreen(sessionId: String, onDeleted: (() -> Unit)? = null) {
                             style = MaterialTheme.typography.labelLarge,
                             color = roleColor,
                         )
-                        Text(m.content ?: "", style = MaterialTheme.typography.bodyMedium)
+                        SimpleMarkdownText(m.content.orEmpty(), modifier = Modifier.padding(top = 4.dp))
                         if (m.tool_calls != null) {
                             val open = idx in expandedTools
                             Text(
@@ -213,5 +228,81 @@ private fun roleColor(role: String?): Color {
         "system" -> MaterialTheme.colorScheme.secondary
         "tool", "function" -> MaterialTheme.colorScheme.error
         else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+}
+
+/**
+ * Summary header: model · source · message/tool counts · token accounting ·
+ * last activity, plus a LIVE chip when the dashboard reports the session running.
+ */
+@Composable
+private fun SessionHeaderCard(s: SessionSummary) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    s.title ?: s.preview ?: "Session",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (s.live == true) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.tertiaryContainer,
+                        shape = MaterialTheme.shapes.small,
+                    ) {
+                        Text(
+                            "● LIVE",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
+                    }
+                }
+            }
+            Text(
+                listOfNotNull(
+                    s.source?.let { "source: $it" },
+                    s.model?.let { "model: $it" },
+                    s.message_count?.let { "$it msgs" },
+                    s.tool_call_count?.let { "$it tool calls" },
+                    formatTokens(s.tokens),
+                ).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            s.last_active?.let {
+                Text("last active: $it", style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+/** Compact token accounting for the header; mirrors the Status screen renderer. */
+private fun formatTokens(tokens: kotlinx.serialization.json.JsonElement?): String? {
+    if (tokens == null) return null
+    return when (tokens) {
+        is JsonPrimitive -> tokens.contentOrNull?.let { "tok $it" }
+        is JsonObject -> {
+            val input = tokens["input"]?.jsonPrimitive?.contentOrNull
+                ?: tokens["prompt"]?.jsonPrimitive?.contentOrNull
+            val output = tokens["output"]?.jsonPrimitive?.contentOrNull
+                ?: tokens["completion"]?.jsonPrimitive?.contentOrNull
+            val total = tokens["total"]?.jsonPrimitive?.contentOrNull
+            when {
+                total != null -> "tok $total"
+                input != null || output != null -> "tok ${input ?: "?"}→${output ?: "?"}"
+                else -> null
+            }
+        }
+        else -> null
     }
 }

@@ -44,6 +44,7 @@ import com.nousresearch.talaria.domain.model.StatusResponse
 import com.nousresearch.talaria.domain.model.SystemStats
 import com.nousresearch.talaria.domain.model.ToolsetInfo
 import com.nousresearch.talaria.domain.model.WebhookRoute
+import com.nousresearch.talaria.domain.model.WebhooksResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -52,10 +53,13 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 class HermesRepository(
@@ -138,6 +142,11 @@ class HermesRepository(
             }
             else -> com.nousresearch.talaria.domain.model.SessionsPage()
         }
+
+    /** Single-session summary (model, tokens, live flag) for the detail header. */
+    suspend fun getSession(sessionId: String): Result<SessionSummary> = withContext(Dispatchers.IO) {
+        runCatching { api().getSession(sessionId) }
+    }
 
     suspend fun loadMessages(sessionId: String): Result<List<SessionMessage>> = withContext(Dispatchers.IO) {
         runCatching {
@@ -327,8 +336,13 @@ class HermesRepository(
         }
     }
 
-    suspend fun getWebhooks(): Result<List<WebhookRoute>> = withContext(Dispatchers.IO) {
-        runCatching { api().getWebhooks().subscriptions }
+    suspend fun getWebhooks(): Result<WebhooksResponse> = withContext(Dispatchers.IO) {
+        runCatching { api().getWebhooks() }
+    }
+
+    /** Enables the webhook platform; may trigger a gateway restart on the host. */
+    suspend fun enableWebhooks(): Result<JsonElement> = withContext(Dispatchers.IO) {
+        runCatching { api().enableWebhooks() }
     }
 
     suspend fun getProfiles(): Result<List<ProfileInfo>> = withContext(Dispatchers.IO) {
@@ -429,13 +443,29 @@ class HermesRepository(
         runCatching { api().getConfigDefaults() }
     }
 
-    suspend fun createWebhook(name: String, prompt: String): Result<Unit> = withContext(Dispatchers.IO) {
+    /**
+     * Creates a webhook and returns the created route. The dashboard may echo
+     * a one-time secret / final url in the response — surface it to the user.
+     */
+    suspend fun createWebhook(name: String, prompt: String): Result<WebhookRoute> = withContext(Dispatchers.IO) {
         runCatching {
-            api().createWebhook(buildJsonObject {
-                put("name", name)
-                put("prompt", prompt)
-            })
-            Unit
+            val element = api().createWebhook(
+                buildJsonObject {
+                    put("name", name)
+                    put("prompt", prompt)
+                },
+            )
+            val obj = element as? JsonObject ?: return@runCatching WebhookRoute(name)
+            WebhookRoute(
+                name = obj["name"]?.jsonPrimitive?.contentOrNull ?: name,
+                description = obj["description"]?.jsonPrimitive?.contentOrNull,
+                events = obj["events"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList(),
+                deliver = obj["deliver"]?.jsonPrimitive?.contentOrNull,
+                prompt = obj["prompt"]?.jsonPrimitive?.contentOrNull,
+                url = obj["url"]?.jsonPrimitive?.contentOrNull ?: obj["endpoint"]?.jsonPrimitive?.contentOrNull,
+                enabled = obj["enabled"]?.jsonPrimitive?.booleanOrNull,
+                secret = obj["secret"]?.jsonPrimitive?.contentOrNull,
+            )
         }
     }
 

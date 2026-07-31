@@ -28,6 +28,8 @@ data class StatusResponse(
     val auth_required: Boolean? = null,
     val auth_providers: List<String> = emptyList(),
     val gateway: GatewayStatus? = null,
+    /** Top-level running flag some dashboard versions emit instead of nesting it. */
+    val gateway_running: Boolean? = null,
     val active_sessions: Int? = null,
     val sessions: List<SessionSummary> = emptyList(),
     val profile: String? = null,
@@ -181,6 +183,8 @@ data class WebhookRoute(
     val prompt: String? = null,
     val url: String? = null,
     val enabled: Boolean? = null,
+    /** One-time secret echoed by the dashboard on create (may never be sent again). */
+    val secret: String? = null,
 )
 
 @Serializable

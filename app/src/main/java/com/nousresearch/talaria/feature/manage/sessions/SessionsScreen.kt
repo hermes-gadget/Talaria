@@ -56,8 +56,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private enum class SessionTab { Chats, Automation, All }
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SessionsScreen(onOpen: (String) -> Unit, onResume: (String) -> Unit) {
@@ -85,21 +83,12 @@ fun SessionsScreen(onOpen: (String) -> Unit, onResume: (String) -> Unit) {
         "webhook" to "webhook",
     )
 
-    fun matchesTab(s: SessionSummary): Boolean {
-        val src = s.source.orEmpty().lowercase()
-        return when (tab) {
-            SessionTab.All -> true
-            SessionTab.Automation -> src.contains("cron") || src.contains("automat") || src.contains("webhook")
-            SessionTab.Chats -> !(src.contains("cron") || src.contains("automat") || src.contains("webhook"))
-        }
-    }
-
     fun reload() {
         scope.launch {
             val apiSource = sourceFilter.ifBlank { null }
             repo.getSessionsPage(source = apiSource, limit = 100)
                 .onSuccess { page ->
-                    sessions = page.sessions.filter(::matchesTab)
+                    sessions = page.sessions.filter { SessionFilters.matchesTab(it.source, tab) }
                     total = page.total
                     message = null
                 }
@@ -118,7 +107,7 @@ fun SessionsScreen(onOpen: (String) -> Unit, onResume: (String) -> Unit) {
         searchJob = scope.launch {
             delay(300)
             repo.searchSessions(query)
-                .onSuccess { sessions = it.filter(::matchesTab) }
+                .onSuccess { sessions = it.filter { SessionFilters.matchesTab(it.source, tab) } }
                 .onFailure { message = it.message }
         }
     }

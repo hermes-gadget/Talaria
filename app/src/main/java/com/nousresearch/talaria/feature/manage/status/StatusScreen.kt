@@ -152,14 +152,22 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
                         item {
                             SectionCard("Gateway") {
                                 val gw = s.gateway
-                                val running = gw?.running == true
+                                // Some dashboard versions nest state, others only
+                                // emit the top-level gateway_running flag.
+                                val running = gw?.running ?: s.gateway_running
                                 Text(
-                                    if (running) "Running · pid=${gw?.pid ?: "?"}" else "Stopped",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = if (running) {
-                                        MaterialTheme.colorScheme.primary
+                                    if (running == true) {
+                                        "Running · pid=${gw?.pid ?: "?"}"
+                                    } else if (running == false) {
+                                        "Stopped"
                                     } else {
-                                        MaterialTheme.colorScheme.error
+                                        "Unknown"
+                                    },
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = when (running) {
+                                        true -> MaterialTheme.colorScheme.primary
+                                        false -> MaterialTheme.colorScheme.error
+                                        null -> MaterialTheme.colorScheme.onSurfaceVariant
                                     },
                                 )
                                 gw?.state?.let {

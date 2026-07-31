@@ -191,6 +191,9 @@ interface HermesApi {
     @GET("api/webhooks")
     suspend fun getWebhooks(): WebhooksResponse
 
+    @POST("api/webhooks/enable")
+    suspend fun enableWebhooks(): JsonElement
+
     @POST("api/webhooks")
     suspend fun createWebhook(@Body body: JsonObject): JsonElement
 

@@ -2,6 +2,36 @@
 
 All notable changes to Talaria are documented here.
 
+## [Unreleased] — Parity-gap closure
+
+### App icon
+
+- Launcher icon replaced with the official winged-sandal logo (adaptive icon:
+  black background + cream sandal foreground, Android 13 monochrome layer).
+
+### Fixes
+
+- **Session detail (3.2):** messages now render with markdown formatting
+  (`SimpleMarkdownText`) instead of plain text; new summary header card shows
+  model, source, message/tool counts, token accounting and last-active, with a
+  **● LIVE** chip when the dashboard reports the session running.
+- **Event client (0.4):** `/api/ws` + `/api/events` sockets now auto-reconnect
+  with exponential backoff (1s→30s, 6 attempts) and a freshly minted WS ticket
+  per attempt; attempt counters reset on successful open; `stop()` still wins.
+- **Webhooks (10.3):** each webhook row gained **Copy URL**; the create
+  response is parsed for a one-time secret / final url and shown in a
+  dismissible card with copy buttons (dashboard may not echo one). Added the
+  missing platform-level **Enable** workflow (`POST /api/webhooks/enable`,
+  with gateway-restart warning) that the web page has.
+- **Model state (1.3):** the sidecar now sends a proactive `model.info` RPC
+  probe on `/api/ws` connect so the badge is fresh even when the dashboard
+  does not push model notifies.
+- **Tests:** session filter rules extracted into a pure `SessionFilters`
+  object with 6 unit tests (tab classification + case-insensitivity).
+- **Status (2.1):** gateway state now falls back to the top-level
+  `gateway_running` flag when the dashboard doesn't nest it (v0.19+), fixing
+  a false "Stopped" readout; unknown state renders neutrally instead.
+
 ## [Unreleased] — Density + feature expansion
 
 ### Space efficiency (verified on-device)
