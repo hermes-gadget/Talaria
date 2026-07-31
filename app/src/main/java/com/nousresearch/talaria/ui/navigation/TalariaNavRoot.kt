@@ -10,17 +10,24 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.nousresearch.talaria.TalariaApp
+import com.nousresearch.talaria.feature.activity.ActivityScreen
+import com.nousresearch.talaria.feature.chat.ChatScreen
 import com.nousresearch.talaria.feature.connection.ConnectScreen
+import com.nousresearch.talaria.feature.manage.sessions.SessionDetailScreen
+import com.nousresearch.talaria.feature.manage.sessions.SessionsScreen
 import com.nousresearch.talaria.feature.you.PrivacyScreen
 import com.nousresearch.talaria.feature.you.YouScreen
 import com.nousresearch.talaria.ui.components.ScreenScaffold
@@ -34,8 +41,27 @@ fun TalariaNavRoot(
 ) {
     val navController = rememberNavController()
     val profiles by TalariaApp.instance.container.connectionStore.profiles.collectAsState()
-    val start = if (profiles.isEmpty()) Routes.CONNECT else TopDest.You.route
-    var currentTop by remember { mutableStateOf(TopDest.You.route) }
+    val start = if (profiles.isEmpty()) Routes.CONNECT else TopDest.Chats.route
+    var currentTop by remember { mutableStateOf(TopDest.Chats.route) }
+
+    LaunchedEffect(shareText) {
+        if (!shareText.isNullOrBlank()) {
+            navController.navigate(Routes.chat()) { launchSingleTop = true }
+            onShareConsumed()
+        }
+    }
+    LaunchedEffect(deepLink) {
+        val link = deepLink ?: return@LaunchedEffect
+        when {
+            link.contains("connect") -> navController.navigate(Routes.CONNECT)
+            link.contains("session/") -> {
+                val id = link.substringAfter("session/").substringBefore('?')
+                navController.navigate("session/$id")
+            }
+            else -> navController.navigate(Routes.chat())
+        }
+        onDeepLinkConsumed()
+    }
 
     NavigationSuiteScaffold(
         navigationSuiteItems = {
@@ -61,26 +87,55 @@ fun TalariaNavRoot(
             composable(Routes.CONNECT) {
                 ConnectScreen(
                     onConnected = {
-                        navController.navigate(TopDest.You.route) {
+                        navController.navigate(TopDest.Chats.route) {
                             popUpTo(Routes.CONNECT) { inclusive = true }
                         }
                     },
                 )
             }
             composable(TopDest.Chats.route) {
-                ScreenScaffold("Chats", "Landing in a follow-up slice") { Text("Chat coming next") }
+                ChatScreen(
+                    initialShare = shareText,
+                    onOpenSessions = { navController.navigate(Routes.SESSIONS) },
+                    onNeedConnection = { navController.navigate(Routes.CONNECT) },
+                )
             }
-            composable(TopDest.Activity.route) {
-                ScreenScaffold("Activity", "") { Text("Activity coming next") }
+            composable(
+                route = "chat?resume={resume}",
+                arguments = listOf(navArgument("resume") { type = NavType.StringType; defaultValue = "" }),
+            ) { entry ->
+                ChatScreen(
+                    resumeSessionId = entry.arguments?.getString("resume")?.ifBlank { null },
+                    initialShare = shareText,
+                    onOpenSessions = { navController.navigate(Routes.SESSIONS) },
+                    onNeedConnection = { navController.navigate(Routes.CONNECT) },
+                )
             }
+            composable(TopDest.Activity.route) { ActivityScreen() }
             composable(TopDest.Manage.route) {
-                ScreenScaffold("Manage", "") { Text("Manage coming next") }
+                ScreenScaffold("Manage", "More surfaces in a follow-up slice") {
+                    androidx.compose.material3.TextButton(onClick = { navController.navigate(Routes.SESSIONS) }) {
+                        Text("Sessions")
+                    }
+                }
             }
             composable(TopDest.You.route) {
                 YouScreen(
                     onConnect = { navController.navigate(Routes.CONNECT) },
                     onPrivacy = { navController.navigate(Routes.PRIVACY) },
                 )
+            }
+            composable(Routes.SESSIONS) {
+                SessionsScreen(
+                    onOpen = { navController.navigate("session/$it") },
+                    onResume = { navController.navigate(Routes.chat(it)) },
+                )
+            }
+            composable(
+                Routes.SESSION_DETAIL,
+                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            ) { entry ->
+                SessionDetailScreen(sessionId = entry.arguments!!.getString("id")!!)
             }
             composable(Routes.PRIVACY) { PrivacyScreen() }
         }
