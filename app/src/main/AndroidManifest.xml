@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -57,6 +59,11 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <service
+            android:name=".voice.VoiceDictationService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
         <receiver
             android:name=".worker.BootReceiver"
             android:exported="true">
@@ -68,6 +75,29 @@
         <receiver
             android:name=".core.notifications.NotificationActionReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name=".widget.TalariaStatusWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_status_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/status_widget_info" />
+        </receiver>
+
+        <service
+            android:name=".widget.TalariaTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_talaria"
+            android:label="@string/qs_tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"
