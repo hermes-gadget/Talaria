@@ -1,9 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <application
         android:name=".TalariaApp"
         android:allowBackup="false"
@@ -17,6 +25,7 @@
         android:theme="@style/Theme.Talaria"
         android:usesCleartextTraffic="true"
         tools:targetApi="35">
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -38,9 +47,28 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="talaria" android:host="chat" />
                 <data android:scheme="talaria" android:host="session" />
+                <data android:scheme="talaria" android:host="pairing" />
                 <data android:scheme="talaria" android:host="connect" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".worker.HermesSyncForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <receiver
+            android:name=".worker.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".core.notifications.NotificationActionReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"
