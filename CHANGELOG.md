@@ -2,6 +2,24 @@
 
 All notable changes to Talaria are documented here.
 
+## [0.2.1] — 2026-07-31
+
+### Added
+
+- ProcessLifecycleOwner stops chat sidecar in background; fresh WS tickets on resume.
+- Contract fixtures under `app/src/test/resources/fixtures/` + expanded decode tests.
+- `env_catalog.json` merge into API Keys; signup links; `/reload` tip after save.
+- OIDC Custom Tabs “Open portal login”; `talaria://connect?profile=` deep link.
+- Connection doctor PTY probe; clarify/sudo text prompts; reading-mode markdown helper.
+- Activity typed sync rows + tap-to-navigate; Logs search/share; Analytics model breakdown.
+- Cron schedule presets; Skills Hub docs Custom Tab; Profiles skills/config shortcuts.
+- Config boolean Switch widgets; broader `ProfileQueryInterceptor` prefixes.
+
+### Notes
+
+- Phase 0–12 roadmap checkboxes met for primary done-when criteria; remaining gaps are documented in `docs/API.md` (Hub install API, enum dropdowns, pairing Approve action).
+- Phase 13 mobile-only excellence is still backlog.
+
 ## [0.2.0] — 2026-07-31
 
 ### Added
@@ -14,8 +32,8 @@ All notable changes to Talaria are documented here.
 
 ### Notes
 
-- Roadmap Phases 0–11 + 12.2 landed; OIDC Custom Tabs (12.1) still open.
 - Emulator default dashboard URL remains `http://10.0.2.2:9119`.
+
 
 ## [0.1.0] — 2026-07-31
 

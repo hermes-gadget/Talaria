@@ -232,7 +232,15 @@ class ChatViewModel(
     }
 
     fun pickSlash(cmd: SlashCommand) {
-        _ui.update { it.copy(draft = cmd.command + " ", showSlashPalette = false) }
+        // Bare commands (no trailing args placeholder) send immediately; others insert for editing.
+        val needsArgs = cmd.command.trimEnd().endsWith(" ") ||
+            (cmd.description?.contains("arg", ignoreCase = true) == true)
+        if (!needsArgs && !cmd.command.contains(' ')) {
+            _ui.update { it.copy(draft = "", showSlashPalette = false) }
+            send(cmd.command)
+        } else {
+            _ui.update { it.copy(draft = cmd.command.trimEnd() + " ", showSlashPalette = false) }
+        }
     }
 
     fun send(text: String = _ui.value.draft) {

@@ -1,0 +1,1 @@
+{"version":"0.17.0","release_date":"2026-07-01","auth_required":true,"auth_providers":["basic"],"gateway":{"running":true,"pid":42,"state":"up","platforms":["telegram"]},"active_sessions":2,"sessions":[{"id":"s1","title":"Hello","source":"cli","model":"gpt","message_count":3,"preview":"hi"}],"profile":"default"}

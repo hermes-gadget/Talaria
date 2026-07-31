@@ -1,0 +1,1 @@
+{"servers":[{"name":"filesystem","enabled":true,"command":"npx","args":["-y","server"]}]}

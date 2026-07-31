@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.domain.model.ToolCallUi
+import com.nousresearch.talaria.ui.components.SimpleMarkdownText
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -117,12 +118,33 @@ fun ChatScreen(
     }
 
     if (ui.prompt != null) {
+        val prompt = ui.prompt!!
+        var clarifyText by remember(prompt.message) { mutableStateOf("") }
+        val needsText = prompt.kind.name == "CLARIFY" || prompt.kind.name == "SUDO"
         AlertDialog(
             onDismissRequest = vm::dismissPrompt,
-            title = { Text(ui.prompt!!.kind.name) },
-            text = { Text(ui.prompt!!.message) },
+            title = { Text(prompt.kind.name) },
+            text = {
+                Column {
+                    Text(prompt.message)
+                    if (needsText) {
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = clarifyText,
+                            onValueChange = { clarifyText = it },
+                            label = { Text("Response") },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            },
             confirmButton = {
-                TextButton(onClick = { vm.respondPrompt(true) }) { Text("Approve") }
+                TextButton(
+                    onClick = {
+                        if (needsText) vm.respondPrompt(true, clarifyText.ifBlank { null })
+                        else vm.respondPrompt(true)
+                    },
+                ) { Text(if (needsText) "Send" else "Approve") }
             },
             dismissButton = {
                 TextButton(onClick = { vm.respondPrompt(false) }) { Text("Deny") }
@@ -148,8 +170,15 @@ fun ChatScreen(
             }
             LazyColumn {
                 items(ui.sessions, key = { it.id }) { s ->
+                    val active = s.id == ui.resumeSessionId
                     ListItem(
-                        headlineContent = { Text(s.title ?: s.preview ?: s.id.take(8)) },
+                        headlineContent = {
+                            Text(
+                                (s.title ?: s.preview ?: s.id.take(8)) + if (active) " · active" else "",
+                                color = if (active) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface,
+                            )
+                        },
                         supportingContent = {
                             Text("${s.source ?: "cli"} · ${s.model ?: "?"} · ${s.message_count ?: 0} msgs")
                         },
@@ -334,11 +363,15 @@ fun ChatScreen(
                         },
                         shape = MaterialTheme.shapes.medium,
                     ) {
-                        Text(
-                            line.text,
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(12.dp),
-                        )
+                        if (ui.transcriptMode == TranscriptMode.READING || line.role == "assistant") {
+                            SimpleMarkdownText(line.text, modifier = Modifier.padding(12.dp))
+                        } else {
+                            Text(
+                                line.text,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(12.dp),
+                            )
+                        }
                     }
                 }
             }

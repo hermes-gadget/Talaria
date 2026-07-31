@@ -112,6 +112,7 @@ fun ProfileSwitcherBar() {
                                     container.hermesRepository.setActiveProfileName(name)
                                         .onFailure { message = it.message }
                                 }
+                                container.eventClient.stop()
                                 container.clientFactory.invalidate()
                                 container.wsAuthHelper.invalidate()
                             }

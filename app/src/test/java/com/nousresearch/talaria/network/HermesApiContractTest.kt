@@ -14,12 +14,20 @@
  * limitations under the License.
  */
 
-
 package com.nousresearch.talaria.network
 
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import com.nousresearch.talaria.core.network.HermesApi
 import com.nousresearch.talaria.core.network.JsonConfig
+import com.nousresearch.talaria.core.network.WsAuthHelper
+import com.nousresearch.talaria.domain.model.AnalyticsUsage
+import com.nousresearch.talaria.domain.model.ConfigSchemaResponse
+import com.nousresearch.talaria.domain.model.CronJob
+import com.nousresearch.talaria.domain.model.McpServersResponse
+import com.nousresearch.talaria.domain.model.MessagingPlatformsResponse
+import com.nousresearch.talaria.domain.model.SessionsPage
+import com.nousresearch.talaria.domain.model.SkillInfo
+import com.nousresearch.talaria.domain.model.StatusResponse
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import okhttp3.MediaType.Companion.toMediaType
@@ -27,6 +35,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -35,6 +44,7 @@ import retrofit2.Retrofit
 class HermesApiContractTest {
     private lateinit var server: MockWebServer
     private lateinit var api: HermesApi
+    private val json = JsonConfig.json
 
     @Before
     fun setUp() {
@@ -42,7 +52,7 @@ class HermesApiContractTest {
         server.start()
         api = Retrofit.Builder()
             .baseUrl(server.url("/"))
-            .addConverterFactory(JsonConfig.json.asConverterFactory("application/json".toMediaType()))
+            .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
             .build()
             .create(HermesApi::class.java)
     }
@@ -52,19 +62,36 @@ class HermesApiContractTest {
         server.shutdown()
     }
 
+    private fun fixture(name: String): String =
+        requireNotNull(javaClass.classLoader!!.getResourceAsStream("fixtures/$name"))
+            .bufferedReader().use { it.readText() }
+
     @Test
     fun getStatusParsesCoreFields() = runBlocking {
-        server.enqueue(
-            MockResponse().setBody(
-                """{"version":"0.17.0","auth_required":true,"auth_providers":["basic"],"gateway":{"running":true,"pid":42},"active_sessions":2,"sessions":[]}""",
-            ),
-        )
+        server.enqueue(MockResponse().setBody(fixture("status.json")))
         val status = api.getStatus()
         assertEquals("0.17.0", status.version)
         assertTrue(status.auth_required == true)
         assertEquals(listOf("basic"), status.auth_providers)
         assertEquals(42, status.gateway?.pid)
+        assertEquals(1, status.sessions.size)
         assertEquals("/api/status", server.takeRequest().path)
+    }
+
+    @Test
+    fun fixturesDecodeTypedModels() {
+        assertNotNull(json.decodeFromString<StatusResponse>(fixture("status.json")).version)
+        assertEquals(1, json.decodeFromString<SessionsPage>(fixture("sessions.json")).sessions.size)
+        assertEquals("c1", json.decodeFromString<List<CronJob>>(fixture("cron.json")).first().id)
+        assertEquals("web", json.decodeFromString<List<SkillInfo>>(fixture("skills.json")).first().name)
+        assertTrue(json.decodeFromString<McpServersResponse>(fixture("mcp.json")).servers.isNotEmpty())
+        assertTrue(
+            json.decodeFromString<MessagingPlatformsResponse>(fixture("channels.json")).platforms.isNotEmpty(),
+        )
+        assertEquals(30, json.decodeFromString<AnalyticsUsage>(fixture("analytics.json")).days)
+        assertTrue(
+            json.decodeFromString<ConfigSchemaResponse>(fixture("config_schema.json")).category_order.isNotEmpty(),
+        )
     }
 
     @Test
@@ -74,5 +101,12 @@ class HermesApiContractTest {
         val req = server.takeRequest()
         assertEquals("PUT", req.method)
         assertTrue(req.path!!.startsWith("/api/config"))
+    }
+
+    @Test
+    fun wsCloseCodesExplainAuthAndHost() {
+        assertTrue(WsAuthHelper.explainCloseCode(4401)!!.contains("4401"))
+        assertTrue(WsAuthHelper.explainCloseCode(4403)!!.contains("4403"))
+        assertEquals(null, WsAuthHelper.explainCloseCode(1000))
     }
 }

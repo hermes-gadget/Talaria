@@ -1,0 +1,1 @@
+[{"id":"c1","name":"Daily","prompt":"summarize","schedule":"0 9 * * *","state":"active","last_run":"2026-07-30T09:00:00Z","next_run":"2026-07-31T09:00:00Z"}]

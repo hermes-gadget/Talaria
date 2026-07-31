@@ -2,7 +2,7 @@
 
 Goal: make Talaria feel like a first-class mobile client for the [Hermes Agent Web Dashboard](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard) — every major page and workflow, adapted for touch, offline, and battery — while staying a remote client (no embedded Python runtime).
 
-**Current baseline:** Talaria `0.2.0` · Hermes API `dashboard-v0.17+`  
+**Current baseline:** Talaria `0.2.1` · Hermes API `dashboard-v0.17+`  
 **Contract sources:** `docs/API.md`, upstream `web/src/lib/api.ts`, `hermes_cli/web_server.py`, dashboard docs.
 
 Use this file as the working backlog. Each item has **why**, **done when**, and **how** (ordered steps). Check boxes as you ship.
@@ -28,29 +28,29 @@ Use this file as the working backlog. Each item has **why**, **done when**, and 
 
 ---
 
-## Snapshot — where `0.2.0` stands
+## Snapshot — where `0.2.1` stands
 
 | Web Dashboard page | Talaria today |
 |--------------------|---------------|
-| Status | Stronger — sections + 5s refresh + recent sessions |
-| Chat | Stronger — PTY + sidecar (model/tools/slash/approvals/rail/resize); Compose, not xterm |
-| Config | Stronger — schema categories + JSON escape hatch + reset/export/import |
-| API Keys | Stronger — grouped catalog + redacted env merge |
-| Sessions | Stronger — filters/search/rename/export/delete/prune |
-| Logs | Stronger — level/component filters + poll tail |
-| Analytics | Stronger — daily bars + totals |
-| Cron | Stronger — create/edit + lifecycle actions |
-| Profiles | Stronger — switch active + shortcuts |
-| Skills | Stronger — search/categories + toolsets tab + Hub link |
-| MCP | Stronger — CRUD + test sheet |
-| Webhooks | Stronger — create / enable / delete |
-| Pairing | Stronger — approve / revoke / clear-pending |
-| Channels | Stronger — configure sheet + test |
-| System | Stronger — doctor / audit / backup / portal / memory / curator |
-| Profile switcher (global) | Done — Manage/You/Activity bar + amber banner |
-| Auth (gated WS tickets) | Done for WS; OIDC Custom Tabs still open |
-| Events / live fan-out | Done — `HermesEventClient` |
-| Connection doctor | Done — Connect screen preflight |
+| Status | Done — sections + 5s refresh + recent sessions |
+| Chat | Done — PTY + sidecar (model/tools/slash/approvals/rail/resize/markdown reading); Compose, not xterm |
+| Config | Done — schema categories, bool switches, JSON escape hatch, reset/export/import |
+| API Keys | Done — `env_catalog.json` merge, signup links, `/reload` tip |
+| Sessions | Done — filters/search/rename/export/delete/prune |
+| Logs | Done — level/component/search + poll tail + share |
+| Analytics | Done — daily bars + totals + model breakdown |
+| Cron | Done — create/edit + presets + last/next + lifecycle |
+| Profiles | Done — switch active + skills/config shortcuts |
+| Skills | Done — search/categories + toolsets + Hub docs Custom Tab |
+| MCP | Done — CRUD + test |
+| Webhooks | Done — create / enable / delete |
+| Pairing | Done — approve / revoke / clear-pending + sync notify |
+| Channels | Done — configure sheet + test |
+| System | Done — doctor / audit / backup / portal / memory / curator |
+| Profile switcher (global) | Done — amber banner; stops sidecar on switch |
+| Auth (gated WS tickets) | Done — tickets + OIDC Custom Tabs + paste fallback |
+| Events / live fan-out | Done — `HermesEventClient` + background teardown |
+| Connection doctor | Done — status + ticket + PTY probe + 4401/4403 |
 
 ---
 
@@ -584,9 +584,10 @@ Phase 8–11 Extensibility & admin
 - [x] 11.x profiles + system/doctor/portal/memory
 
 Phase 12 Auth polish
-- [ ] 12.1 OIDC/Portal Custom Tabs
-- [x] 12.2 in-app connection doctor
+- [x] 12.1 OIDC/Portal Custom Tabs (Custom Tabs + cookie jar; paste-token fallback documented)
+- [x] 12.2 in-app connection doctor (+ PTY probe)
 ```
+
 
 ---
 

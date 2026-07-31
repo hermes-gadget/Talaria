@@ -15,6 +15,8 @@
  */
 package com.nousresearch.talaria.feature.manage.apikeys
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -38,6 +41,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.domain.model.EnvVarInfo
@@ -47,10 +53,12 @@ import kotlinx.coroutines.launch
 @Composable
 fun ApiKeysScreen() {
     val repo = TalariaApp.instance.container.hermesRepository
+    val context = LocalContext.current
     var vars by remember { mutableStateOf<Map<String, EnvVarInfo>>(emptyMap()) }
     var key by remember { mutableStateOf("") }
     var value by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    var tip by remember { mutableStateOf<String?>(null) }
     var showAdvanced by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -66,10 +74,18 @@ fun ApiKeysScreen() {
             .toSortedMap()
     }
 
-    ScreenScaffold("API Keys", "Hermes .env — values stay on your server") {
+    ScreenScaffold("API Keys", "Catalog + redacted .env — values stay on your server") {
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        tip?.let { Text(it, color = MaterialTheme.colorScheme.secondary) }
         OutlinedTextField(key, { key = it }, label = { Text("KEY") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value, { value = it }, label = { Text("value") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(
+            value,
+            { value = it },
+            label = { Text("value") },
+            modifier = Modifier.fillMaxWidth(),
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        )
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -77,8 +93,12 @@ fun ApiKeysScreen() {
         ) {
             Button(onClick = {
                 scope.launch {
-                    repo.setEnv(key, value).onSuccess { key = ""; value = ""; reload() }
-                        .onFailure { error = it.message }
+                    repo.setEnv(key, value).onSuccess {
+                        key = ""
+                        value = ""
+                        tip = "Saved. Send /reload in Chat (or start a new session) for some keys."
+                        reload()
+                    }.onFailure { error = it.message }
                 }
             }) { Text("Set") }
             Text("Show advanced", style = MaterialTheme.typography.bodyMedium)
@@ -124,6 +144,15 @@ fun ApiKeysScreen() {
                             info.description?.takeIf { it.isNotBlank() }?.let {
                                 Text(it, style = MaterialTheme.typography.bodySmall)
                             }
+                            info.url?.takeIf { it.isNotBlank() }?.let { url ->
+                                TextButton(onClick = {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                }) { Text("Signup / docs") }
+                            }
+                            TextButton(onClick = {
+                                key = k
+                                tip = "Enter a new value above, then Set. Or Delete to clear."
+                            }) { Text("Edit") }
                             TextButton(onClick = {
                                 scope.launch { repo.deleteEnv(k); reload() }
                             }) { Text("Delete") }

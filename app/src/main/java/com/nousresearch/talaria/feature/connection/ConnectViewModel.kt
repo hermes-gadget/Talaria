@@ -179,6 +179,40 @@ class ConnectViewModel(
                 }
                 lines += "Close 4401: ${WsAuthHelper.explainCloseCode(4401)}"
                 lines += "Close 4403: ${WsAuthHelper.explainCloseCode(4403)}"
+
+                // Short PTY probe
+                val (pty, flow) = container.chatRepository.openPty(null, java.util.UUID.randomUUID().toString())
+                var ptyResult = "timeout (3s) — check Host guards / pty extra"
+                try {
+                    kotlinx.coroutines.withTimeout(3_000) {
+                        flow.collect { event ->
+                            when (event) {
+                                is com.nousresearch.talaria.core.network.PtyEvent.Connected -> {
+                                    ptyResult = "Connected (channel=${event.channel})"
+                                    pty.close()
+                                    throw kotlinx.coroutines.CancellationException("probe-ok")
+                                }
+                                is com.nousresearch.talaria.core.network.PtyEvent.Failure -> {
+                                    ptyResult = "FAIL · ${event.message}"
+                                    throw kotlinx.coroutines.CancellationException("probe-fail")
+                                }
+                                is com.nousresearch.talaria.core.network.PtyEvent.Closed -> {
+                                    ptyResult = "Closed before Connected"
+                                    throw kotlinx.coroutines.CancellationException("probe-closed")
+                                }
+                                else -> Unit
+                            }
+                        }
+                    }
+                } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                    pty.close()
+                } catch (_: kotlinx.coroutines.CancellationException) {
+                    // expected early exit from probe
+                } catch (t: Throwable) {
+                    ptyResult = "FAIL · ${t.message}"
+                    pty.close()
+                }
+                lines += "PTY probe · $ptyResult"
             } catch (t: Throwable) {
                 lines += "Doctor error: ${t.message}"
             }
@@ -187,6 +221,17 @@ class ConnectViewModel(
                 doctorReport = lines.joinToString("\n"),
             )
         }
+    }
+
+    fun applyDeepLinkProfile(profile: String?) {
+        if (!profile.isNullOrBlank()) {
+            update { it.copy(managementProfile = profile) }
+        }
+    }
+
+    fun portalLoginUrl(): String {
+        val base = _ui.value.baseUrl.trimEnd('/')
+        return "$base/auth/login"
     }
 
     companion object {
