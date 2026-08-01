@@ -30,6 +30,7 @@ import com.hermesgadget.talaria.core.network.HermesEventClient
 import com.hermesgadget.talaria.core.network.NativeOidcLogin
 import com.hermesgadget.talaria.core.network.WsAuthHelper
 import com.hermesgadget.talaria.core.notifications.TalariaNotifier
+import com.hermesgadget.talaria.core.notifications.AgentAlertDispatcher
 import com.hermesgadget.talaria.core.voice.SpeechCoordinator
 import com.hermesgadget.talaria.core.voice.TtsSpeaker
 
@@ -56,6 +57,7 @@ class AppContainer(context: Context) {
     val hermesRepository = HermesRepository(clientFactory, database, connectionStore, appContext)
     val chatRepository = ChatRepository(clientFactory, database, connectionStore, wsAuthHelper)
     val notifier = TalariaNotifier(appContext, settingsStore, connectionStore)
+    val agentAlertDispatcher = AgentAlertDispatcher(notifier)
     val speechCoordinator = SpeechCoordinator(appContext, settingsStore)
     val ttsSpeaker = TtsSpeaker(appContext, settingsStore)
     val foregroundObserver = HermesForegroundObserver(

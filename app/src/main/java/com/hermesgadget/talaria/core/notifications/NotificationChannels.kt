@@ -31,6 +31,9 @@ object NotificationChannels {
     const val ERRORS = "errors"
     const val TASKS = "tasks"
     const val SYNC = "sync"
+    const val AGENT_PERMISSIONS = "agent_permissions_v2"
+    const val AGENT_TASKS = "agent_tasks_v2"
+    const val AGENT_MONITOR = "agent_monitor_v2"
 
     fun ensure(context: Context) {
         val nm = context.getSystemService<NotificationManager>() ?: return
@@ -42,6 +45,29 @@ object NotificationChannels {
             NotificationChannel(ERRORS, context.getString(R.string.notif_channel_errors), NotificationManager.IMPORTANCE_HIGH),
             NotificationChannel(TASKS, context.getString(R.string.notif_channel_tasks), NotificationManager.IMPORTANCE_LOW),
             NotificationChannel(SYNC, context.getString(R.string.notif_channel_sync), NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel(
+                AGENT_PERMISSIONS,
+                context.getString(R.string.notif_channel_agent_permissions),
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = context.getString(R.string.notif_channel_agent_permissions_description)
+                enableVibration(true)
+            },
+            NotificationChannel(
+                AGENT_TASKS,
+                context.getString(R.string.notif_channel_agent_tasks),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                description = context.getString(R.string.notif_channel_agent_tasks_description)
+            },
+            NotificationChannel(
+                AGENT_MONITOR,
+                context.getString(R.string.notif_channel_agent_monitor),
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = context.getString(R.string.notif_channel_agent_monitor_description)
+                setShowBadge(false)
+            },
         )
         nm.createNotificationChannels(channels)
     }

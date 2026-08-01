@@ -51,7 +51,11 @@ Slash completion starts with a bundled compatibility catalog, then replaces it w
 
 ## Background work and notifications
 
-`HermesSyncWorker` performs network-constrained periodic polling. There is no long-running sync or microphone foreground service. Process lifecycle stops sidecar sockets in the background and reconnects with fresh authorization on return.
+`HermesSyncWorker` performs network-constrained periodic polling. There is no long-running general sync or microphone foreground service. For a user-started agent turn, `AgentTaskNotificationService` temporarily runs as a data-sync foreground service and subscribes to that tab's `/api/events` channel. This keeps permission and completion detection alive while Talaria is backgrounded; the service stops at the authoritative `message.complete` boundary and restores its small non-secret watch list if Android recreates it.
+
+Both the visible chat and the foreground monitor feed the same `AgentNotificationPolicy` / `AgentAlertDispatcher`. Persistent 30-second fingerprints suppress duplicate frames without hiding later turns. Permission alerts use a dedicated high-importance channel and are cleared on expiry, response, or completion; completed and failed tasks use a separate channel. Titles always include the persisted chat-tab name selected by the user, and taps deep-link to the exact connection, management profile, and Hermes session.
+
+Android 13+ notification permission is requested when the user first opens a connected chat. The You screen provides separate switches for permission requests and task completion, and disabling the master switch stops active monitors.
 
 Reply and pairing notification actions carry the expected connection/profile scope. Workers refuse an action if the user has since switched scope. Deep links use strict route parsing and cannot select an unknown saved connection.
 

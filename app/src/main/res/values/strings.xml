@@ -10,6 +10,12 @@
     <string name="notif_channel_errors">Errors</string>
     <string name="notif_channel_tasks">Long tasks</string>
     <string name="notif_channel_sync">Background sync</string>
+    <string name="notif_channel_agent_permissions">Agent needs attention</string>
+    <string name="notif_channel_agent_permissions_description">Permission, clarification, password, and secret requests from an active Hermes agent</string>
+    <string name="notif_channel_agent_tasks">Agent task completion</string>
+    <string name="notif_channel_agent_tasks_description">Completed and failed Hermes agent tasks</string>
+    <string name="notif_channel_agent_monitor">Active agent monitoring</string>
+    <string name="notif_channel_agent_monitor_description">Keeps active Hermes tasks monitored while Talaria is in the background</string>
     <string name="notif_action_reply">Reply</string>
     <string name="notif_action_open">Open</string>
     <string name="notif_action_dismiss">Dismiss</string>

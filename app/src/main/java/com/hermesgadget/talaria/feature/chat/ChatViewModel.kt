@@ -24,6 +24,7 @@ import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.prefs.PersistedChatState
 import com.hermesgadget.talaria.core.data.prefs.PersistedChatTab
+import com.hermesgadget.talaria.core.data.prefs.PersistedAgentWatch
 import com.hermesgadget.talaria.core.data.repo.ChatRepository
 import com.hermesgadget.talaria.core.data.repo.HermesRepository
 import com.hermesgadget.talaria.core.network.HermesEventClient
@@ -31,7 +32,8 @@ import com.hermesgadget.talaria.core.network.HermesSideEvent
 import com.hermesgadget.talaria.core.network.PromptKind
 import com.hermesgadget.talaria.core.network.PtyEvent
 import com.hermesgadget.talaria.core.network.PtyWebSocketSession
-import com.hermesgadget.talaria.core.notifications.TalariaNotifier
+import com.hermesgadget.talaria.core.notifications.AgentTaskNotificationService
+import com.hermesgadget.talaria.core.notifications.AgentThreadIdentity
 import com.hermesgadget.talaria.core.voice.SpeechCoordinator
 import com.hermesgadget.talaria.core.voice.SttEvent
 import com.hermesgadget.talaria.core.voice.TtsSpeaker
@@ -43,6 +45,7 @@ import com.hermesgadget.talaria.domain.model.SlashCommand
 import com.hermesgadget.talaria.domain.model.SlashCommands
 import com.hermesgadget.talaria.domain.model.ToolCallUi
 import com.hermesgadget.talaria.domain.model.scopeId
+import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -88,9 +91,6 @@ data class ChatTab(
     // finished ChatLine only when the turn completes.
     val assistantStreaming: Boolean = false,
     val streamingText: String = "",
-    // Clean assistant text streamed by the sidecar. PTY output above is kept
-    // separate because it contains ANSI/TUI redraws and is only for Terminal mode.
-    val readingStreamingText: String = "",
     val readingMessages: List<ChatLine> = emptyList(),
     val tools: List<ToolCallUi> = emptyList(),
     // True from when the user sends until the assistant's reply lands. Drives the
@@ -162,7 +162,6 @@ class ChatViewModel(
     private val hermesRepository: HermesRepository = TalariaApp.instance.container.hermesRepository,
     private val speech: SpeechCoordinator = TalariaApp.instance.container.speechCoordinator,
     private val tts: TtsSpeaker = TalariaApp.instance.container.ttsSpeaker,
-    private val notifier: TalariaNotifier = TalariaApp.instance.container.notifier,
 ) : ViewModel() {
     private val container = TalariaApp.instance.container
     private val _ui = MutableStateFlow(ChatUiState())
@@ -237,6 +236,7 @@ class ChatViewModel(
             it.session.close()
             it.eventClient.dispose()
         }
+        _ui.value.tabs.forEach { AgentTaskNotificationService.stopWatching(TalariaApp.instance, it.id) }
         runtimes.clear()
         claimedSessions.clear()
         pendingImages.clear()
@@ -442,6 +442,7 @@ class ChatViewModel(
     }
 
     fun closeTab(tabId: String) {
+        AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
         pendingImages.remove(tabId)
         val rt = runtimes.remove(tabId)
         rt?.collectJob?.cancel()
@@ -531,6 +532,7 @@ class ChatViewModel(
     }
 
     fun setTranscriptMode(mode: TranscriptMode) {
+        if (mode == TranscriptMode.TERMINAL && _ui.value.active?.working == true) return
         _ui.update { it.copy(transcriptMode = mode) }
         val tab = _ui.value.active ?: return
         val resume = tab.liveSessionId ?: tab.resumeSessionId
@@ -798,9 +800,14 @@ class ChatViewModel(
                 error = null,
             )
         }
-        _ui.update { it.copy(showSlashPalette = false) }
+        // Every turn starts in the clean transcript. Raw PTY/TUI output is a
+        // diagnostic idle view and must not expose model reasoning in flight.
+        _ui.update { it.copy(showSlashPalette = false, transcriptMode = TranscriptMode.READING) }
         pendingImages.remove(tabId)
         runtime.assistantBuffer = StringBuilder()
+        _ui.value.tabs.firstOrNull { it.id == tabId }?.let { current ->
+            AgentTaskNotificationService.startWatching(TalariaApp.instance, current.toAgentWatch())
+        }
         runtime.session.sendText(prompt)
         if (_ui.value.activeTabId == tabId && _ui.value.active?.draft.isNullOrEmpty()) {
             viewModelScope.launch { chatRepository.saveDraft("") }
@@ -811,6 +818,9 @@ class ChatViewModel(
     fun sendInterrupt() {
         val tabId = _ui.value.active?.id ?: return
         runtimes[tabId]?.session?.sendRaw("")
+        AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
+        updateTab(tabId) { it.copy(working = false, tools = emptyList()) }
+        _ui.update { it.copy(transcriptMode = TranscriptMode.READING) }
     }
 
     fun resizePty(cols: Int, rows: Int) {
@@ -834,6 +844,13 @@ class ChatViewModel(
             approvalChoice = approvalChoice,
         ) { success ->
             if (success) {
+                dispatchAgentAlert(
+                    tabId,
+                    HermesSideEvent.PromptExpired(
+                        sessionId = tab.liveSessionId ?: tab.resumeSessionId,
+                        requestId = prompt.requestId,
+                    ),
+                )
                 updateTab(tabId) { it.copy(prompt = null, error = null) }
             } else {
                 updateTab(tabId) { it.copy(error = "Hermes did not accept the prompt response") }
@@ -896,6 +913,9 @@ class ChatViewModel(
         val trimmed = title.trim()
         if (trimmed.isEmpty()) return
         updateTab(tabId) { it.copy(title = trimmed) }
+        _ui.value.tabs.firstOrNull { it.id == tabId }?.let {
+            AgentTaskNotificationService.updateWatching(TalariaApp.instance, it.toAgentWatch())
+        }
         // Persist so the renamed title survives a cold start.
         persistChatState()
     }
@@ -905,12 +925,14 @@ class ChatViewModel(
             is PtyEvent.Connected -> updateTab(tabId) { it.copy(connecting = false, connected = true) }
             is PtyEvent.Output -> appendAssistant(tabId, event.text)
             is PtyEvent.Closed -> {
+                AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
                 finalizeAssistant(tabId)
                 updateTab(tabId) { it.copy(connected = false, connecting = false, working = false) }
             }
             is PtyEvent.Failure -> {
+                AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
                 updateTab(tabId) { it.copy(error = event.message, connecting = false, connected = false, working = false) }
-                notifier.notifyError("Chat disconnected", event.message)
+                container.notifier.notifyError("Chat disconnected", event.message)
             }
         }
     }
@@ -1029,38 +1051,33 @@ class ChatViewModel(
     }
 
     private fun handleSideEvent(tabId: String, event: HermesSideEvent) {
+        dispatchAgentAlert(tabId, event)
         when (event) {
             is HermesSideEvent.MessageStart -> {
                 bindSession(tabId, event.sessionId)
                 runtimes[tabId]?.sidecarAssistantBuffer = StringBuilder()
                 updateTab(tabId) {
-                    it.copy(readingStreamingText = "", working = true, error = null)
+                    it.copy(working = true, error = null)
                 }
             }
             is HermesSideEvent.MessageDelta -> {
                 bindSession(tabId, event.sessionId)
                 if (event.text.isNotEmpty()) {
                     val rt = runtimes[tabId] ?: return
+                    // Buffer final-answer deltas for message.complete fallback,
+                    // but do not expose partial output or reasoning in the UI.
                     rt.sidecarAssistantBuffer.append(event.text)
-                    updateTab(tabId) {
-                        it.copy(readingStreamingText = rt.sidecarAssistantBuffer.toString(), working = true)
-                    }
+                    updateTab(tabId) { it.copy(working = true) }
                 }
             }
             is HermesSideEvent.MessageInterim -> {
                 bindSession(tabId, event.sessionId)
-                if (!event.alreadyStreamed && event.text.isNotBlank()) {
-                    val rt = runtimes[tabId] ?: return
-                    if (!rt.sidecarAssistantBuffer.endsWith(event.text)) {
-                        if (rt.sidecarAssistantBuffer.isNotEmpty()) rt.sidecarAssistantBuffer.append("\n\n")
-                        rt.sidecarAssistantBuffer.append(event.text)
-                    }
-                    updateTab(tabId) {
-                        it.copy(readingStreamingText = rt.sidecarAssistantBuffer.toString(), working = true)
-                    }
-                }
+                // Interim commentary can contain model thought/reasoning. It is
+                // intentionally neither displayed nor added to the final buffer.
+                updateTab(tabId) { it.copy(working = true) }
             }
             is HermesSideEvent.MessageComplete -> completeSidecarMessage(tabId, event)
+            is HermesSideEvent.BackgroundComplete -> Unit
             is HermesSideEvent.Status -> {
                 bindSession(tabId, event.sessionId)
                 // Process/goal status is transient activity, not a chat message.
@@ -1168,7 +1185,6 @@ class ChatViewModel(
                 it.role == "assistant" && it.text.trim() == full
             } == true
             tab.copy(
-                readingStreamingText = "",
                 readingMessages = if (full.isNotEmpty() && !duplicate) {
                     tab.readingMessages + ChatLine(UUID.randomUUID().toString(), "assistant", full)
                 } else {
@@ -1181,15 +1197,8 @@ class ChatViewModel(
                 error = if (event.status == "error" && full.isNotEmpty()) full else tab.error,
             )
         }
-        if (full.isNotEmpty()) {
-            val tab = _ui.value.tabs.firstOrNull { it.id == tabId }
-            tts.speak(full)
-            notifier.notifyReply(
-                title = tab?.title ?: "Hermes",
-                body = full.take(180),
-                sessionId = event.sessionId ?: tab?.liveSessionId ?: tab?.resumeSessionId,
-            )
-        }
+        if (full.isNotEmpty()) tts.speak(full)
+        AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
     }
 
     /** Prefer the session id carried by live gateway events over polling heuristics. */
@@ -1202,6 +1211,36 @@ class ChatViewModel(
         updateTab(tabId) { it.copy(liveSessionId = sessionId) }
         runtimes[tabId]?.readingSessionId = sessionId
         persistChatState()
+        _ui.value.tabs.firstOrNull { it.id == tabId }?.let {
+            AgentTaskNotificationService.updateWatching(TalariaApp.instance, it.toAgentWatch())
+        }
+    }
+
+    private fun dispatchAgentAlert(tabId: String, event: HermesSideEvent) {
+        val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return
+        val profile = container.connectionStore.activeProfile()
+        container.agentAlertDispatcher.dispatch(
+            identity = AgentThreadIdentity(
+                watcherId = tab.id,
+                agentName = tab.title,
+                sessionId = tab.liveSessionId ?: tab.resumeSessionId,
+            ),
+            event = event,
+            connectionId = profile?.id,
+            managementProfile = profile?.effectiveManagementProfile(),
+        )
+    }
+
+    private fun ChatTab.toAgentWatch(): PersistedAgentWatch {
+        val profile = container.connectionStore.activeProfile()
+        return PersistedAgentWatch(
+            watcherId = id,
+            agentName = title,
+            channelId = channelId,
+            sessionId = liveSessionId ?: resumeSessionId,
+            connectionId = profile?.id,
+            managementProfile = profile?.effectiveManagementProfile(),
+        )
     }
 
     override fun onCleared() {

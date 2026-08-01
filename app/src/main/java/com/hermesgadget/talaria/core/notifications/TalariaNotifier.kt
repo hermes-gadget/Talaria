@@ -20,6 +20,7 @@ package com.hermesgadget.talaria.core.notifications
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.PendingIntent
+import android.app.Notification
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -35,11 +36,116 @@ import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
 import com.hermesgadget.talaria.core.data.prefs.SettingsStore
 import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
 
+data class AgentNotificationTarget(
+    val watcherId: String,
+    val agentName: String,
+    val sessionId: String?,
+    val connectionId: String?,
+    val managementProfile: String?,
+)
+
 class TalariaNotifier(
     private val context: Context,
     private val settings: SettingsStore,
     private val connections: SecureConnectionStore,
 ) {
+    fun canMonitorAgentTasks(): Boolean =
+        settings.notificationsEnabled &&
+            (settings.notifyAgentPermissions || settings.notifyTaskCompletions) &&
+            hasPermission()
+
+    fun notifyAgentPermission(
+        target: AgentNotificationTarget,
+        notificationKey: String,
+        fingerprint: String,
+        body: String,
+    ) {
+        if (!settings.notificationsEnabled || !settings.notifyAgentPermissions || !hasPermission()) return
+        val lane = permissionLane(target, notificationKey)
+        if (!settings.claimAgentNotification("permission|$lane", fingerprint)) return
+        val id = stableId("agent-permission|${scopeKey(target)}|$notificationKey")
+        settings.addActiveAgentPermission(permissionWatcherLane(target), id)
+        show(
+            channel = NotificationChannels.AGENT_PERMISSIONS,
+            id = id,
+            title = "${target.agentName} needs permission",
+            body = body,
+            deepLink = sessionDeepLink(target),
+            target = target,
+            autoCancel = false,
+            priority = NotificationCompat.PRIORITY_HIGH,
+            category = NotificationCompat.CATEGORY_REMINDER,
+            groupKey = agentGroupKey(target),
+        )
+    }
+
+    fun cancelAgentPermission(target: AgentNotificationTarget, notificationKey: String) {
+        val id = stableId("agent-permission|${scopeKey(target)}|$notificationKey")
+        NotificationManagerCompat.from(context).cancel(id)
+        settings.removeActiveAgentPermission(permissionWatcherLane(target), id)
+    }
+
+    fun notifyAgentTaskFinished(
+        target: AgentNotificationTarget,
+        fingerprint: String,
+        body: String,
+        failed: Boolean,
+        background: Boolean,
+    ) {
+        cancelAgentPermissionsForSession(target)
+        if (!settings.notificationsEnabled || !settings.notifyTaskCompletions || !hasPermission()) return
+        val lane = "${scopeKey(target)}|${target.sessionId ?: target.agentName}"
+        if (!settings.claimAgentNotification("completion|$lane", fingerprint)) return
+        val title = when {
+            failed -> "${target.agentName}'s task failed"
+            background -> "${target.agentName} finished a background task"
+            else -> "${target.agentName} completed the task"
+        }
+        show(
+            channel = NotificationChannels.AGENT_TASKS,
+            id = stableId("agent-complete|$lane"),
+            title = title,
+            body = body.take(MAX_NOTIFICATION_BODY),
+            deepLink = sessionDeepLink(target),
+            target = target,
+            actionableReply = !failed,
+            priority = if (failed) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT,
+            category = if (failed) NotificationCompat.CATEGORY_ERROR else NotificationCompat.CATEGORY_STATUS,
+            groupKey = agentGroupKey(target),
+        )
+    }
+
+    fun buildAgentMonitorNotification(agentNames: Collection<String>): Notification {
+        val names = agentNames.map(String::trim).filter(String::isNotBlank).distinct()
+        val title = when (names.size) {
+            0 -> "Monitoring Hermes tasks"
+            1 -> "${names.single()} is working"
+            else -> "Monitoring ${names.size} Hermes agents"
+        }
+        val openIntent = Intent(context, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = "talaria://chat".toUri()
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val openPi = PendingIntent.getActivity(
+            context,
+            AGENT_MONITOR_NOTIFICATION_ID,
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return NotificationCompat.Builder(context, NotificationChannels.AGENT_MONITOR)
+            .setSmallIcon(R.drawable.ic_launcher_monochrome)
+            .setContentTitle(title)
+            .setContentText("Watching for permission requests and task completion")
+            .setContentIntent(openPi)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .build()
+    }
+
     fun notifyReply(title: String, body: String, sessionId: String? = null) {
         if (!settings.notificationsEnabled || !settings.notifyReplies) return
         val scope = connections.activeProfile()
@@ -124,6 +230,12 @@ class TalariaNotifier(
         deepLink: String,
         actionableReply: Boolean = false,
         approvePairing: Pair<String, String>? = null,
+        target: AgentNotificationTarget? = null,
+        autoCancel: Boolean = true,
+        priority: Int = NotificationCompat.PRIORITY_DEFAULT,
+        category: String? = null,
+        groupKey: String? = null,
+        onlyAlertOnce: Boolean = false,
     ) {
         if (!hasPermission()) return
         val openIntent = Intent(context, MainActivity::class.java).apply {
@@ -144,15 +256,19 @@ class TalariaNotifier(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val builder = NotificationCompat.Builder(context, channel)
-            .setSmallIcon(R.drawable.ic_talaria)
+            .setSmallIcon(R.drawable.ic_launcher_monochrome)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(openPi)
-            .setAutoCancel(true)
+            .setAutoCancel(autoCancel)
+            .setOnlyAlertOnce(onlyAlertOnce)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .addAction(0, context.getString(R.string.notif_action_open), openPi)
             .addAction(0, context.getString(R.string.notif_action_dismiss), dismissPi)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setPriority(priority)
+        category?.let(builder::setCategory)
+        groupKey?.let(builder::setGroup)
 
         if (actionableReply) {
             val remoteInput = RemoteInput.Builder(NotificationActionReceiver.KEY_REPLY)
@@ -164,10 +280,12 @@ class TalariaNotifier(
                     action = NotificationActionReceiver.ACTION_REPLY
                     putExtra(NotificationActionReceiver.EXTRA_NOTIF_ID, id)
                     putExtra(NotificationActionReceiver.EXTRA_DEEP_LINK, deepLink)
-                    connections.activeProfile()?.let { profile ->
-                        putExtra(NotificationActionReceiver.EXTRA_CONNECTION_ID, profile.id)
-                        putExtra(NotificationActionReceiver.EXTRA_MANAGEMENT_PROFILE, profile.managementProfile)
-                    }
+                    val profile = connections.activeProfile()
+                    putExtra(NotificationActionReceiver.EXTRA_CONNECTION_ID, target?.connectionId ?: profile?.id)
+                    putExtra(
+                        NotificationActionReceiver.EXTRA_MANAGEMENT_PROFILE,
+                        target?.managementProfile ?: profile?.managementProfile,
+                    )
                 },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
             )
@@ -207,5 +325,45 @@ class TalariaNotifier(
         if (Build.VERSION.SDK_INT < 33) return true
         return ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun cancelAgentPermissionsForSession(target: AgentNotificationTarget) {
+        val manager = NotificationManagerCompat.from(context)
+        settings.takeActiveAgentPermissions(permissionWatcherLane(target)).forEach(manager::cancel)
+    }
+
+    private fun sessionDeepLink(target: AgentNotificationTarget): String {
+        val sessionId = target.sessionId
+        if (sessionId.isNullOrBlank()) return "talaria://chat"
+        return android.net.Uri.Builder()
+            .scheme("talaria")
+            .authority("session")
+            .appendPath(sessionId)
+            .apply {
+                target.connectionId?.let { appendQueryParameter("connection", it) }
+                target.managementProfile?.takeIf(String::isNotBlank)
+                    ?.let { appendQueryParameter("profile", it) }
+            }
+            .build()
+            .toString()
+    }
+
+    private fun permissionLane(target: AgentNotificationTarget, notificationKey: String): String =
+        "${scopeKey(target)}|${target.sessionId ?: notificationKey}"
+
+    private fun permissionWatcherLane(target: AgentNotificationTarget): String =
+        "${scopeKey(target)}|${target.watcherId}"
+
+    private fun scopeKey(target: AgentNotificationTarget): String =
+        "${target.connectionId.orEmpty()}|${target.managementProfile.orEmpty()}"
+
+    private fun agentGroupKey(target: AgentNotificationTarget): String =
+        "talaria-agent|${scopeKey(target)}|${target.sessionId ?: target.agentName}"
+
+    private fun stableId(value: String): Int = value.hashCode()
+
+    companion object {
+        const val AGENT_MONITOR_NOTIFICATION_ID = 0x54414C
+        private const val MAX_NOTIFICATION_BODY = 1_000
     }
 }

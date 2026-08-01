@@ -89,14 +89,21 @@ class HermesEventClient(
 
     fun currentChannel(): String? = channelId
 
-    fun start(channel: String = UUID.randomUUID().toString()) {
+    fun start(channel: String = UUID.randomUUID().toString(), includeRpc: Boolean = true) {
         stop()
         channelId = channel
         stopped = false
         job = scope.launch {
-            val auth = wsAuth.authQueryParam()
+            if (connectionStore.activeProfile() == null) {
+                _events.emit(HermesSideEvent.TransportError("auth", "No active connection profile"))
+                return@launch
+            }
+            val auth = runCatching { wsAuth.authQueryParam() }.getOrElse {
+                _events.emit(HermesSideEvent.TransportError("auth", it.message ?: "authentication failed"))
+                return@launch
+            }
             openEvents(channel, auth)
-            openRpc(auth)
+            if (includeRpc) openRpc(auth)
         }
     }
 
@@ -279,7 +286,10 @@ class HermesEventClient(
             endpoint = "api/events",
             authQuery = auth,
             query = listOf("channel" to channel, "profile" to profile.effectiveManagementProfile()),
-        ) ?: return
+        ) ?: run {
+            _events.tryEmit(HermesSideEvent.TransportError("events", "Invalid dashboard URL"))
+            return
+        }
         val req = Request.Builder().url(url).build()
         eventsSocket = clientFactory.webSocketClient().newWebSocket(
             req,
@@ -441,6 +451,7 @@ object SidecarFrameParser {
             )
             type == "message.complete" -> {
                 val usage = payload["usage"] as? JsonObject
+                val failureReason = payload["failure_reason"]?.jsonPrimitive?.contentOrNull
                 val prompt = usage?.longField("prompt_tokens", "input_tokens", "prompt")
                 val completion = usage?.longField("completion_tokens", "output_tokens", "completion")
                 val total = usage?.longField("total_tokens", "tokens")
@@ -448,8 +459,10 @@ object SidecarFrameParser {
                 HermesSideEvent.MessageComplete(
                     sessionId = sessionId,
                     text = payload["text"]?.jsonPrimitive?.contentOrNull
-                        ?: payload["rendered"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    status = payload["status"]?.jsonPrimitive?.contentOrNull,
+                        ?: payload["rendered"]?.jsonPrimitive?.contentOrNull
+                        ?: failureReason.orEmpty(),
+                    status = payload["status"]?.jsonPrimitive?.contentOrNull
+                        ?: failureReason?.let { "error" },
                     totalTokens = total,
                     costUsd = usage?.doubleField("cost", "cost_usd", "total_cost"),
                 )
@@ -484,6 +497,15 @@ object SidecarFrameParser {
                 sessionId = sessionId,
                 requestId = payload["request_id"]?.jsonPrimitive?.contentOrNull,
             )
+            type == "background.complete" -> {
+                val text = payload["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                HermesSideEvent.BackgroundComplete(
+                    sessionId = sessionId,
+                    taskId = payload["task_id"]?.jsonPrimitive?.contentOrNull,
+                    text = text,
+                    failed = text.trimStart().startsWith("error:", ignoreCase = true),
+                )
+            }
             type.endsWith(".request") && (
                 type.startsWith("approval.") || type.startsWith("clarify.") ||
                     type.startsWith("sudo.") || type.startsWith("secret.")
@@ -620,6 +642,12 @@ sealed class HermesSideEvent {
         val status: String?,
         val totalTokens: Long?,
         val costUsd: Double?,
+    ) : HermesSideEvent()
+    data class BackgroundComplete(
+        val sessionId: String?,
+        val taskId: String?,
+        val text: String,
+        val failed: Boolean,
     ) : HermesSideEvent()
     data class Status(val sessionId: String?, val kind: String?, val text: String) : HermesSideEvent()
 

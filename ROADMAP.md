@@ -10,7 +10,7 @@ Talaria’s target is feature parity for remote-capable Hermes chat and manageme
 - Multiple encrypted saved connections with password-cookie, session-token, bearer, and native OIDC PKCE authentication; WebSocket tickets and optional HTTPS certificate pins.
 - Scoped Room/cache/draft/chat/widget/worker state for every connection and Hermes management profile.
 - Multi-tab PTY chat with reading and terminal modes, process-death restoration, reconnect/resume, image attachments, voice dictation/TTS, share-to-chat, and model switching.
-- Structured `/api/ws` and `/api/events` handling for tools, usage, prompts, approvals, clarification, sudo, secrets, lifecycle, completion, and notifications.
+- Structured `/api/ws` and `/api/events` handling for tools, usage, prompts, approvals, clarification, sudo, secrets, lifecycle, foreground/background completion, and thread-aware Android notifications.
 - Predictive slash-command palette backed by live `commands.catalog` and `complete.slash`, with alias/fuzzy ranking and a compatibility fallback catalog.
 - Core management surfaces: status, sessions, config, env/API keys, models, cron, Skills Hub, toolsets, MCP catalog/OAuth, channels, pairing, webhooks, profiles, workspace files, learning, memory, curator, logs, analytics, operations, and system controls.
 
@@ -22,7 +22,7 @@ Talaria’s target is feature parity for remote-capable Hermes chat and manageme
 - Migrated Room storage without destructive fallback and made all cached data connection/profile-scoped.
 - Fixed share/draft/transcript races, reconnect lifecycles, stale sidecar responses, worker retries, notification completion semantics, and status-bar inset duplication.
 - Added signature-validated, bounded image attachments and safe session-export filenames.
-- Removed unused microphone and sync foreground services plus unnecessary special battery permission.
+- Replaced unused microphone/general-sync foreground services with a scoped active-turn monitor that exists only while a user-started agent task needs permission or completion tracking.
 - Added MCP OAuth and approved-catalog installation, and brought profile CRUD/SOUL/description behavior up to the current API.
 - Expanded unit/contract coverage and kept debug unit tests, Android lint, and APK assembly green.
 
