@@ -6,8 +6,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.repo.HermesRepository
-import com.hermesgadget.talaria.domain.model.LearningGraph
-import com.hermesgadget.talaria.domain.model.LearningNode
 import com.hermesgadget.talaria.domain.model.LearningNodeDetail
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,8 +14,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class LearningUiState(
-    val graph: LearningGraph? = null,
-    val selected: LearningNode? = null,
+    val graph: LearningGraphSnapshot? = null,
+    val selected: LearningMapNode? = null,
     val detail: LearningNodeDetail? = null,
     val draft: String = "",
     val loading: Boolean = true,
@@ -28,6 +26,10 @@ data class LearningUiState(
 
 class LearningViewModel(
     private val repo: HermesRepository = TalariaApp.instance.container.hermesRepository,
+    private val graphSource: LearningGraphSource = LearningGraphSource(
+        clientFactory = TalariaApp.instance.container.clientFactory,
+        connectionStore = TalariaApp.instance.container.connectionStore,
+    ),
 ) : ViewModel() {
     private val _ui = MutableStateFlow(LearningUiState())
     val ui: StateFlow<LearningUiState> = _ui.asStateFlow()
@@ -37,14 +39,14 @@ class LearningViewModel(
     fun refresh() {
         _ui.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
-            repo.getLearningGraph().fold(
+            graphSource.load().fold(
                 onSuccess = { graph -> _ui.update { it.copy(graph = graph, loading = false) } },
                 onFailure = { error -> _ui.update { it.copy(loading = false, error = error.message) } },
             )
         }
     }
 
-    fun open(node: LearningNode) {
+    fun open(node: LearningMapNode) {
         _ui.update { it.copy(selected = node, detail = null, draft = "", busy = true, error = null) }
         viewModelScope.launch {
             repo.getLearningNode(node.id).fold(
@@ -71,12 +73,25 @@ class LearningViewModel(
         mutate { repo.deleteLearningNode(node.id) }
     }
 
-    private fun mutate(block: suspend () -> Result<LearningGraph>) {
+    private fun mutate(block: suspend () -> Result<com.hermesgadget.talaria.domain.model.LearningGraph>) {
         _ui.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
             block().fold(
-                onSuccess = { graph ->
-                    _ui.update { LearningUiState(graph = graph, loading = false) }
+                onSuccess = { fallbackGraph ->
+                    graphSource.load().fold(
+                        onSuccess = { graph ->
+                            _ui.update { LearningUiState(graph = graph, loading = false) }
+                        },
+                        onFailure = { error ->
+                            _ui.update {
+                                LearningUiState(
+                                    graph = LearningGraphSnapshot.fromTyped(fallbackGraph),
+                                    loading = false,
+                                    error = "Saved, but the enriched graph could not be reloaded: ${error.message}",
+                                )
+                            }
+                        },
+                    )
                 },
                 onFailure = { error -> _ui.update { it.copy(busy = false, error = error.message) } },
             )

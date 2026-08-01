@@ -38,13 +38,15 @@ import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.hermesgadget.talaria.domain.model.LearningGraph
-import com.hermesgadget.talaria.domain.model.LearningNode
 import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
@@ -60,6 +62,15 @@ fun LearningScreen(
 ) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val graph = ui.graph
+    var reveal by remember { mutableFloatStateOf(1f) }
+    val timeline = remember(graph?.nodes) { graph?.let { buildLearningTimeline(it.nodes) } }
+    val visibleNodes = remember(graph?.nodes, reveal) {
+        graph?.let { visibleLearningNodes(it.nodes, reveal) }.orEmpty()
+    }
+
+    LaunchedEffect(graph?.nodes) {
+        reveal = 1f
+    }
 
     if (ui.selected != null && !ui.confirmDelete) {
         ModalBottomSheet(onDismissRequest = vm::close) {
@@ -68,13 +79,22 @@ fun LearningScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(ui.detail?.label ?: ui.selected?.label.orEmpty(), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    listOfNotNull(
+                        ui.detail?.kind?.takeIf { it.isNotBlank() } ?: ui.selected?.kind,
+                        ui.selected?.category,
+                        formatLearningTimestamp(ui.selected?.timestamp),
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 if (ui.detail == null && ui.busy) {
                     LoadingBox()
                 } else {
                     OutlinedTextField(
                         value = ui.draft,
                         onValueChange = vm::updateDraft,
-                        label = { Text("Node content") },
+                        label = { Text("Description") },
                         minLines = 12,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -128,6 +148,16 @@ fun LearningScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 item { StatsCard(graph) }
+                item {
+                    LearningStarmapCard(
+                        graph = graph,
+                        visibleNodes = visibleNodes,
+                        timeline = timeline!!,
+                        reveal = reveal,
+                        onRevealChange = { reveal = it },
+                        onNodeClick = vm::open,
+                    )
+                }
                 if (graph.clusters.isNotEmpty()) {
                     item {
                         Text(
@@ -150,28 +180,32 @@ fun LearningScreen(
                 }
                 item {
                     Text(
-                        "Nodes (${graph.nodes.size})",
+                        if (visibleNodes.size == graph.nodes.size) {
+                            "Nodes (${graph.nodes.size})"
+                        } else {
+                            "Nodes (${visibleNodes.size}/${graph.nodes.size})"
+                        },
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.secondary,
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
-                if (graph.nodes.isEmpty()) {
+                if (visibleNodes.isEmpty()) {
                     item {
                         Text(
-                            "No learned skills yet.",
+                            if (graph.nodes.isEmpty()) "No learned skills yet." else "No nodes match this timeline.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
-                items(graph.nodes, key = { it.id }) { node -> NodeCard(node) { vm.open(node) } }
+                items(visibleNodes, key = { it.id }) { node -> NodeCard(node) { vm.open(node) } }
             }
         }
     }
 }
 
 @Composable
-private fun StatsCard(graph: LearningGraph) {
+private fun StatsCard(graph: LearningGraphSnapshot) {
     val s = graph.stats
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -192,7 +226,7 @@ private fun StatsCard(graph: LearningGraph) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NodeCard(node: LearningNode, onClick: () -> Unit) {
+private fun NodeCard(node: LearningMapNode, onClick: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
