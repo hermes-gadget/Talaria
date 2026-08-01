@@ -60,6 +60,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.SmartToy
@@ -130,6 +131,7 @@ fun ChatScreen(
     val hasConnection = connectionScope != null
     val density = LocalDensity.current
     var renameTarget by remember { mutableStateOf<ChatTab?>(null) }
+    var monitorOpen by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val settings = TalariaApp.instance.container.settingsStore
@@ -388,6 +390,9 @@ fun ChatScreen(
                             )
                         }
                     }
+                    IconButton(onClick = { monitorOpen = !monitorOpen }) {
+                        Icon(Icons.Filled.Hub, contentDescription = "Agent activity")
+                    }
                     IconButton(onClick = { vm.toggleModelPicker() }) {
                         Icon(Icons.Filled.SmartToy, contentDescription = "Change model")
                     }
@@ -585,6 +590,13 @@ fun ChatScreen(
                 onRename = { renameTarget = it },
                 onAdd = { vm.newSession() },
             )
+            if (monitorOpen) {
+                SubagentMonitor(
+                    active = active,
+                    eventClient = TalariaApp.instance.container.eventClient,
+                    onDismiss = { monitorOpen = false },
+                )
+            }
             active?.error?.let {
                 Text(
                     it,

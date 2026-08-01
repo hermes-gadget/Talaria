@@ -89,6 +89,7 @@ private val manageSections = listOf(
         listOf(
             ManageItem("Status", "Version, gateway, live sessions", Routes.STATUS, Icons.Filled.MonitorHeart),
             ManageItem("Sessions", "Browse, search, resume, export", Routes.SESSIONS, Icons.Filled.Forum),
+            ManageItem("Artifacts", "Images and files from agent sessions", Routes.ARTIFACTS, Icons.Filled.Folder),
             ManageItem("Cron", "Scheduled agent jobs", Routes.CRON, Icons.Filled.Schedule),
             ManageItem("Analytics", "Token usage & cost", Routes.ANALYTICS, Icons.Filled.BarChart),
         ),
