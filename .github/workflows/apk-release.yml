@@ -3,6 +3,11 @@ name: Build APK
 # Builds the Talaria debug APK on every version tag (v*) and attaches it to
 # the GitHub release (stable or pre-release). 0.x series ships as
 # pre-releases; flip the prerelease input to tag-derived when 1.0 lands.
+#
+# Obtainium updates require:
+#   1. Monotonic versionCode (derived from the tag)
+#   2. A stable signing cert (CI upload keystore via repo secrets — not the
+#      ephemeral Android debug keystore each runner invents)
 "on":
   push:
     tags: ["v*"]
@@ -29,17 +34,57 @@ jobs:
           yes | sdkmanager --licenses > /dev/null
           yes | sdkmanager "platforms;android-36" "build-tools;35.0.0"
 
+      - name: Resolve version from tag
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0-ci.${GITHUB_RUN_NUMBER}"
+          fi
+          # Semver → monotonic versionCode: major*10000 + minor*100 + patch
+          # v0.2 → 200, v0.2.1 → 201 (must stay above the versionCode=2 v0.1/v0.2 builds)
+          IFS=. read -r MAJ MIN PAT _ <<< "${VERSION}.0.0"
+          digits() { echo "$1" | tr -cd '0-9'; }
+          MAJ=$(digits "$MAJ"); MAJ=${MAJ:-0}
+          MIN=$(digits "$MIN"); MIN=${MIN:-0}
+          PAT=$(digits "$PAT"); PAT=${PAT:-0}
+          CODE=$((10#$MAJ * 10000 + 10#$MIN * 100 + 10#$PAT))
+          if [ "$CODE" -le 2 ]; then CODE=3; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "Resolved versionName=$VERSION versionCode=$CODE"
+
+      - name: Decode CI upload keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.TALARIA_CI_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::TALARIA_CI_KEYSTORE_BASE64 secret is missing — Obtainium updates will conflict across releases."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/talaria-ci.jks"
+          echo "TALARIA_CI_KEYSTORE=$RUNNER_TEMP/talaria-ci.jks" >> "$GITHUB_ENV"
+
       - name: Unit tests
         run: ./gradlew :app:testDebugUnitTest --no-daemon
 
       - name: Build debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon
+        env:
+          TALARIA_CI_KEYSTORE_PASSWORD: ${{ secrets.TALARIA_CI_KEYSTORE_PASSWORD }}
+          TALARIA_CI_KEY_ALIAS: ${{ secrets.TALARIA_CI_KEY_ALIAS }}
+          TALARIA_CI_KEY_PASSWORD: ${{ secrets.TALARIA_CI_KEY_PASSWORD }}
+        run: >
+          ./gradlew :app:assembleDebug --no-daemon
+          -Ptalaria.versionName=${{ steps.ver.outputs.version }}
+          -Ptalaria.versionCode=${{ steps.ver.outputs.code }}
 
       - name: Rename APK with version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          [ -n "$VERSION" ] || VERSION="ci"
+          VERSION="${{ steps.ver.outputs.version }}"
           cp app/build/outputs/apk/debug/app-debug.apk "Talaria-v${VERSION}-debug.apk"
+          $ANDROID_HOME/build-tools/35.0.0/aapt2 dump badging "Talaria-v${VERSION}-debug.apk" \
+            | head -1
 
       - uses: actions/upload-artifact@v7
         with:

@@ -2,6 +2,17 @@
 
 All notable changes to Talaria are documented here.
 
+## [0.2.1] — 2026-08-01 — Obtainium update fix
+
+### Fixes
+
+- **Obtainium / sideload updates no longer conflict.** CI release APKs now bump
+  `versionCode` from the git tag (e.g. `v0.2.1` → `201`) and are signed with a
+  persistent upload keystore instead of each runner’s ephemeral Android debug
+  cert. v0.1 and v0.2 both shipped `versionCode=2` with different signatures, which
+  Android reports as a package conflict. **One-time:** uninstall the old build
+  before installing 0.2.1; later Obtainium updates will then apply cleanly.
+
 ## [Unreleased] — Parity-gap closure
 
 ### Performance
