@@ -6,12 +6,13 @@ All notable changes to Talaria are documented here.
 
 ### Fixes
 
-- **Obtainium / sideload updates no longer conflict.** CI release APKs now bump
-  `versionCode` from the git tag (e.g. `v0.2.1` → `201`) and are signed with a
-  persistent upload keystore instead of each runner’s ephemeral Android debug
-  cert. v0.1 and v0.2 both shipped `versionCode=2` with different signatures, which
-  Android reports as a package conflict. **One-time:** uninstall the old build
-  before installing 0.2.1; later Obtainium updates will then apply cleanly.
+- **Obtainium `failureConflict` fixed for real.** GitHub releases now ship a
+  **signed release** APK (`com.nousresearch.talaria`, `versionCode` from tag,
+  floor 202) instead of the debuggable `*.debug` APK signed with each runner’s
+  ephemeral cert. Those debug builds are what Android/Obtainium reported as
+  `failureConflict [Talaria]`.
+- **One-time migration:** uninstall the old Talaria debug app, remove + re-add
+  the app in Obtainium, then install 0.2.1. Later tagged updates apply in-place.
 
 ## [Unreleased] — Parity-gap closure
 

@@ -18,17 +18,15 @@ fun propOrDefault(name: String, default: String): String =
     (findProperty(name) as String?)?.takeIf { it.isNotBlank() } ?: default
 
 // Overridable via -Ptalaria.versionName / -Ptalaria.versionCode (CI sets these from the git tag).
-// Defaults sit above the v0.1/v0.2 Obtainium builds that both shipped versionCode=2.
 val talariaVersionName = propOrDefault("talaria.versionName", "0.2.1")
-val talariaVersionCode = propOrDefault("talaria.versionCode", "201").toInt()
+val talariaVersionCode = propOrDefault("talaria.versionCode", "202").toInt()
 
-// Persistent CI upload keystore (Obtainium). Ephemeral runner debug keys caused
-// INSTALL_FAILED_UPDATE_INCOMPATIBLE ("App not installed as package conflicts…").
+// Persistent CI upload keystore for Obtainium / GitHub release APKs.
 val ciKeystorePath = System.getenv("TALARIA_CI_KEYSTORE")
 val ciKeystorePassword = System.getenv("TALARIA_CI_KEYSTORE_PASSWORD")
 val ciKeyAlias = System.getenv("TALARIA_CI_KEY_ALIAS") ?: "talaria"
 val ciKeyPassword = System.getenv("TALARIA_CI_KEY_PASSWORD")
-val useCiDebugSigning =
+val useCiSigning =
     !ciKeystorePath.isNullOrBlank() &&
         !ciKeystorePassword.isNullOrBlank() &&
         !ciKeyPassword.isNullOrBlank() &&
@@ -53,8 +51,9 @@ android {
     }
 
     signingConfigs {
-        if (useCiDebugSigning) {
-            getByName("debug") {
+        // Local debug stays on the machine debug keystore unless CI overrides below.
+        if (useCiSigning) {
+            create("ci") {
                 storeFile = file(ciKeystorePath!!)
                 storePassword = ciKeystorePassword
                 keyAlias = ciKeyAlias
@@ -73,6 +72,7 @@ android {
 
     buildTypes {
         debug {
+            // Dev-only package — never ship this via Obtainium (different id + ephemeral certs).
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
             isDebuggable = true
@@ -84,8 +84,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            if (keystorePropertiesFile.exists()) {
-                signingConfig = signingConfigs.getByName("release")
+            // Prefer CI upload key for GitHub/Obtainium; else local keystore.properties.
+            signingConfig = when {
+                useCiSigning -> signingConfigs.getByName("ci")
+                keystorePropertiesFile.exists() -> signingConfigs.getByName("release")
+                else -> null
             }
         }
     }

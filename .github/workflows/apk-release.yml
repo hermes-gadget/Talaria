@@ -1,13 +1,16 @@
 name: Build APK
 
-# Builds the Talaria debug APK on every version tag (v*) and attaches it to
-# the GitHub release (stable or pre-release). 0.x series ships as
-# pre-releases; flip the prerelease input to tag-derived when 1.0 lands.
+# Builds a signed release APK on every version tag (v*) and attaches it to the
+# GitHub pre-release for Obtainium.
 #
-# Obtainium updates require:
-#   1. Monotonic versionCode (derived from the tag)
-#   2. A stable signing cert (CI upload keystore via repo secrets — not the
-#      ephemeral Android debug keystore each runner invents)
+# Obtainium needs:
+#   1. Monotonic versionCode (from the tag)
+#   2. Stable applicationId (com.nousresearch.talaria — NOT the .debug suffix)
+#   3. Stable signing cert (TALARIA_CI_KEYSTORE_* secrets)
+#
+# Older v0.1 / v0.2 / first v0.2.1 builds shipped com.nousresearch.talaria.debug
+# with rotating debug certs → STATUS_FAILURE_CONFLICT. Uninstall that debug app
+# (or remove + re-add in Obtainium) once, then install this release APK.
 "on":
   push:
     tags: ["v*"]
@@ -43,14 +46,14 @@ jobs:
             VERSION="0.0.0-ci.${GITHUB_RUN_NUMBER}"
           fi
           # Semver → monotonic versionCode: major*10000 + minor*100 + patch
-          # v0.2 → 200, v0.2.1 → 201 (must stay above the versionCode=2 v0.1/v0.2 builds)
           IFS=. read -r MAJ MIN PAT _ <<< "${VERSION}.0.0"
           digits() { echo "$1" | tr -cd '0-9'; }
           MAJ=$(digits "$MAJ"); MAJ=${MAJ:-0}
           MIN=$(digits "$MIN"); MIN=${MIN:-0}
           PAT=$(digits "$PAT"); PAT=${PAT:-0}
           CODE=$((10#$MAJ * 10000 + 10#$MIN * 100 + 10#$PAT))
-          if [ "$CODE" -le 2 ]; then CODE=3; fi
+          # Floor above prior Obtainium debug builds (versionCode 2 and 201).
+          if [ "$CODE" -le 201 ]; then CODE=202; fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
           echo "Resolved versionName=$VERSION versionCode=$CODE"
@@ -60,7 +63,7 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.TALARIA_CI_KEYSTORE_BASE64 }}
         run: |
           if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::error::TALARIA_CI_KEYSTORE_BASE64 secret is missing — Obtainium updates will conflict across releases."
+            echo "::error::TALARIA_CI_KEYSTORE_BASE64 secret is missing."
             exit 1
           fi
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/talaria-ci.jks"
@@ -69,33 +72,47 @@ jobs:
       - name: Unit tests
         run: ./gradlew :app:testDebugUnitTest --no-daemon
 
-      - name: Build debug APK
+      - name: Build signed release APK
         env:
           TALARIA_CI_KEYSTORE_PASSWORD: ${{ secrets.TALARIA_CI_KEYSTORE_PASSWORD }}
           TALARIA_CI_KEY_ALIAS: ${{ secrets.TALARIA_CI_KEY_ALIAS }}
           TALARIA_CI_KEY_PASSWORD: ${{ secrets.TALARIA_CI_KEY_PASSWORD }}
         run: >
-          ./gradlew :app:assembleDebug --no-daemon
+          ./gradlew :app:assembleRelease --no-daemon
           -Ptalaria.versionName=${{ steps.ver.outputs.version }}
           -Ptalaria.versionCode=${{ steps.ver.outputs.code }}
 
       - name: Rename APK with version
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
-          cp app/build/outputs/apk/debug/app-debug.apk "Talaria-v${VERSION}-debug.apk"
-          $ANDROID_HOME/build-tools/35.0.0/aapt2 dump badging "Talaria-v${VERSION}-debug.apk" \
-            | head -1
+          SRC=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          OUT="Talaria-v${VERSION}.apk"
+          cp "$SRC" "$OUT"
+          $ANDROID_HOME/build-tools/35.0.0/aapt2 dump badging "$OUT" | head -1
+          $ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs "$OUT" \
+            | grep -E 'Signer #|DN:|SHA-256' || true
 
       - uses: actions/upload-artifact@v7
         with:
           name: talaria-apk
-          path: Talaria-*-debug.apk
+          path: Talaria-v*.apk
           retention-days: 30
 
       - name: Attach APK to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
-          files: Talaria-*-debug.apk
+          files: Talaria-v*.apk
           prerelease: true
           generate_release_notes: true
+          body: |
+            ## Install / Obtainium
+
+            This build is the **release** package `com.nousresearch.talaria` (signed with the stable CI upload key).
+
+            Older GitHub APKs used `com.nousresearch.talaria.debug` with rotating debug certs, which Android reports as **failureConflict**.
+
+            **One-time migration**
+            1. Uninstall any existing Talaria (especially the debug build).
+            2. In Obtainium: remove the Talaria entry, then re-add this repo.
+            3. Install this release. Later updates apply in-place.
