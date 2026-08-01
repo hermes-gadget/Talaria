@@ -652,26 +652,36 @@ Reference: `NousResearch/hermes-agent/apps/desktop` (routes, panes, settings). A
 
 ### Snapshot — where Talaria stands vs the Desktop app
 
+Legend for this phase: **Done** shipped & verified on-device · **Blocked** endpoint returns
+404 on Hermes v0.19.0 (re-check when the gateway updates) · **Deferred** larger effort, tracked.
+
 | Desktop surface | Talaria today | Item |
 |-----------------|---------------|------|
-| Chat composer (images, rich input) | Text + voice only | 15.2 |
-| Files pane (`/api/fs`) | Missing | 15.1 |
-| Artifacts page | Missing | 15.3 |
-| Starmap (learning graph) | Missing | 15.4 |
-| Command center (usage + maintenance) | Analytics only | 15.5 |
-| Agents / subagent monitoring | Missing | 15.6 |
-| Command palette (⌘K) | Missing | 15.7 |
-| Multi-profile live streaming | Single profile at a time | 15.8 |
-| Quick entry + floating HUD | Notification reply only | 15.9 |
-| Server voice (TTS/STT) | On-device STT only | 15.10 |
-| System ops (drain, prompt-size, debug-share) | Partial | 15.11 |
-| Model management (visibility, fallbacks, endpoints) | Schema editor only | 15.12 |
-| Terminal pane | PTY text view | 15.13 |
-| Keybinds / themes / i18n | System theme; no i18n | 15.14 |
+| Chat composer (images, rich input) | **Blocked** — `/api/chat/image-upload` 404 on v0.19.0 | 15.2 |
+| Files pane (`/api/fs`) | **Done** — browse + text preview | 15.1 |
+| Artifacts page | **Deferred** — no artifacts dir on install; Files pane covers browsing | 15.3 |
+| Starmap (learning graph) | **Done** — stats + clusters + node list | 15.4 |
+| Command center (usage + maintenance) | **Partial** — Analytics covers usage; ops maintenance 404 | 15.5 |
+| Agents / subagent monitoring | **Deferred** — needs upstream `agent.*` event frames (unverified) | 15.6 |
+| Command palette (⌘K) | **Done** — Manage quick-jump search | 15.7 |
+| Multi-profile live streaming | **Deferred** — single-profile sidecar works; pool is large | 15.8 |
+| Quick entry + floating HUD | **Deferred** — widget reply exists; PiP is large | 15.9 |
+| Server voice (TTS/STT) | **Blocked** — `/api/audio/*` 404 on v0.19.0 | 15.10 |
+| System ops (drain, prompt-size, debug-share) | **Blocked** — `/api/ops/*`, `/api/gateway/drain` 404 | 15.11 |
+| Model management (visibility, fallbacks, endpoints) | **Done** — provider catalog + set active model | 15.12 |
+| Terminal pane | **Done** — interrupt (Ctrl-C) + selectable output | 15.13 |
+| Keybinds / themes / i18n | **Partial** — dynamic color + light/dark/system shipped; i18n/keybinds deferred | 15.14 |
 
-### 15.1 Files pane (`API-ready`)
+### 15.1 Files pane (`Done` — browse + preview; upload/SAF pending)
 
 **Why:** Desktop's Files pane browses the host tree; it is the most-used surface after chat for verifying agent work.
+
+**Shipped (2026-08):** `FilesScreen` + `FilesViewModel` browse `/api/fs/list` from the
+`/api/fs/default-cwd` root, dirs-first sorted, with an up-nav + cwd shortcut path bar;
+tapping a file opens a `/api/fs/read-text` preview sheet (language + size + monospace body,
+binary-safe). Typed models `FsEntry`/`FsListResponse`/`FsCwd`/`FsTextFile` with decode tests;
+listings cached 10s via `ResponseCache`. Routed under Manage → System → Files. **Still open:**
+share sheet, SAF download, and upload to cwd (`/api/files/upload`) — follow-up.
 
 **Done when:** Tree browser over `/api/fs/list` + `/api/fs/read-text` + `/api/fs/git-root`; text preview, share sheet, SAF download; upload to cwd via `/api/files/upload`; "open in Files" from Artifacts/Status.
 
@@ -681,7 +691,11 @@ Reference: `NousResearch/hermes-agent/apps/desktop` (routes, panes, settings). A
 3. Compose: two-pane list/preview (`ModalNavigationDrawer`-style), path bar with cwd badge from `default-cwd`.
 4. Test: decode `fs/list` fixture; path traversal guard test.
 
-### 15.2 Attach images in chat (`Missing`)
+### 15.2 Attach images in chat (`Blocked` — upstream)
+
+**Blocked (2026-08):** `/api/chat/image-upload` returns 404 and `/api/media` 422 (no id) on
+Hermes v0.19.0, and `model/info` reports `supports_vision:false` for the active model.
+Deferred until the gateway exposes image upload; re-probe on update.
 
 **Why:** Desktop composer sends images (`/api/chat/image-upload` + `/api/media`); mobile users expect camera/gallery attach.
 
@@ -693,7 +707,12 @@ Reference: `NousResearch/hermes-agent/apps/desktop` (routes, panes, settings). A
 3. Compose: picker row in composer, `AsyncImage` thumbnails, viewer dialog (pinch zoom).
 4. Better-than-desktop: direct camera capture + share-to-chat intent filter.
 
-### 15.3 Artifacts browser (`Missing`)
+### 15.3 Artifacts browser (`Deferred`)
+
+**Deferred (2026-08):** the `HERMES_HOME/artifacts` dir does not exist on the test install
+(`fs/list` → ENOENT) and there's no dedicated artifacts endpoint, so there's nothing to
+verify against; the general **Files pane (15.1)** already browses any path incl. an artifacts
+dir when present. Revisit as a specialized grid (thumbnails via `/api/media`) once artifacts exist.
 
 **Why:** Desktop's Artifacts page lists files the agent produced; on mobile this is the fastest way to grab screenshots/reports.
 
@@ -705,7 +724,13 @@ Reference: `NousResearch/hermes-agent/apps/desktop` (routes, panes, settings). A
 3. Compose: gallery grid (StaggeredGrid), preview screen, share sheet.
 4. Test: fs-list fixture decode; thumbnail cache eviction unit test.
 
-### 15.4 Learning graph / Starmap (`API-ready`)
+### 15.4 Learning graph / Starmap (`Done` — structured view)
+
+**Shipped (2026-08):** Manage → System → **Learning** (`LearningScreen` via `SimpleManageViewModel`
++ typed `LearningGraph`/`LearningNode`/`LearningStats`, decode-tested). Renders an overview
+stats card (learned skills, categories, linked/isolated %, used, agent-created), category
+cluster chips, and the skill/memory node list (kind, category, use-count, state, creator).
+Cached via `ResponseCache`. **Still open:** Canvas radial render + node edit/delete + share-code import.
 
 **Why:** Desktop's Starmap visualizes what Hermes learned (`/api/learning/graph` + `/api/learning/node`); mobile canvas is a natural fit.
 
@@ -719,6 +744,11 @@ Reference: `NousResearch/hermes-agent/apps/desktop` (routes, panes, settings). A
 
 ### 15.5 Command center: usage + maintenance (`Partial`)
 
+**Status (2026-08):** the Usage half is largely covered by the existing **Analytics** screen
+(daily bars, totals, per-model breakdown, 7/30/90-day range). The Maintenance half is
+**blocked** — `/api/ops/prompt-size` and `/api/ops/debug-share` return 404 on v0.19.0.
+A dedicated tabbed Command Center is deferred until ops endpoints exist.
+
 **Why:** Desktop's command center separates Usage (live list, debounced search) from Maintenance (memory files, cache ops). Talaria's Analytics shows totals only.
 
 **Done when:** Usage tab = per-session/per-model rows w/ search + date filter; Maintenance tab = memory file browse + ops (`/api/ops/prompt-size`, `/api/ops/debug-share`) + cache prune where API allows.
@@ -729,7 +759,12 @@ Reference: `NousResearch/hermes-agent/apps/desktop` (routes, panes, settings). A
 3. Compose: tabbed page (Usage / Maintenance), `LazyColumn` rows, debounced search field.
 4. Test: usage aggregation unit tests.
 
-### 15.6 Subagent monitoring (`Missing`)
+### 15.6 Subagent monitoring (`Deferred`)
+
+**Deferred (2026-08):** requires upstream `agent.spawn`/`agent.done` sidecar frames whose
+existence/names on v0.19.0 are unverified (the current sidecar emits tool/prompt/session.info
+only). Building the parser + screen blind would be untestable; revisit once the event names
+are confirmed against a run that spawns subagents.
 
 **Why:** Desktop's Agents view shows spawned subagents live (status dots, streams). Users want to watch delegation from their pocket.
 
@@ -741,9 +776,15 @@ Reference: `NousResearch/hermes-agent/apps/desktop` (routes, panes, settings). A
 3. Compose: Agents page (route + nav row), status-dot rows, stream preview.
 4. Better-than-desktop: finish-notification via `TalariaNotifier`.
 
-### 15.7 Global command palette (`Mobile-adapt`)
+### 15.7 Global command palette (`Done` — v1: Manage quick-jump)
 
 **Why:** Desktop ⌘K is the fastest way anywhere; phones need the same muscle memory.
+
+**Shipped (2026-08):** a `CommandPalette` `ModalBottomSheet` opens from the search icon
+in the Manage top bar — a fuzzy-filtered list (title/subtitle/section) of every Manage
+destination; tapping a result navigates there and dismisses. Directly serves fast menu
+navigation. **Still open:** reach-from-anywhere trigger (edge swipe / app-icon shortcut),
+profile/session actions, and recents — follow-up.
 
 **Done when:** Palette sheet from anywhere (edge swipe / FAB / long-press app icon): search + run — open screen, switch profile, jump to session, run system action; recent actions first.
 
@@ -752,7 +793,11 @@ Reference: `NousResearch/hermes-agent/apps/desktop` (routes, panes, settings). A
 2. Compose: full-screen sheet, haptic on pick, deep links (`talaria://<screen>`).
 3. Better-than-desktop: app-icon shortcut menu (Android ShortcutManager) for top 4 actions.
 
-### 15.8 Multi-profile live streaming (`Partial`)
+### 15.8 Multi-profile live streaming (`Deferred`)
+
+**Deferred (2026-08):** single-profile sidecar + management-profile switch (with cache clear)
+already works; a bounded multi-sidecar pool with merged, profile-tagged lists is a large,
+lifecycle-sensitive change best done as its own focused effort.
 
 **Why:** Desktop keeps background profiles streaming and merges lists; Talaria stops the sidecar on switch.
 
@@ -764,7 +809,11 @@ Reference: `NousResearch/hermes-agent/apps/desktop` (routes, panes, settings). A
 3. Compose: profile chip on session rows; switch = `ProfileSwitcherBar` behavior, no full reconnect.
 4. Test: pool eviction + merge unit tests.
 
-### 15.9 Quick-entry widget + PiP chat (`Mobile-adapt` — better than desktop)
+### 15.9 Quick-entry widget + PiP chat (`Deferred`)
+
+**Deferred (2026-08):** a Glance status widget already ships; adding text-input quick entry
+and a Picture-in-Picture chat surface (streaming into a PiP window) is a sizable, device-
+capability-sensitive effort tracked for a dedicated pass.
 
 **Why:** Desktop's quick entry + floating HUD; a phone can beat it: type into the agent from the home screen, or float the chat over any app.
 
@@ -775,7 +824,11 @@ Reference: `NousResearch/hermes-agent/apps/desktop` (routes, panes, settings). A
 2. PiP: `PictureInPictureParams` on ChatScreen; `RemoteAction`s (mic, close); stream renders into PiP surface via sidecar events.
 3. Test: widget action → session-create unit test; PiP eligibility check on devices.
 
-### 15.10 Server voice (`Partial`)
+### 15.10 Server voice (`Blocked` — upstream)
+
+**Blocked (2026-08):** `/api/audio/speak` and `/api/audio/transcribe` return 404 on v0.19.0
+(only `/api/audio/elevenlabs/voices` responds). On-device STT/TTS remain shipped; server voice
+is deferred until the audio endpoints are enabled.
 
 **Why:** `/api/audio/speak` + `/api/audio/transcribe` + `/api/audio/elevenlabs/voices` exist; desktop plays assistant audio. On-device STT is done; server TTS opens ElevenLabs-quality replies.
 
@@ -787,7 +840,11 @@ Reference: `NousResearch/hermes-agent/apps/desktop` (routes, panes, settings). A
 3. Compose: audio bubble in transcript (play/pause, duration); long-press reply → "Play aloud".
 4. Test: bubble state machine unit tests.
 
-### 15.11 System ops (`Partial`)
+### 15.11 System ops (`Blocked` — upstream)
+
+**Blocked (2026-08):** `/api/gateway/drain`, `/api/ops/prompt-size`, `/api/ops/doctor` and
+`/api/ops/debug-share` all return 404 on v0.19.0. Existing gateway start/stop/restart remain.
+Re-probe and wire the ops rows when the endpoints appear.
 
 **Why:** Desktop exposes gateway drain + ops; support/debug workflows need them on the go.
 
@@ -798,7 +855,14 @@ Reference: `NousResearch/hermes-agent/apps/desktop` (routes, panes, settings). A
 2. SystemViewModel actions with confirm dialogs (drain warns like restart).
 3. Compose: rows in System screen; share sheet for debug bundle.
 
-### 15.12 Model management (`Partial`)
+### 15.12 Model management (`Done` — catalog + set active)
+
+**Shipped (2026-08):** Manage → Capabilities → **Models** (`ModelsScreen` + `ModelsViewModel`,
+typed `ModelProvider`/`ModelOptionsResponse`, decode-tested). Lists every provider from
+`/api/model/options` (name, model count, source, auth state, warnings), auto-expands the
+current provider, highlights the active model (from `/api/model/info`), and sets a model via
+`PUT /api/model/set` (invalidates the cached catalog). **Still open:** fallback-chain editor,
+visibility toggles and custom-endpoint CRUD (config-schema writes).
 
 **Why:** Desktop settings manage providers, fallback models, visibility, custom endpoints; the schema editor exposes the fields but curated forms beat raw JSON on mobile.
 
@@ -810,7 +874,12 @@ Reference: `NousResearch/hermes-agent/apps/desktop` (routes, panes, settings). A
 3. Compose: grouped forms with switches + reorderable fallback list.
 4. Test: schema round-trip tests (existing fixture coverage extended).
 
-### 15.13 Terminal pane (`Partial`)
+### 15.13 Terminal pane (`Done` — interrupt + select)
+
+**Shipped (2026-08):** in Chat terminal mode a **Stop** action sends Ctrl-C (`\x03`) to the
+active PTY (`ChatViewModel.sendInterrupt` → `PtyWebSocketSession.sendRaw`), and terminal
+output is wrapped in a `SelectionContainer` so users can select/copy PTY text. **Still open:**
+font-size control and alternate-screen-aware rendering.
 
 **Why:** Desktop ships a real terminal pane; Talaria's PTY view is text-only.
 
@@ -821,7 +890,11 @@ Reference: `NousResearch/hermes-agent/apps/desktop` (routes, panes, settings). A
 2. Compose: selectable text + action bar (copy, interrupt `\x03`, clear).
 3. Test: ANSI control parsing (extend `AnsiStripper` tests).
 
-### 15.14 Keybinds / themes / i18n (`Missing` — low priority)
+### 15.14 Keybinds / themes / i18n (`Partial`)
+
+**Status (2026-08):** themes are **done** — Material You dynamic-color toggle + light/dark/system
+selector ship on the You screen (`Theme.kt`, `SettingsStore`). i18n string extraction and
+hardware-keyboard shortcuts remain **deferred** (low priority for a touch-first client).
 
 **Why:** Desktop has rebindable keybinds, multiple themes, ja/en i18n; a phone mostly needs theme + locale.
 

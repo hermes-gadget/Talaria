@@ -45,6 +45,9 @@ object Routes {
     const val SYSTEM = "system"
     const val MEMORY = "memory"
     const val CURATOR = "curator"
+    const val FILES = "files"
+    const val MODELS = "models"
+    const val LEARNING = "learning"
     const val SETTINGS = "settings"
 
     fun chat(resume: String? = null) =

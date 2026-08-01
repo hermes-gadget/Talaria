@@ -65,6 +65,10 @@ data class ChatTab(
     val streamingText: String = "",
     val readingMessages: List<ChatLine> = emptyList(),
     val tools: List<ToolCallUi> = emptyList(),
+    // True from when the user sends until the assistant's reply lands. Drives the
+    // single "working · <current tool>" indicator (reading mode) instead of the
+    // raw TUI. Cleared when a new assistant message arrives (or on close/error).
+    val working: Boolean = false,
     val modelLabel: String? = null,
     val modelConnected: Boolean? = null,
     // Live agent status from the sidecar `session.info` frame.
@@ -325,12 +329,22 @@ class ChatViewModel(
                 lines = it.lines + userLine,
                 readingMessages = it.readingMessages + userLine,
                 hasSent = true,
+                // Fresh turn: start the working indicator and drop the previous
+                // turn's tool so we only ever surface the current one.
+                working = true,
+                tools = emptyList(),
             )
         }
         _ui.update { it.copy(showSlashPalette = false) }
         rt.assistantBuffer = StringBuilder()
         rt.session.sendText(payload)
         viewModelScope.launch { chatRepository.saveDraft("") }
+    }
+
+    /** Send Ctrl-C (interrupt) to the active agent's PTY (terminal pane, 15.13). */
+    fun sendInterrupt() {
+        val tabId = _ui.value.active?.id ?: return
+        runtimes[tabId]?.session?.sendRaw("")
     }
 
     fun resizePty(cols: Int, rows: Int) {
@@ -384,16 +398,23 @@ class ChatViewModel(
         }
     }
 
+    /** Rename an agent tab (long-press affordance). Blank names are ignored. */
+    fun renameTab(tabId: String, title: String) {
+        val trimmed = title.trim()
+        if (trimmed.isEmpty()) return
+        updateTab(tabId) { it.copy(title = trimmed) }
+    }
+
     private fun handlePtyEvent(tabId: String, event: PtyEvent) {
         when (event) {
             is PtyEvent.Connected -> updateTab(tabId) { it.copy(connecting = false, connected = true) }
             is PtyEvent.Output -> appendAssistant(tabId, event.text)
             is PtyEvent.Closed -> {
                 finalizeAssistant(tabId)
-                updateTab(tabId) { it.copy(connected = false, connecting = false) }
+                updateTab(tabId) { it.copy(connected = false, connecting = false, working = false) }
             }
             is PtyEvent.Failure -> {
-                updateTab(tabId) { it.copy(error = event.message, connecting = false, connected = false) }
+                updateTab(tabId) { it.copy(error = event.message, connecting = false, connected = false, working = false) }
                 notifier.notifyError("Chat disconnected", event.message)
             }
         }
@@ -453,7 +474,14 @@ class ChatViewModel(
                     // when nothing actually changed.
                     if (lines.size > tab.readingMessages.size || lines != tab.readingMessages) {
                         rt.readingSessionId = sessionId
-                        tab.copy(readingMessages = lines)
+                        // The turn is done once the server transcript ends in an
+                        // assistant message — drop the working indicator + tool.
+                        val replyArrived = lines.lastOrNull()?.role == "assistant"
+                        tab.copy(
+                            readingMessages = lines,
+                            working = if (replyArrived) false else tab.working,
+                            tools = if (replyArrived) emptyList() else tab.tools,
+                        )
                     } else {
                         tab
                     }

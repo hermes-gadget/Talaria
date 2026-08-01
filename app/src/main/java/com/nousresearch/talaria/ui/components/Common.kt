@@ -155,7 +155,7 @@ fun ErrorBox(message: String, onRetry: (() -> Unit)? = null) {
 @Composable
 fun KeyValueList(rows: List<Pair<String, String>>) {
     LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
-        items(rows) { (k, v) ->
+        items(rows, key = { it.first }) { (k, v) ->
             Card(
                 modifier = Modifier
                     .fillMaxWidth()

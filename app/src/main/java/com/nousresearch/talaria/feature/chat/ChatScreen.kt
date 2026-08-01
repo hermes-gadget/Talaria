@@ -17,8 +17,11 @@
 package com.nousresearch.talaria.feature.chat
 
 import com.nousresearch.talaria.domain.model.ChatLine
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,25 +45,23 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.InputChip
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -75,7 +76,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -87,6 +87,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.domain.model.ToolCallUi
@@ -101,11 +102,11 @@ fun ChatScreen(
     onNeedConnection: () -> Unit,
     vm: ChatViewModel = viewModel(factory = ChatViewModel.factory()),
 ) {
-    val ui by vm.ui.collectAsState()
+    val ui by vm.ui.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val hasConnection = TalariaApp.instance.container.connectionStore.activeProfile() != null
     val density = LocalDensity.current
-    var expandedTool by remember { mutableStateOf<String?>(null) }
+    var renameTarget by remember { mutableStateOf<ChatTab?>(null) }
 
     LaunchedEffect(resumeSessionId, hasConnection) {
         if (!hasConnection) onNeedConnection() else vm.ensureStarted(resumeSessionId)
@@ -186,6 +187,34 @@ fun ChatScreen(
         )
     }
 
+    renameTarget?.let { target ->
+        var name by remember(target.id) { mutableStateOf(target.title) }
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("Rename agent") },
+            text = {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    label = { Text("Name") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        vm.renameTab(target.id, name)
+                        renameTarget = null
+                    },
+                ) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameTarget = null }) { Text("Cancel") }
+            },
+        )
+    }
+
     if (ui.showSessionRail) {
         ModalBottomSheet(
             onDismissRequest = { vm.toggleSessionRail(false) },
@@ -234,7 +263,7 @@ fun ChatScreen(
                 modifier = Modifier.padding(16.dp),
             )
             LazyColumn {
-                items(ui.modelOptions) { opt ->
+                items(ui.modelOptions, key = { it.id ?: it.name ?: it.label ?: it.hashCode() }) { opt ->
                     val label = opt.label ?: opt.name ?: opt.id ?: "model"
                     ListItem(
                         headlineContent = { Text(label) },
@@ -273,6 +302,11 @@ fun ChatScreen(
                 },
                 actions = {
                     val reading = ui.transcriptMode == TranscriptMode.READING
+                    if (!reading && active?.connected == true) {
+                        IconButton(onClick = { vm.sendInterrupt() }) {
+                            Icon(Icons.Filled.Stop, contentDescription = "Interrupt (Ctrl-C)")
+                        }
+                    }
                     IconButton(onClick = {
                         vm.setTranscriptMode(
                             if (reading) TranscriptMode.TERMINAL else TranscriptMode.READING,
@@ -301,6 +335,9 @@ fun ChatScreen(
                 Column(
                     Modifier
                         .fillMaxWidth()
+                        // The app's bottom navigation bar is hidden while the keyboard is
+                        // open (see TalariaNavRoot), so the composer reaches the screen
+                        // bottom and a plain imePadding() hugs the keyboard with no gap.
                         .imePadding()
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
@@ -373,6 +410,7 @@ fun ChatScreen(
                 activeTabId = ui.activeTabId,
                 onSelect = { vm.switchTab(it) },
                 onClose = { vm.closeTab(it) },
+                onRename = { renameTarget = it },
                 onAdd = { vm.newSession() },
             )
             active?.error?.let {
@@ -383,14 +421,10 @@ fun ChatScreen(
                     modifier = Modifier.padding(vertical = 4.dp),
                 )
             }
-            if (active?.tools?.isNotEmpty() == true) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(vertical = 4.dp)) {
-                    active.tools.take(5).forEach { tool ->
-                        ToolCallCard(tool, expanded = expandedTool == tool.id) {
-                            expandedTool = if (expandedTool == tool.id) null else tool.id
-                        }
-                    }
-                }
+            // A single live "working" indicator (spinner + the current tool), not a
+            // running list of tool cards. It clears itself when the reply arrives.
+            if (active?.working == true) {
+                WorkingIndicator(currentTool = active.tools.firstOrNull())
             }
             LazyColumn(
                 state = listState,
@@ -429,11 +463,14 @@ fun ChatScreen(
                         if (ui.transcriptMode == TranscriptMode.READING || line.role == "assistant") {
                             SimpleMarkdownText(line.text, modifier = Modifier.padding(12.dp))
                         } else {
-                            Text(
-                                line.text,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(12.dp),
-                            )
+                            // Terminal mode: selectable so users can copy PTY output.
+                            SelectionContainer {
+                                Text(
+                                    line.text,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(12.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -442,14 +479,18 @@ fun ChatScreen(
     }
 }
 
-/** One tab per running Hermes agent, with a live status dot and a close affordance. */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * One tab per running Hermes agent, with a live status dot and a close affordance.
+ * Long-pressing a tab opens a rename dialog (via [onRename]).
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SessionTabStrip(
     tabs: List<ChatTab>,
     activeTabId: String?,
     onSelect: (String) -> Unit,
     onClose: (String) -> Unit,
+    onRename: (ChatTab) -> Unit,
     onAdd: () -> Unit,
 ) {
     Row(
@@ -461,25 +502,48 @@ private fun SessionTabStrip(
     ) {
         val effectiveActive = activeTabId ?: tabs.firstOrNull()?.id
         tabs.forEach { tab ->
+            val selected = tab.id == effectiveActive
             val dotColor = when {
                 tab.connected -> MaterialTheme.colorScheme.primary
                 tab.connecting -> MaterialTheme.colorScheme.tertiary
                 else -> MaterialTheme.colorScheme.outline
             }
-            InputChip(
-                selected = tab.id == effectiveActive,
-                onClick = { onSelect(tab.id) },
-                label = { Text(tab.title, maxLines = 1) },
-                leadingIcon = {
+            Surface(
+                shape = MaterialTheme.shapes.small,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.secondaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surface
+                },
+                border = if (selected) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.combinedClickable(
+                    onClick = { onSelect(tab.id) },
+                    onLongClick = { onRename(tab) },
+                    onLongClickLabel = "Rename agent",
+                ),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                ) {
                     Box(
                         Modifier
                             .size(8.dp)
                             .clip(CircleShape)
                             .background(dotColor),
                     )
-                },
-                trailingIcon = if (tabs.size > 1) {
-                    {
+                    Text(
+                        tab.title,
+                        maxLines = 1,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (selected) {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                    )
+                    if (tabs.size > 1) {
                         Icon(
                             Icons.Filled.Close,
                             contentDescription = "Close ${tab.title}",
@@ -488,10 +552,8 @@ private fun SessionTabStrip(
                                 .clickable { onClose(tab.id) },
                         )
                     }
-                } else {
-                    null
-                },
-            )
+                }
+            }
         }
         IconButton(onClick = onAdd) {
             Icon(Icons.Filled.Add, contentDescription = "New agent")
@@ -499,32 +561,37 @@ private fun SessionTabStrip(
     }
 }
 
+/**
+ * Compact "agent is working" indicator: a spinner plus the current tool the model
+ * is running (if any). Shown only while a turn is in flight; it vanishes when the
+ * reply lands. Replaces the old running list of tool cards.
+ */
 @Composable
-private fun ToolCallCard(tool: ToolCallUi, expanded: Boolean, onToggle: () -> Unit) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle),
+private fun WorkingIndicator(currentTool: ToolCallUi?) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
     ) {
-        Column(Modifier.padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "${tool.name} · ${tool.status}",
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.weight(1f),
-                )
-                Icon(
-                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = null,
-                )
-            }
-            if (expanded) {
-                tool.argsPreview?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
-                }
-                tool.message?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
-                }
-            }
+        CircularProgressIndicator(
+            modifier = Modifier.size(16.dp),
+            strokeWidth = 2.dp,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        val label = when {
+            currentTool == null -> "Working…"
+            currentTool.status == "RUNNING" -> "Running · ${currentTool.name}"
+            currentTool.status == "ERROR" -> "${currentTool.name} failed — continuing…"
+            else -> "${currentTool.name} done — thinking…"
         }
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }

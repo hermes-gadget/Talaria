@@ -46,11 +46,10 @@ import com.nousresearch.talaria.domain.model.SessionSummary
 import com.nousresearch.talaria.domain.model.StatusResponse
 import com.nousresearch.talaria.ui.components.ErrorBox
 import com.nousresearch.talaria.ui.components.LoadingBox
+import com.nousresearch.talaria.ui.components.PollEffect
 import com.nousresearch.talaria.ui.components.ScreenScaffold
 import java.text.DateFormat
 import java.util.Date
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -78,17 +77,16 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
         lastUpdatedMs = System.currentTimeMillis()
     }
 
-    LaunchedEffect(tick) {
-        while (isActive) {
-            repo.refreshStatus()
-                .onSuccess { applySuccess(it) }
-                .onFailure {
-                    error = it.message
-                    loading = false
-                    refreshing = false
-                }
-            delay(5_000)
-        }
+    // Poll only while the screen is RESUMED so we stop hitting the network when the
+    // app is backgrounded (a plain LaunchedEffect loop would keep going off-screen).
+    PollEffect(intervalMs = 5_000, tick) {
+        repo.refreshStatus()
+            .onSuccess { applySuccess(it) }
+            .onFailure {
+                error = it.message
+                loading = false
+                refreshing = false
+            }
     }
 
     val lastUpdatedLabel = if (lastUpdatedMs == 0L) {

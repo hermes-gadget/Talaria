@@ -22,6 +22,10 @@ import com.nousresearch.talaria.domain.model.AuthMeResponse
 import com.nousresearch.talaria.domain.model.ConfigSchemaResponse
 import com.nousresearch.talaria.domain.model.CronJob
 import com.nousresearch.talaria.domain.model.EnvVarInfo
+import com.nousresearch.talaria.domain.model.FsCwd
+import com.nousresearch.talaria.domain.model.FsListResponse
+import com.nousresearch.talaria.domain.model.FsTextFile
+import com.nousresearch.talaria.domain.model.LearningGraph
 import com.nousresearch.talaria.domain.model.LogLinesResponse
 import com.nousresearch.talaria.domain.model.McpServersResponse
 import com.nousresearch.talaria.domain.model.MessagingPlatformsResponse
@@ -267,4 +271,32 @@ interface HermesApi {
     /** Password login for basic auth provider (form-encoded auth/password-login). */
     @POST("auth/password-login")
     suspend fun passwordLogin(@Body body: RequestBody): Response<ResponseBody>
+
+    // --- Files pane (Desktop parity 15.1) ---
+
+    @GET("api/fs/default-cwd")
+    suspend fun fsDefaultCwd(@Query("profile") profile: String? = null): FsCwd
+
+    @GET("api/fs/list")
+    suspend fun fsList(
+        @Query("path") path: String,
+        @Query("profile") profile: String? = null,
+    ): FsListResponse
+
+    @GET("api/fs/read-text")
+    suspend fun fsReadText(
+        @Query("path") path: String,
+        @Query("profile") profile: String? = null,
+    ): FsTextFile
+
+    @GET("api/fs/git-root")
+    suspend fun fsGitRoot(
+        @Query("path") path: String,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
+
+    // --- Learning graph / Starmap (Desktop parity 15.4) ---
+
+    @GET("api/learning/graph")
+    suspend fun getLearningGraph(@Query("profile") profile: String? = null): LearningGraph
 }

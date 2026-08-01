@@ -30,11 +30,16 @@ import com.nousresearch.talaria.domain.model.ConfigSchemaResponse
 import com.nousresearch.talaria.domain.model.CronJob
 import com.nousresearch.talaria.domain.model.EnvVarInfo
 import com.nousresearch.talaria.domain.model.CuratorState
+import com.nousresearch.talaria.domain.model.FsCwd
+import com.nousresearch.talaria.domain.model.FsEntry
+import com.nousresearch.talaria.domain.model.FsTextFile
+import com.nousresearch.talaria.domain.model.LearningGraph
 import com.nousresearch.talaria.domain.model.McpServer
 import com.nousresearch.talaria.domain.model.MemoryState
 import com.nousresearch.talaria.domain.model.MessagingPlatform
 import com.nousresearch.talaria.domain.model.ModelInfo
 import com.nousresearch.talaria.domain.model.ModelOption
+import com.nousresearch.talaria.domain.model.ModelProvider
 import com.nousresearch.talaria.domain.model.PairingResponse
 import com.nousresearch.talaria.domain.model.ProfileInfo
 import com.nousresearch.talaria.domain.model.SessionMessage
@@ -71,6 +76,33 @@ class HermesRepository(
     private val json = JsonConfig.json
     private fun connId() = connectionStore.activeProfile()?.id ?: "none"
     private fun api() = clientFactory.api()
+
+    // Read-through cache so flipping between Manage menus is instant. Only the
+    // "open once, browse" surfaces route through it; live pollers (Status) and
+    // security-sensitive reads (pairing) fetch fresh every time.
+    private val cache = ResponseCache()
+
+    /** Drop all cached responses (call on profile / management-scope change). */
+    fun clearCache() = cache.clear()
+
+    private fun invalidate(vararg keys: String) {
+        val conn = connId()
+        keys.forEach { cache.invalidate("$conn:$it") }
+    }
+
+    private suspend fun <T> cached(
+        key: String,
+        ttlMs: Long = DEFAULT_CACHE_TTL_MS,
+        fetch: suspend () -> T,
+    ): Result<T> = cache.readThrough("${connId()}:$key", ttlMs) {
+        withContext(Dispatchers.IO) { fetch() }
+    }
+
+    private companion object {
+        const val DEFAULT_CACHE_TTL_MS = 20_000L
+        // Schema/defaults are effectively static for a gateway lifetime.
+        const val STATIC_CACHE_TTL_MS = 300_000L
+    }
 
     fun observeSessions(): Flow<List<CachedSessionEntity>> = db.sessions().observeSessions(connId())
     fun observeActivity(): Flow<List<ActivityEventEntity>> = db.activity().observe(connId())
@@ -170,22 +202,18 @@ class HermesRepository(
         }
     }
 
-    suspend fun getConfig(): Result<JsonObject> = withContext(Dispatchers.IO) {
-        runCatching { api().getConfig() }
-    }
+    suspend fun getConfig(): Result<JsonObject> = cached("config") { api().getConfig() }
 
     suspend fun putConfig(config: JsonObject): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             api().putConfig(buildJsonObject { put("config", config) })
+            invalidate("config")
             Unit
         }
     }
 
-    suspend fun getEnv(): Result<Map<String, EnvVarInfo>> = withContext(Dispatchers.IO) {
-        runCatching {
-            val live = api().getEnv()
-            mergeEnvCatalog(live)
-        }
+    suspend fun getEnv(): Result<Map<String, EnvVarInfo>> = cached("env") {
+        mergeEnvCatalog(api().getEnv())
     }
 
     /** Merge bundled `env_catalog.json` metadata with live `/api/env` set/redacted state. */
@@ -239,6 +267,7 @@ class HermesRepository(
                 put("key", key)
                 put("value", value)
             })
+            invalidate("env")
             Unit
         }
     }
@@ -246,6 +275,7 @@ class HermesRepository(
     suspend fun deleteEnv(key: String): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             api().deleteEnv(buildJsonObject { put("key", key) })
+            invalidate("env")
             Unit
         }
     }
@@ -264,13 +294,10 @@ class HermesRepository(
         }
     }
 
-    suspend fun getAnalytics(days: Int): Result<AnalyticsUsage> = withContext(Dispatchers.IO) {
-        runCatching { api().getAnalytics(days) }
-    }
+    suspend fun getAnalytics(days: Int): Result<AnalyticsUsage> =
+        cached("analytics:$days") { api().getAnalytics(days) }
 
-    suspend fun getCron(): Result<List<CronJob>> = withContext(Dispatchers.IO) {
-        runCatching { api().getCronJobs() }
-    }
+    suspend fun getCron(): Result<List<CronJob>> = cached("cron") { api().getCronJobs() }
 
     suspend fun createCron(prompt: String, schedule: String, name: String?, deliver: String): Result<CronJob> =
         withContext(Dispatchers.IO) {
@@ -282,18 +309,24 @@ class HermesRepository(
                         name?.let { put("name", it) }
                         put("deliver", deliver)
                     },
-                )
+                ).also { invalidate("cron") }
             }
         }
 
-    suspend fun pauseCron(id: String) = withContext(Dispatchers.IO) { runCatching { api().pauseCron(id) } }
-    suspend fun resumeCron(id: String) = withContext(Dispatchers.IO) { runCatching { api().resumeCron(id) } }
-    suspend fun triggerCron(id: String) = withContext(Dispatchers.IO) { runCatching { api().triggerCron(id) } }
-    suspend fun deleteCron(id: String) = withContext(Dispatchers.IO) { runCatching { api().deleteCron(id); Unit } }
-
-    suspend fun getSkills(): Result<List<SkillInfo>> = withContext(Dispatchers.IO) {
-        runCatching { api().getSkills() }
+    suspend fun pauseCron(id: String) = withContext(Dispatchers.IO) {
+        runCatching { api().pauseCron(id) }.also { invalidate("cron") }
     }
+    suspend fun resumeCron(id: String) = withContext(Dispatchers.IO) {
+        runCatching { api().resumeCron(id) }.also { invalidate("cron") }
+    }
+    suspend fun triggerCron(id: String) = withContext(Dispatchers.IO) {
+        runCatching { api().triggerCron(id) }.also { invalidate("cron") }
+    }
+    suspend fun deleteCron(id: String) = withContext(Dispatchers.IO) {
+        runCatching { api().deleteCron(id); Unit }.also { invalidate("cron") }
+    }
+
+    suspend fun getSkills(): Result<List<SkillInfo>> = cached("skills") { api().getSkills() }
 
     suspend fun toggleSkill(name: String, enabled: Boolean) = withContext(Dispatchers.IO) {
         runCatching {
@@ -301,17 +334,15 @@ class HermesRepository(
                 put("name", name)
                 put("enabled", enabled)
             })
+            invalidate("skills")
             Unit
         }
     }
 
-    suspend fun getMcp(): Result<List<McpServer>> = withContext(Dispatchers.IO) {
-        runCatching { api().getMcpServers().servers }
-    }
+    suspend fun getMcp(): Result<List<McpServer>> = cached("mcp") { api().getMcpServers().servers }
 
-    suspend fun getChannels(): Result<List<MessagingPlatform>> = withContext(Dispatchers.IO) {
-        runCatching { api().getMessagingPlatforms().platforms }
-    }
+    suspend fun getChannels(): Result<List<MessagingPlatform>> =
+        cached("channels") { api().getMessagingPlatforms().platforms }
 
     suspend fun getPairing(): Result<PairingResponse> = withContext(Dispatchers.IO) {
         runCatching { api().getPairing() }
@@ -336,18 +367,14 @@ class HermesRepository(
         }
     }
 
-    suspend fun getWebhooks(): Result<WebhooksResponse> = withContext(Dispatchers.IO) {
-        runCatching { api().getWebhooks() }
-    }
+    suspend fun getWebhooks(): Result<WebhooksResponse> = cached("webhooks") { api().getWebhooks() }
 
     /** Enables the webhook platform; may trigger a gateway restart on the host. */
     suspend fun enableWebhooks(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        runCatching { api().enableWebhooks() }
+        runCatching { api().enableWebhooks() }.also { invalidate("webhooks") }
     }
 
-    suspend fun getProfiles(): Result<List<ProfileInfo>> = withContext(Dispatchers.IO) {
-        runCatching { api().getProfiles().profiles }
-    }
+    suspend fun getProfiles(): Result<List<ProfileInfo>> = cached("profiles") { api().getProfiles().profiles }
 
     suspend fun getActiveProfileName(): Result<String?> = withContext(Dispatchers.IO) {
         runCatching { api().getActiveProfile().active }
@@ -356,7 +383,7 @@ class HermesRepository(
     suspend fun setActiveProfileName(name: String): Result<String?> = withContext(Dispatchers.IO) {
         runCatching {
             api().setActiveProfile(buildJsonObject { put("active", name) }).active
-        }
+        }.also { clearCache() }
     }
 
     suspend fun renameSession(id: String, title: String) = withContext(Dispatchers.IO) {
@@ -411,37 +438,46 @@ class HermesRepository(
     suspend fun setModel(modelId: String): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             api().setModel(buildJsonObject { put("model", modelId) })
+            invalidate("model_providers")
             Unit
         }
     }
 
-    suspend fun getToolsets(): Result<List<ToolsetInfo>> = withContext(Dispatchers.IO) {
-        runCatching {
-            val el = api().getToolsets()
-            val arr = when (el) {
-                is JsonArray -> el
-                is JsonObject -> el["toolsets"]?.jsonArray ?: el["items"]?.jsonArray
-                else -> null
-            }
-            arr?.mapNotNull { runCatching { json.decodeFromJsonElement<ToolsetInfo>(it) }.getOrNull() }
+    /** Provider-grouped model catalog for the Models screen (roadmap 15.12). */
+    suspend fun getModelProviders(): Result<List<ModelProvider>> = cached("model_providers") {
+        val el = api().getModelOptions()
+        when (el) {
+            is JsonObject -> el["providers"]?.jsonArray
+                ?.mapNotNull { runCatching { json.decodeFromJsonElement<ModelProvider>(it) }.getOrNull() }
                 ?: emptyList()
+            else -> emptyList()
         }
+    }
+
+    suspend fun getToolsets(): Result<List<ToolsetInfo>> = cached("toolsets") {
+        val el = api().getToolsets()
+        val arr = when (el) {
+            is JsonArray -> el
+            is JsonObject -> el["toolsets"]?.jsonArray ?: el["items"]?.jsonArray
+            else -> null
+        }
+        arr?.mapNotNull { runCatching { json.decodeFromJsonElement<ToolsetInfo>(it) }.getOrNull() }
+            ?: emptyList()
     }
 
     suspend fun setToolsetEnabled(name: String, enabled: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             api().setToolset(name, buildJsonObject { put("enabled", enabled) })
+            invalidate("toolsets")
             Unit
         }
     }
 
-    suspend fun getConfigSchema(): Result<ConfigSchemaResponse> = withContext(Dispatchers.IO) {
-        runCatching { api().getConfigSchema() }
-    }
+    suspend fun getConfigSchema(): Result<ConfigSchemaResponse> =
+        cached("config_schema", STATIC_CACHE_TTL_MS) { api().getConfigSchema() }
 
-    suspend fun getConfigDefaults(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        runCatching { api().getConfigDefaults() }
-    }
+    suspend fun getConfigDefaults(): Result<JsonElement> =
+        cached("config_defaults", STATIC_CACHE_TTL_MS) { api().getConfigDefaults() }
 
     /**
      * Creates a webhook and returns the created route. The dashboard may echo
@@ -466,18 +502,19 @@ class HermesRepository(
                 enabled = obj["enabled"]?.jsonPrimitive?.booleanOrNull,
                 secret = obj["secret"]?.jsonPrimitive?.contentOrNull,
             )
-        }
+        }.also { invalidate("webhooks") }
     }
 
     suspend fun setWebhookEnabled(name: String, enabled: Boolean) = withContext(Dispatchers.IO) {
         runCatching {
             api().setWebhookEnabled(name, buildJsonObject { put("enabled", enabled) })
+            invalidate("webhooks")
             Unit
         }
     }
 
     suspend fun deleteWebhook(name: String) = withContext(Dispatchers.IO) {
-        runCatching { api().deleteWebhook(name); Unit }
+        runCatching { api().deleteWebhook(name); Unit }.also { invalidate("webhooks") }
     }
 
     suspend fun addMcpServer(name: String, command: String): Result<Unit> = withContext(Dispatchers.IO) {
@@ -486,6 +523,7 @@ class HermesRepository(
                 put("name", name)
                 put("command", command)
             })
+            invalidate("mcp")
             Unit
         }
     }
@@ -493,12 +531,13 @@ class HermesRepository(
     suspend fun setMcpEnabled(name: String, enabled: Boolean) = withContext(Dispatchers.IO) {
         runCatching {
             api().setMcpEnabled(name, buildJsonObject { put("enabled", enabled) })
+            invalidate("mcp")
             Unit
         }
     }
 
     suspend fun deleteMcpServer(name: String) = withContext(Dispatchers.IO) {
-        runCatching { api().deleteMcpServer(name); Unit }
+        runCatching { api().deleteMcpServer(name); Unit }.also { invalidate("mcp") }
     }
 
     suspend fun testMcp(name: String): Result<JsonElement> = withContext(Dispatchers.IO) {
@@ -515,6 +554,7 @@ class HermesRepository(
                         if (env != null) put("env", env)
                     },
                 )
+                invalidate("channels")
                 Unit
             }
         }
@@ -536,6 +576,7 @@ class HermesRepository(
                     put("schedule", schedule)
                 },
             )
+            invalidate("cron")
             Unit
         }
     }
@@ -556,24 +597,18 @@ class HermesRepository(
         runCatching { api().checkUpdate() }
     }
 
-    suspend fun getPortal(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        runCatching { api().getPortal() }
+    suspend fun getPortal(): Result<JsonElement> = cached("portal") { api().getPortal() }
+
+    suspend fun getMemory(): Result<JsonElement> = cached("memory") { api().getMemory() }
+
+    suspend fun getCurator(): Result<JsonElement> = cached("curator") { api().getCurator() }
+
+    suspend fun getMemoryState(): Result<MemoryState> = cached("memory_state") {
+        JsonConfig.json.decodeFromJsonElement(MemoryState.serializer(), api().getMemory())
     }
 
-    suspend fun getMemory(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        runCatching { api().getMemory() }
-    }
-
-    suspend fun getCurator(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        runCatching { api().getCurator() }
-    }
-
-    suspend fun getMemoryState(): Result<MemoryState> = withContext(Dispatchers.IO) {
-        runCatching { JsonConfig.json.decodeFromJsonElement(MemoryState.serializer(), api().getMemory()) }
-    }
-
-    suspend fun getCuratorState(): Result<CuratorState> = withContext(Dispatchers.IO) {
-        runCatching { JsonConfig.json.decodeFromJsonElement(CuratorState.serializer(), api().getCurator()) }
+    suspend fun getCuratorState(): Result<CuratorState> = cached("curator_state") {
+        JsonConfig.json.decodeFromJsonElement(CuratorState.serializer(), api().getCurator())
     }
 
     /** Export session messages as markdown for share sheet. */
@@ -598,9 +633,26 @@ class HermesRepository(
         }
     }
 
-    suspend fun getSystemStats(): Result<SystemStats> = withContext(Dispatchers.IO) {
-        runCatching { api().getSystemStats() }
+    suspend fun getSystemStats(): Result<SystemStats> = cached("system") { api().getSystemStats() }
+
+    // --- Files pane (Desktop parity 15.1) ---
+
+    suspend fun fsDefaultCwd(): Result<FsCwd> = cached("fs_cwd") { api().fsDefaultCwd() }
+
+    /** Directory listing, sorted dirs-first then name; cached briefly per path. */
+    suspend fun fsList(path: String): Result<List<FsEntry>> = cached("fs_list:$path", ttlMs = 10_000L) {
+        api().fsList(path).entries.sortedWith(
+            compareByDescending<FsEntry> { it.isDirectory }.thenBy { it.name.lowercase() },
+        )
     }
+
+    suspend fun fsReadText(path: String): Result<FsTextFile> = withContext(Dispatchers.IO) {
+        runCatching { api().fsReadText(path) }
+    }
+
+    // --- Learning graph / Starmap (Desktop parity 15.4) ---
+
+    suspend fun getLearningGraph(): Result<LearningGraph> = cached("learning_graph") { api().getLearningGraph() }
 
     suspend fun gateway(action: String) = withContext(Dispatchers.IO) {
         runCatching {
@@ -609,7 +661,7 @@ class HermesRepository(
                 "stop" -> api().gatewayStop()
                 else -> api().gatewayRestart()
             }
-        }
+        }.also { invalidate("system", "portal") }
     }
 
     suspend fun recordActivity(type: String, title: String, body: String) {

@@ -77,7 +77,10 @@ fun PairingScreen() {
             item {
                 Text("Pending", style = MaterialTheme.typography.titleLarge)
             }
-            items(data?.pending.orEmpty()) { p ->
+            items(
+                data?.pending.orEmpty(),
+                key = { it.code ?: it.request_id ?: "${it.platform}-${it.user_id}" },
+            ) { p ->
                 Surface(
                     Modifier
                         .fillMaxWidth()
@@ -104,7 +107,10 @@ fun PairingScreen() {
                     modifier = Modifier.padding(top = 12.dp),
                 )
             }
-            items(data?.approved.orEmpty()) { p ->
+            items(
+                data?.approved.orEmpty(),
+                key = { "${it.platform}-${it.user_id}" },
+            ) { p ->
                 Surface(
                     Modifier
                         .fillMaxWidth()

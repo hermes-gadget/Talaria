@@ -48,10 +48,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import com.nousresearch.talaria.TalariaApp
+import com.nousresearch.talaria.ui.components.PollEffect
 import com.nousresearch.talaria.ui.components.ScreenScaffold
 import com.nousresearch.talaria.ui.theme.LocalSpacing
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 
 @Composable
 fun LogsScreen() {
@@ -71,23 +71,21 @@ fun LogsScreen() {
         debouncedSearch = search
     }
 
-    LaunchedEffect(file, level, component, debouncedSearch) {
-        while (isActive) {
-            TalariaApp.instance.container.hermesRepository
-                .getLogs(
-                    file = file,
-                    lines = 200,
-                    level = level,
-                    component = component,
-                    search = debouncedSearch.ifBlank { null },
-                )
-                .onSuccess {
-                    lines = it
-                    error = null
-                }
-                .onFailure { error = it.message }
-            delay(3_000)
-        }
+    // Tail only while RESUMED so we stop polling logs when backgrounded.
+    PollEffect(intervalMs = 3_000, file, level, component, debouncedSearch) {
+        TalariaApp.instance.container.hermesRepository
+            .getLogs(
+                file = file,
+                lines = 200,
+                level = level,
+                component = component,
+                search = debouncedSearch.ifBlank { null },
+            )
+            .onSuccess {
+                lines = it
+                error = null
+            }
+            .onFailure { error = it.message }
     }
 
     ScreenScaffold("Logs", "Auto-tail · 3s", actions = {

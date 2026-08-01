@@ -107,6 +107,7 @@ fun ProfileSwitcherChip() {
                         if (name.isNotBlank()) {
                             container.hermesRepository.setActiveProfileName(name)
                         }
+                        container.hermesRepository.clearCache()
                         container.eventClient.stop()
                         container.clientFactory.invalidate()
                         container.wsAuthHelper.invalidate()

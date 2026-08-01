@@ -6,14 +6,69 @@ All notable changes to Talaria are documented here.
 
 ### Performance
 
+- **Polling no longer runs off-screen:** a new lifecycle-gated `PollEffect` replaces the
+  `LaunchedEffect { while (isActive) … }` loops in Status (5s) and Logs (3s). A plain
+  `LaunchedEffect` keeps firing while the app is backgrounded; `PollEffect` uses
+  `repeatOnLifecycle(RESUMED)` so the network poll pauses on background and resumes on
+  return — saving battery, CPU and network. Foreground cadence verified unchanged (exact 5s).
+- **Fewer background recompositions:** Chat's UI state now collects via
+  `collectAsStateWithLifecycle()` (was `collectAsState()`), so it stops recomposing when
+  the screen isn't visible.
+- **Stable list keys** added to the Pairing (pending/approved), model-picker and
+  key/value lists so item updates reuse composables instead of rebuilding the list.
+- Profiled with `dumpsys gfxinfo` across menu navigation: 50th %ile 16ms, 90th 19ms,
+  95th 21ms, no frame over 32ms (60fps) — the read-through cache removed the load stalls.
+- **Snappy menus:** added a per-connection read-through cache (`ResponseCache`)
+  in `HermesRepository`. Re-opening a Manage screen within the TTL (20s; 5min for
+  static config schema/defaults) now returns the last decoded value synchronously
+  — no network round-trip, no loading spinner on revisit. Covers skills, toolsets,
+  MCP, channels, webhooks, profiles, cron, memory, curator, system, env, config,
+  portal and analytics(days). Live surfaces (Status polling, pairing) deliberately
+  bypass it; every paired mutation invalidates its key, and a profile/management
+  switch clears the whole cache. Unit-tested (`ResponseCacheTest`).
+- **Chat keyboard:** the composer now hugs the keyboard — the bottom navigation
+  bar/rail hides while the IME is open (`NavigationSuiteType.None`), removing the
+  dead band that appeared between the input field and the keyboard.
 - Chat transcript: streaming turns live in a dedicated `streamingText` field
   instead of rebuilding the whole line list per PTY chunk; markdown parsing
   memoized per message (`remember`); reading-mode poll skips no-op refreshes
   (equality guard); auto-follow scroll is instant and keyed on the last line's
   actual content. Measured: transcript frame time 150ms → 85ms p50 on the
   emulator (at the software-GPU floor; launcher itself measures 101ms).
-- Launcher icon zoomed out (~50% fill with clear margin, was 66% + clipping
-  risk on circular masks).
+- Launcher icon zoomed out further (~42% fill, was ~50%) so the winged sandal
+  sits comfortably inside adaptive-icon masks on every launcher.
+
+### Fixes
+
+- **Chat no longer dumps the full TUI on send.** Reading mode (the default) now shows
+  a single live **working indicator** — a spinner plus the *current* tool the model is
+  running ("Running · <tool>") instead of the raw terminal or a growing list of tool
+  cards. It appears when you send and clears itself the moment the assistant's reply
+  lands, leaving just the clean message. (`ChatTab.working`, `WorkingIndicator`.)
+
+### Features
+
+- **Models screen (roadmap 15.12 — Desktop parity):** Manage → Capabilities → **Models**
+  lists every provider from `/api/model/options` (model count, source, auth state,
+  warnings), highlights the active model, and sets a model via `PUT /api/model/set`.
+- **Learning graph (roadmap 15.4 — Desktop parity):** Manage → System → **Learning**
+  shows what Hermes has learned — overview stats, category cluster chips, and the
+  skill/memory node list (kind, category, use-count, state) from `/api/learning/graph`.
+- **Terminal pane upgrades (roadmap 15.13):** Chat terminal mode gains a **Stop**
+  (Ctrl-C interrupt) action and selectable/copyable PTY output.
+- **Command palette (roadmap 15.7 — Desktop parity):** a search icon in the Manage
+  top bar opens a fuzzy-filtered quick-jump sheet over every Manage destination
+  (matches title, subtitle or section); tap a result to navigate. Reaches any
+  settings screen in two taps.
+- **Files pane (roadmap 15.1 — Desktop parity):** new Manage → System → **Files**
+  browser over `/api/fs`. Starts at the gateway's default cwd, lists directories
+  first, and navigates in/out with an up button + `cwd` shortcut; tapping a file
+  opens a preview sheet (`/api/fs/read-text`) showing language, size and a
+  monospace body (binary-safe). Typed `Fs*` models + decode tests; listings
+  cached 10s.
+- **Rename agent tabs:** long-press a Chat agent tab to rename it
+  (`ChatViewModel.renameTab`); the tab strip is now a custom chip supporting the
+  long-press affordance.
 
 ### App icon
 

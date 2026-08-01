@@ -18,8 +18,10 @@
 package com.nousresearch.talaria.ui.navigation
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
@@ -31,8 +33,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -65,11 +70,15 @@ import com.nousresearch.talaria.feature.manage.sessions.SessionsScreen
 import com.nousresearch.talaria.feature.manage.skills.SkillsScreen
 import com.nousresearch.talaria.feature.manage.status.StatusScreen
 import com.nousresearch.talaria.feature.manage.curator.CuratorScreen
+import com.nousresearch.talaria.feature.manage.files.FilesScreen
+import com.nousresearch.talaria.feature.manage.learning.LearningScreen
 import com.nousresearch.talaria.feature.manage.memory.MemoryScreen
+import com.nousresearch.talaria.feature.manage.models.ModelsScreen
 import com.nousresearch.talaria.feature.manage.system.SystemScreen
 import com.nousresearch.talaria.feature.manage.webhooks.WebhooksScreen
 import com.nousresearch.talaria.feature.you.YouScreen
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TalariaNavRoot(
     shareText: String?,
@@ -110,11 +119,20 @@ fun TalariaNavRoot(
         onDeepLinkConsumed()
     }
 
+    // Hide the bottom navigation bar / rail while the keyboard is open so text
+    // entry (Chat composer, forms) sits directly on the keyboard with no dead gap.
+    val navSuiteType = if (WindowInsets.isImeVisible) {
+        NavigationSuiteType.None
+    } else {
+        NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(currentWindowAdaptiveInfo())
+    }
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background,
     ) {
     NavigationSuiteScaffold(
+        layoutType = navSuiteType,
         containerColor = MaterialTheme.colorScheme.background,
         contentColor = MaterialTheme.colorScheme.onBackground,
         navigationSuiteColors = NavigationSuiteDefaults.colors(
@@ -265,6 +283,9 @@ fun TalariaNavRoot(
                 composable(Routes.SYSTEM) { SystemScreen() }
                 composable(Routes.MEMORY) { MemoryScreen() }
                 composable(Routes.CURATOR) { CuratorScreen() }
+                composable(Routes.FILES) { FilesScreen() }
+                composable(Routes.MODELS) { ModelsScreen() }
+                composable(Routes.LEARNING) { LearningScreen() }
             }
         }
     }
