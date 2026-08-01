@@ -373,6 +373,12 @@ interface HermesApi {
         @Query("profile") profile: String? = null,
     ): FsTextFile
 
+    @GET("api/fs/read-data-url")
+    suspend fun fsReadDataUrl(
+        @Query("path") path: String,
+        @Query("profile") profile: String? = null,
+    ): FsDataUrl
+
     @POST("api/fs/write-text")
     suspend fun fsWriteText(
         @Body body: JsonObject,

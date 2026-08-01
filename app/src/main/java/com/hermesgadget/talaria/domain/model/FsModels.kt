@@ -50,3 +50,12 @@ data class FsTextFile(
     val mimeType: String? = null,
     val truncated: Boolean = false,
 )
+
+/** A file's data-URL (media preview) from `/api/fs/read-data-url`. */
+@Serializable
+data class FsDataUrl(
+    val path: String = "",
+    val dataUrl: String = "",
+    val mimeType: String? = null,
+    val byteSize: Long = 0,
+)
