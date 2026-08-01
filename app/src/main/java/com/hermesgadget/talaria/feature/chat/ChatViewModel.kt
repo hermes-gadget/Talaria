@@ -65,6 +65,19 @@ import java.util.UUID
 
 enum class TranscriptMode { TERMINAL, READING }
 
+internal val CHAT_REASONING_EFFORTS = listOf(
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra",
+)
+
+internal val CHAT_APPROVAL_MODES = listOf("manual", "smart", "off")
+
 enum class ChatImageAttachmentStatus { READY, UPLOADING, ATTACHED, ERROR }
 
 data class ChatImageAttachmentUi(
@@ -110,6 +123,7 @@ data class ChatTab(
     val prompt: ChatPromptUi? = null,
     val error: String? = null,
     val draft: String = "",
+    val queuedPrompts: List<String> = emptyList(),
     val imageAttachments: List<ChatImageAttachmentUi> = emptyList(),
     val hasSent: Boolean = false,
 )
@@ -124,6 +138,7 @@ data class ChatUiState(
     val modelOptions: List<ModelOption> = emptyList(),
     val showSessionRail: Boolean = false,
     val showModelPicker: Boolean = false,
+    val showSteerPopover: Boolean = false,
     val showSlashPalette: Boolean = false,
     val slashSuggestions: List<SlashCommand> = emptyList(),
 ) {
@@ -150,6 +165,7 @@ private class SessionRuntime(
     // NEW id that appears afterwards, which lets concurrent tabs each claim theirs.
     var baselineSessions: Set<String> = emptySet(),
     var baselineReady: Boolean = false,
+    var sidecarEventsSeen: Boolean = false,
 )
 
 private data class PendingChatImage(
@@ -184,6 +200,8 @@ class ChatViewModel(
     private var slashRequestGeneration: Long = 0
     private var boundConnectionScope: String? = null
     private var loadingConnectionScope = false
+    private val inputHistoryStore = ChatInputHistoryStore(TalariaApp.instance)
+    private val inputHistories = mutableMapOf<String, InputHistoryNavigator>()
     /** Raw picker bytes stay outside StateFlow so Compose never copies or compares them. */
     private val pendingImages = mutableMapOf<String, LinkedHashMap<String, PendingChatImage>>()
 
@@ -240,6 +258,7 @@ class ChatViewModel(
         runtimes.clear()
         claimedSessions.clear()
         pendingImages.clear()
+        inputHistories.clear()
         slashCatalog = SlashCommands.defaults
         slashRequestGeneration += 1
         initialDraft = ""
@@ -333,6 +352,7 @@ class ChatViewModel(
             rt.baselineSessions = old.baselineSessions
             rt.baselineReady = old.baselineReady
             rt.readingSessionId = old.readingSessionId
+            rt.sidecarEventsSeen = old.sidecarEventsSeen
         }
         runtimes[tabId] = rt
 
@@ -492,13 +512,17 @@ class ChatViewModel(
         }
     }
 
+    fun toggleSteerPopover(show: Boolean = !_ui.value.showSteerPopover) {
+        _ui.update { it.copy(showSteerPopover = show) }
+    }
+
     fun selectModel(option: ModelOption) {
         val modelId = option.id ?: option.name ?: option.label ?: return
         val tabId = _ui.value.active?.id ?: return
         val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return
         val sessionId = tab.liveSessionId ?: tab.resumeSessionId
         val runtime = runtimes[tabId] ?: return
-        _ui.update { it.copy(showModelPicker = false) }
+        _ui.update { it.copy(showModelPicker = false, showSteerPopover = false) }
         if (sessionId == null) {
             // Before the gateway has assigned a session id, the PTY command is
             // the only session-scoped path available.
@@ -531,6 +555,122 @@ class ChatViewModel(
         }
     }
 
+    private fun historyKey(tab: ChatTab): String =
+        tab.liveSessionId ?: tab.resumeSessionId ?: "tab:${tab.id}"
+
+    private fun historyFor(tab: ChatTab): InputHistoryNavigator =
+        inputHistories.getOrPut(historyKey(tab)) {
+            InputHistoryNavigator(inputHistoryStore.load(historyKey(tab)))
+        }
+
+    private fun recordSubmittedDraft(tab: ChatTab, payload: String) {
+        if (payload.isBlank()) return
+        val history = historyFor(tab)
+        history.record(payload)
+        inputHistoryStore.save(historyKey(tab), history.snapshot)
+    }
+
+    private fun migrateInputHistory(oldKey: String, newKey: String) {
+        if (oldKey == newKey) return
+        val old = inputHistories.remove(oldKey) ?: return
+        val existing = inputHistories.getOrPut(newKey) {
+            InputHistoryNavigator(inputHistoryStore.load(newKey))
+        }
+        val merged = InputHistoryNavigator(
+            (existing.snapshot + old.snapshot).takeLast(InputHistoryNavigator.MAX_ENTRIES),
+        )
+        inputHistories[newKey] = merged
+        inputHistoryStore.save(newKey, merged.snapshot)
+    }
+
+    fun setReasoningEffort(effort: String) {
+        if (effort !in CHAT_REASONING_EFFORTS) return
+        val tabId = _ui.value.active?.id ?: return
+        sendSessionConfig(
+            tabId = tabId,
+            key = "reasoning",
+            value = effort,
+            sessionScoped = true,
+        ) { result ->
+            updateTab(tabId) {
+                it.copy(
+                    reasoningEffort = result,
+                    error = null,
+                )
+            }
+        }
+    }
+
+    fun setApprovalMode(mode: String) {
+        if (mode !in CHAT_APPROVAL_MODES) return
+        val tabId = _ui.value.active?.id ?: return
+        sendSessionConfig(
+            tabId = tabId,
+            key = "approval_mode",
+            value = mode,
+            sessionScoped = false,
+        ) { result ->
+            updateTab(tabId) {
+                it.copy(
+                    approvalMode = result,
+                    error = null,
+                )
+            }
+        }
+    }
+
+    fun setYolo(enabled: Boolean) {
+        val tabId = _ui.value.active?.id ?: return
+        sendSessionConfig(
+            tabId = tabId,
+            key = "yolo",
+            value = if (enabled) "on" else "off",
+            sessionScoped = true,
+        ) { result ->
+            updateTab(tabId) {
+                it.copy(
+                    yolo = result == "1" || result.equals("on", ignoreCase = true),
+                    error = null,
+                )
+            }
+        }
+    }
+
+    private fun sendSessionConfig(
+        tabId: String,
+        key: String,
+        value: String,
+        sessionScoped: Boolean,
+        onSuccess: (String) -> Unit,
+    ) {
+        val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return
+        val runtime = runtimes[tabId]
+        val sessionId = tab.liveSessionId ?: tab.resumeSessionId
+        if (runtime == null || (sessionScoped && sessionId.isNullOrBlank())) {
+            updateTab(tabId) {
+                it.copy(error = "${key.replace('_', ' ')} needs an active Hermes session")
+            }
+            return
+        }
+        runtime.eventClient.sendRpc(
+            "config.set",
+            buildJsonObject {
+                put("key", key)
+                put("value", value)
+                if (sessionScoped) put("session_id", sessionId.orEmpty())
+            },
+        ) { response ->
+            val result = (response as? JsonObject)?.get("value")?.jsonPrimitive?.contentOrNull
+            if (result == null) {
+                updateTab(tabId) {
+                    it.copy(error = "Hermes did not accept the ${key.replace('_', ' ')} change")
+                }
+            } else {
+                onSuccess(result)
+            }
+        }
+    }
+
     fun setTranscriptMode(mode: TranscriptMode) {
         if (mode == TranscriptMode.TERMINAL && _ui.value.active?.working == true) return
         _ui.update { it.copy(transcriptMode = mode) }
@@ -541,6 +681,25 @@ class ChatViewModel(
 
     fun updateDraft(text: String) {
         val tabId = _ui.value.active?.id ?: return
+        _ui.value.active?.let { historyFor(it).onManualEdit() }
+        applyDraft(tabId, text)
+    }
+
+    fun historyUp(): Boolean {
+        val tab = _ui.value.active ?: return false
+        val replacement = historyFor(tab).previous(tab.draft) ?: return false
+        applyDraft(tab.id, replacement)
+        return true
+    }
+
+    fun historyDown(): Boolean {
+        val tab = _ui.value.active ?: return false
+        val replacement = historyFor(tab).next() ?: return false
+        applyDraft(tab.id, replacement)
+        return true
+    }
+
+    private fun applyDraft(tabId: String, text: String) {
         val slash = text.startsWith('/')
         val suggestions = SlashCommands.suggest(text, slashCatalog)
         updateTab(tabId) { it.copy(draft = text) }
@@ -670,16 +829,45 @@ class ChatViewModel(
         val attachments = tab.imageAttachments
         if (payload.isEmpty() && attachments.isEmpty()) return
         if (attachments.any { it.status == ChatImageAttachmentStatus.UPLOADING }) return
+        if (tab.working) {
+            if (payload.isNotEmpty()) enqueuePrompt(tab, payload)
+            return
+        }
         if (attachments.isNotEmpty()) {
             val sessionId = tab.liveSessionId ?: tab.resumeSessionId
             if (sessionId.isNullOrBlank()) {
                 updateTab(tabId) { it.copy(error = "Wait for Hermes to finish starting before sending an image") }
                 return
             }
+            recordSubmittedDraft(tab, payload)
             sendWithImages(tabId, sessionId, payload, attachments.map { it.id }, rt)
             return
         }
+        recordSubmittedDraft(tab, payload)
         commitSend(tabId, payload, emptyList(), rt)
+    }
+
+    private fun enqueuePrompt(tab: ChatTab, payload: String) {
+        recordSubmittedDraft(tab, payload)
+        updateTab(tab.id) {
+            it.copy(
+                draft = if (it.draft.trim() == payload) "" else it.draft,
+                queuedPrompts = ComposerQueue.enqueue(it.queuedPrompts, payload),
+                error = null,
+            )
+        }
+        _ui.update { it.copy(showSlashPalette = false) }
+        viewModelScope.launch { chatRepository.saveDraft("") }
+    }
+
+    private fun drainQueuedPrompt(tabId: String) {
+        val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return
+        val runtime = runtimes[tabId] ?: return
+        if (!tab.connected || tab.queuedPrompts.isEmpty() || tab.working) return
+        val (next, remaining) = ComposerQueue.dequeue(tab.queuedPrompts)
+        if (next == null) return
+        updateTab(tabId) { it.copy(queuedPrompts = remaining) }
+        commitSend(tabId, next, emptyList(), runtime)
     }
 
     private fun sendWithImages(
@@ -946,7 +1134,7 @@ class ChatViewModel(
                 val id = discoverSessionForTab(tabId)
                 if (id != null) {
                     if (id != _ui.value.tabs.firstOrNull { it.id == tabId }?.liveSessionId) {
-                        updateTab(tabId) { it.copy(liveSessionId = id) }
+                        bindSession(tabId, id)
                         // A tab just claimed its session — snapshot so a cold start
                         // resumes this thread (and every sibling) with its title.
                         persistChatState()
@@ -987,6 +1175,7 @@ class ChatViewModel(
                     ChatLine(id = "$sessionId-$idx", role = m.role ?: "assistant", text = m.content.orEmpty())
                 }.filter { it.text.isNotBlank() }
                 val rt = runtimes[tabId] ?: return@onSuccess
+                var shouldDrainQueue = false
                 updateTab(tabId) { tab ->
                     // A slower response for the pre-compression/pre-switch id
                     // must not overwrite the transcript after bindSession has
@@ -1003,6 +1192,7 @@ class ChatViewModel(
                         // The turn is done once the server transcript ends in an
                         // assistant message — drop the working indicator + tool.
                         val replyArrived = lines.lastOrNull()?.role == "assistant"
+                        shouldDrainQueue = replyArrived && tab.working && !rt.sidecarEventsSeen
                         tab.copy(
                             readingMessages = lines,
                             working = if (replyArrived) false else tab.working,
@@ -1012,6 +1202,7 @@ class ChatViewModel(
                         tab
                     }
                 }
+                if (shouldDrainQueue) drainQueuedPrompt(tabId)
             }
         }
     }
@@ -1055,6 +1246,7 @@ class ChatViewModel(
         when (event) {
             is HermesSideEvent.MessageStart -> {
                 bindSession(tabId, event.sessionId)
+                runtimes[tabId]?.sidecarEventsSeen = true
                 runtimes[tabId]?.sidecarAssistantBuffer = StringBuilder()
                 updateTab(tabId) {
                     it.copy(working = true, error = null)
@@ -1062,6 +1254,7 @@ class ChatViewModel(
             }
             is HermesSideEvent.MessageDelta -> {
                 bindSession(tabId, event.sessionId)
+                runtimes[tabId]?.sidecarEventsSeen = true
                 if (event.text.isNotEmpty()) {
                     val rt = runtimes[tabId] ?: return
                     // Buffer final-answer deltas for message.complete fallback,
@@ -1177,6 +1370,7 @@ class ChatViewModel(
     private fun completeSidecarMessage(tabId: String, event: HermesSideEvent.MessageComplete) {
         bindSession(tabId, event.sessionId)
         val rt = runtimes[tabId] ?: return
+        rt.sidecarEventsSeen = true
         val full = event.text.trim().ifEmpty { rt.sidecarAssistantBuffer.toString().trim() }
         rt.sidecarAssistantBuffer = StringBuilder()
 
@@ -1197,8 +1391,9 @@ class ChatViewModel(
                 error = if (event.status == "error" && full.isNotEmpty()) full else tab.error,
             )
         }
-        if (full.isNotEmpty()) tts.speak(full)
         AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
+        drainQueuedPrompt(tabId)
+        if (full.isNotEmpty()) tts.speak(full)
     }
 
     /** Prefer the session id carried by live gateway events over polling heuristics. */
@@ -1206,9 +1401,11 @@ class ChatViewModel(
         if (sessionId.isNullOrBlank()) return
         val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return
         if (tab.liveSessionId == sessionId) return
+        val oldHistoryKey = historyKey(tab)
         tab.liveSessionId?.let { claimedSessions.remove(it) }
         claimedSessions.add(sessionId)
         updateTab(tabId) { it.copy(liveSessionId = sessionId) }
+        migrateInputHistory(oldHistoryKey, sessionId)
         runtimes[tabId]?.readingSessionId = sessionId
         persistChatState()
         _ui.value.tabs.firstOrNull { it.id == tabId }?.let {

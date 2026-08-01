@@ -65,8 +65,11 @@ import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -77,6 +80,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -91,6 +95,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -391,6 +400,109 @@ fun ChatScreen(
                     IconButton(onClick = { vm.toggleModelPicker() }) {
                         Icon(Icons.Filled.SmartToy, contentDescription = "Change model")
                     }
+                    IconButton(onClick = { vm.toggleSteerPopover() }) {
+                        Icon(Icons.Filled.Tune, contentDescription = "Steer and trigger settings")
+                    }
+                    DropdownMenu(
+                        expanded = ui.showSteerPopover,
+                        onDismissRequest = { vm.toggleSteerPopover(false) },
+                    ) {
+                        Text(
+                            "Steer / trigger",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text("Model")
+                                    Text(
+                                        active?.modelLabel ?: "Choose a model",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            },
+                            onClick = {
+                                vm.toggleSteerPopover(false)
+                                vm.toggleModelPicker(true)
+                            },
+                            enabled = active != null,
+                        )
+                        Text(
+                            "Reasoning effort",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                        CHAT_REASONING_EFFORTS.forEach { effort ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        "${if (active?.reasoningEffort == effort) "✓ " else ""}$effort",
+                                    )
+                                },
+                                onClick = {
+                                    vm.setReasoningEffort(effort)
+                                    vm.toggleSteerPopover(false)
+                                },
+                                enabled = active?.liveSessionId != null || active?.resumeSessionId != null,
+                            )
+                        }
+                        Text(
+                            "Approval mode · global dashboard setting",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                        CHAT_APPROVAL_MODES.forEach { mode ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        "${if (active?.approvalMode == mode) "✓ " else ""}$mode",
+                                    )
+                                },
+                                onClick = {
+                                    vm.setApprovalMode(mode)
+                                    vm.toggleSteerPopover(false)
+                                },
+                                enabled = active != null,
+                            )
+                        }
+                        val sessionReady = active?.liveSessionId != null || active?.resumeSessionId != null
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text("YOLO")
+                                    Text(
+                                        if (active?.yolo == true) "On · approvals bypassed for this session"
+                                        else "Off · prompts remain enabled",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            },
+                            onClick = {
+                                if (sessionReady) vm.setYolo(active?.yolo != true)
+                            },
+                            enabled = sessionReady,
+                            trailingIcon = {
+                                Switch(
+                                    checked = active?.yolo == true,
+                                    onCheckedChange = { vm.setYolo(it) },
+                                    enabled = sessionReady,
+                                )
+                            },
+                        )
+                        if (!sessionReady) {
+                            Text(
+                                "Reasoning and YOLO unlock after Hermes assigns a live session.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                        }
+                    }
                     IconButton(onClick = { vm.toggleSessionRail() }) {
                         Icon(Icons.Filled.History, contentDescription = "Sessions")
                     }
@@ -504,10 +616,33 @@ fun ChatScreen(
                         }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (active?.queuedPrompts?.isNotEmpty() == true) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.tertiaryContainer,
+                                modifier = Modifier.padding(end = 6.dp),
+                            ) {
+                                Text(
+                                    "${active.queuedPrompts.size} queued",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                )
+                            }
+                        }
                         OutlinedTextField(
                             value = active?.draft.orEmpty(),
                             onValueChange = vm::updateDraft,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                    when (event.key) {
+                                        Key.DirectionUp -> vm.historyUp()
+                                        Key.DirectionDown -> vm.historyDown()
+                                        else -> false
+                                    }
+                                },
                             placeholder = {
                                 Text(
                                     "Message Hermes…",
