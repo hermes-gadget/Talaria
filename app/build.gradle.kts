@@ -18,8 +18,8 @@ fun propOrDefault(name: String, default: String): String =
     (findProperty(name) as String?)?.takeIf { it.isNotBlank() } ?: default
 
 // Overridable via -Ptalaria.versionName / -Ptalaria.versionCode (CI sets these from the git tag).
-val talariaVersionName = propOrDefault("talaria.versionName", "0.2.1")
-val talariaVersionCode = propOrDefault("talaria.versionCode", "202").toInt()
+val talariaVersionName = propOrDefault("talaria.versionName", "0.3.0")
+val talariaVersionCode = propOrDefault("talaria.versionCode", "300").toInt()
 
 // Persistent CI upload keystore for Obtainium / GitHub release APKs.
 val ciKeystorePath = System.getenv("TALARIA_CI_KEYSTORE")
