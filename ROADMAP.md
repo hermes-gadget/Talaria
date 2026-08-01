@@ -13,6 +13,7 @@ Talaria’s target is feature parity for remote-capable Hermes chat and manageme
 - Structured `/api/ws` and `/api/events` handling for tools, usage, prompts, approvals, clarification, sudo, secrets, lifecycle, foreground/background completion, and thread-aware Android notifications.
 - Predictive slash-command palette backed by live `commands.catalog` and `complete.slash`, with alias/fuzzy ranking and a compatibility fallback catalog.
 - Core management surfaces: status, sessions, config, env/API keys, models, cron, Skills Hub, toolsets, MCP catalog/OAuth, channels, pairing, webhooks, profiles, workspace files, learning, memory, curator, logs, analytics, operations, and system controls.
+  - ⚠️ **PARTIAL (audited 2026-08-01):** screens exist, but depth is incomplete — Files = browse/read/edit only (no upload/download/mkdir/delete); Learning = list/stats only (no graph visualization/share); Cron = no run history/delivery targets/blueprints; Skills = no archive/usage badges; System ops = backup/checkpoint present, imports/backup-download missing. See `PARITY_AUDIT.md` §8.
 
 ## Audit hardening completed after 0.3.0
 
@@ -28,17 +29,18 @@ Talaria’s target is feature parity for remote-capable Hermes chat and manageme
 
 ## Next remote-capable parity work
 
-Priorities are ordered by user value and destructive-operation risk.
+> ❌ **NONE of the items below are complete** (verified against source 2026-08-01 — each remains unimplemented; see `PARITY_AUDIT.md` §8).
+> Priorities are ordered by user value and destructive-operation risk.
 
-1. Guided provider onboarding: validation, provider OAuth, custom endpoints, credential pools, recommended/auxiliary model selection, and MoA.
-2. Session administration: bulk/empty cleanup, imports, stats, descendants, and explicit conflict-safe restore flows.
-3. Managed file transfer: authenticated upload/download, mkdir/delete, media previews, progress, and user confirmation for destructive operations.
-4. Cron run history, delivery targets, and blueprint instantiation.
-5. Skill authoring/content editing and deeper toolset provider/model/env configuration.
-6. Guided Telegram/WhatsApp onboarding and diagnostics.
-7. Operations imports, backup download, hooks, checkpoints, raw config, and debug-share controls.
-8. Remote Git/review workflows designed for a small-screen review experience.
-9. Optional Hermes-hosted audio transcription/speech as an alternative to Android STT/TTS.
-10. Dashboard agent-plugin marketplace/management where the extension provides a remote-safe UI contract.
+1. ❌ NOT COMPLETE — Guided provider onboarding: validation, provider OAuth, custom endpoints, credential pools, recommended/auxiliary model selection, and MoA.
+2. ❌ NOT COMPLETE — Session administration: bulk/empty cleanup, imports, stats, descendants, and explicit conflict-safe restore flows.
+3. ❌ NOT COMPLETE — Managed file transfer: authenticated upload/download, mkdir/delete, media previews, progress, and user confirmation for destructive operations.
+4. ❌ NOT COMPLETE — Cron run history, delivery targets, and blueprint instantiation.
+5. ❌ NOT COMPLETE — Skill authoring/content editing and deeper toolset provider/model/env configuration.
+6. ❌ NOT COMPLETE — Guided Telegram/WhatsApp onboarding and diagnostics.
+7. ❌ NOT COMPLETE — Operations imports, backup download, hooks, checkpoints, raw config, and debug-share controls. (Partial: backup + checkpoints exist in SystemScreen.)
+8. ❌ NOT COMPLETE — Remote Git/review workflows designed for a small-screen review experience.
+9. ❌ NOT COMPLETE — Optional Hermes-hosted audio transcription/speech as an alternative to Android STT/TTS.
+10. ❌ NOT COMPLETE — Dashboard agent-plugin marketplace/management where the extension provides a remote-safe UI contract.
 
 The route-level backlog is maintained in [docs/API.md](docs/API.md). A future `1.0.0` should require verified interoperability tests against a pinned Hermes release, physical-device smoke coverage for the supported authentication modes, migration tests from every public Talaria database version, and no undocumented remote-capable gaps—not a documentation-only “parity freeze.”
