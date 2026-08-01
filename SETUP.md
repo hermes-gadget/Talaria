@@ -64,7 +64,8 @@ Session token: in loopback mode the SPA receives `__HERMES_SESSION_TOKEN__`. Cop
 ## Obtainium / GitHub release APKs
 
 Tagged releases (`v*`) build a **signed release** APK (`com.hermesgadget.talaria`)
-in CI with the upload keystore from repo secrets (`TALARIA_CI_KEYSTORE_*`), and
+in CI with the independent Hermes Gadget upload keystore from repo secrets
+(`TALARIA_CI_KEYSTORE_*`), and
 attach `Talaria-vX.Y.Z.apk` to the GitHub pre-release. `versionName` /
 `versionCode` come from the tag (`v0.2.1` → name `0.2.1`, code ≥ `202`).
 

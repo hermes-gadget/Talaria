@@ -6,7 +6,7 @@ name: Build APK
 # Obtainium needs:
 #   1. Monotonic versionCode (from the tag)
 #   2. Stable applicationId (com.hermesgadget.talaria — NOT the .debug suffix)
-#   3. Stable signing cert (TALARIA_CI_KEYSTORE_* secrets)
+#   3. Stable independent signing cert (TALARIA_CI_KEYSTORE_* secrets)
 #
 # Releases before the corrected v0.4 artifact used the former
 # com.nousresearch.talaria application ID (and early builds used its .debug
@@ -109,7 +109,7 @@ jobs:
           body: |
             ## Install / Obtainium
 
-            This build is the **release** package `com.hermesgadget.talaria` (signed with the stable CI upload key).
+            This build is the **release** package `com.hermesgadget.talaria`, signed with the stable independent Hermes Gadget upload key.
 
             Releases before the corrected v0.4 artifact used `com.nousresearch.talaria` (or its `.debug` variant). Talaria is independent and is not affiliated with Nous Research, so the package identity has been corrected.
 
