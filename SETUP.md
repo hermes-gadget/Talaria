@@ -43,7 +43,7 @@ Install:
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Note: debug builds use `applicationIdSuffix .debug` → `com.nousresearch.talaria.debug`.
+Note: debug builds use `applicationIdSuffix .debug` → `com.hermesgadget.talaria.debug`.
 
 ## Hermes server tips
 
@@ -63,15 +63,22 @@ Session token: in loopback mode the SPA receives `__HERMES_SESSION_TOKEN__`. Cop
 
 ## Obtainium / GitHub release APKs
 
-Tagged releases (`v*`) build a **signed release** APK (`com.nousresearch.talaria`)
+Tagged releases (`v*`) build a **signed release** APK (`com.hermesgadget.talaria`)
 in CI with the upload keystore from repo secrets (`TALARIA_CI_KEYSTORE_*`), and
 attach `Talaria-vX.Y.Z.apk` to the GitHub pre-release. `versionName` /
 `versionCode` come from the tag (`v0.2.1` → name `0.2.1`, code ≥ `202`).
 
-Local `./gradlew :app:assembleDebug` uses package `com.nousresearch.talaria.debug`
+The corrected v0.4 release changed the former `com.nousresearch.talaria`
+identity to `com.hermesgadget.talaria` because Talaria is independent and is
+not affiliated with Nous Research. Android treats the corrected ID as a new
+app: uninstall the former package once, then install v0.4. Future releases
+using `com.hermesgadget.talaria` update in place.
+
+Local `./gradlew :app:assembleDebug` uses package `com.hermesgadget.talaria.debug`
 and your machine debug keystore — do **not** mix that with Obtainium installs.
 Prefer Obtainium → GitHub releases on device. If you previously installed a
-`*-debug.apk` from GitHub, uninstall it once before installing the release APK.
+former-package or `*-debug.apk` build from GitHub, uninstall it once before
+installing the corrected release APK.
 
 ## Signing release APKs
 

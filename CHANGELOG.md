@@ -28,6 +28,7 @@ All notable Talaria changes are documented here. Versions below correspond to re
 
 ### Changed
 
+- Replaced the former `com.nousresearch.talaria` application ID and Kotlin namespace with the independent `com.hermesgadget.talaria` identity. Android treats this as a separate app, so installations of the former package require a one-time uninstall.
 - API baseline is now `hermes-v0.19.1` (`470cf66`, 2026-08-01).
 - Documentation now distinguishes implemented remote parity, known upstream-supported backlog, Android adaptations, and Desktop-only host integrations. The erroneous unreleased `1.0.0` parity claim was removed.
 

@@ -4,4 +4,4 @@
 }
 -dontwarn okhttp3.**
 -dontwarn retrofit2.**
--keep class com.nousresearch.talaria.core.network.dto.** { *; }
+-keep class com.hermesgadget.talaria.core.network.dto.** { *; }

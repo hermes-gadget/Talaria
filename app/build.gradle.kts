@@ -34,12 +34,12 @@ val useCiSigning =
         file(ciKeystorePath).isFile
 
 android {
-    namespace = "com.nousresearch.talaria"
+    namespace = "com.hermesgadget.talaria"
     // AGP 8.9.x supports up to compileSdk 36; keep aligned with Material3 / activity 1.12.x
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.nousresearch.talaria"
+        applicationId = "com.hermesgadget.talaria"
         minSdk = 28
         targetSdk = 36
         versionCode = talariaVersionCode

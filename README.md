@@ -52,7 +52,7 @@ Or use the helper that pins a local JDK path when present:
 ## Project layout
 
 ```
-app/src/main/java/com/nousresearch/talaria/
+app/src/main/java/com/hermesgadget/talaria/
   core/          network, security, Room, notifications, voice
   domain/        shared models
   feature/       connection, chat, activity, manage/*, you
