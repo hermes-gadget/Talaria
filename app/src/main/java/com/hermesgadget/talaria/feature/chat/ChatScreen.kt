@@ -646,6 +646,18 @@ fun ChatScreen(
                         }
                     }
                 }
+                // Tool events arrive before message.complete and are cleared
+                // when the turn settles. Rendering here keeps the card inside
+                // the message-items region while still avoiding work on every
+                // frame once the completed turn is immutable.
+                if (active?.working == true) {
+                    item(key = "changed-files-${active.id}") {
+                        ChangedFilesCard(
+                            tools = active.tools,
+                            modifier = Modifier.padding(horizontal = 4.dp),
+                        )
+                    }
+                }
             }
         }
     }
