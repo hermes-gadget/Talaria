@@ -6,25 +6,27 @@
  * You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
+
 package com.hermesgadget.talaria.feature.manage.cron
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -36,91 +38,117 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.hermesgadget.talaria.TalariaApp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesgadget.talaria.core.util.formatHermesTimestamp
-import com.hermesgadget.talaria.domain.model.CronJob
+import com.hermesgadget.talaria.domain.model.AutomationBlueprint
+import com.hermesgadget.talaria.domain.model.CronDeliveryTarget
+import com.hermesgadget.talaria.domain.model.CronRun
+import com.hermesgadget.talaria.domain.model.ManageCronJob
+import com.hermesgadget.talaria.ui.components.ErrorBox
+import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
-import kotlinx.coroutines.launch
 
 @Composable
-fun CronScreen() {
-    val repo = TalariaApp.instance.container.hermesRepository
-    var jobs by remember { mutableStateOf<List<CronJob>>(emptyList()) }
+fun CronScreen(vm: CronViewModel = viewModel(factory = CronViewModel.factory())) {
+    val ui by vm.ui.collectAsStateWithLifecycle()
     var prompt by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf("") }
     var schedule by remember { mutableStateOf("0 9 * * *") }
-    var editJob by remember { mutableStateOf<CronJob?>(null) }
-    var editPrompt by remember { mutableStateOf("") }
-    var editSchedule by remember { mutableStateOf("") }
-    var deleteJob by remember { mutableStateOf<CronJob?>(null) }
-    var message by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
+    var delivery by remember { mutableStateOf("local") }
+    var deliveryMenuOpen by remember { mutableStateOf(false) }
+    var editJob by remember { mutableStateOf<ManageCronJob?>(null) }
+    var deleteJob by remember { mutableStateOf<ManageCronJob?>(null) }
 
-    fun reload() = scope.launch {
-        repo.getCron()
-            .onSuccess { jobs = it }
-            .onFailure { message = it.message }
-    }
-    LaunchedEffect(Unit) { reload() }
-
-    ScreenScaffold("Cron", "Scheduled automations") {
-        OutlinedTextField(prompt, { prompt = it }, label = { Text("Prompt") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(schedule, { schedule = it }, label = { Text("Schedule (cron)") }, modifier = Modifier.fillMaxWidth())
-        Row(modifier = Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp)) {
-            listOf(
-                "Every 15m" to "*/15 * * * *",
-                "Hourly" to "0 * * * *",
-                "Daily 9:00" to "0 9 * * *",
-                "Weekdays 9:00" to "0 9 * * 1-5",
-            ).forEach { (label, cron) ->
-                FilterChip(
-                    selected = schedule == cron,
-                    onClick = { schedule = cron },
-                    label = { Text(label) },
-                    modifier = Modifier.padding(end = 4.dp),
-                )
-            }
+    when (val state = ui) {
+        CronUiState.Loading -> ScreenScaffold("Cron", "Scheduled automations") { LoadingBox() }
+        is CronUiState.Failure -> ScreenScaffold("Cron", "Scheduled automations") {
+            ErrorBox(state.message) { vm.refresh() }
         }
-        Button(onClick = {
-            scope.launch {
-                repo.createCron(prompt, schedule, null, "local")
-                    .onSuccess { prompt = ""; reload() }
-                    .onFailure { message = it.message }
+        is CronUiState.Content -> {
+            LaunchedEffect(state.deliveryTargets) {
+                if (state.deliveryTargets.none { it.id == delivery }) {
+                    delivery = state.deliveryTargets.firstOrNull()?.id ?: "local"
+                }
             }
-        }) { Text("Create") }
-        message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        LazyColumn {
-            items(jobs, key = { it.id }) { job ->
-                Surface(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    shape = MaterialTheme.shapes.medium,
+            ScreenScaffold(
+                "Cron",
+                "Scheduled automations",
+                actions = { TextButton(onClick = vm::refresh) { Text("Refresh") } },
+            ) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text(job.name ?: job.id, style = MaterialTheme.typography.titleLarge)
-                        Text(job.prompt ?: "")
-                        Text("${job.schedule} · ${job.state} · ${job.deliver}")
-                        Text(
-                            "last=${formatHermesTimestamp(job.last_run) ?: "—"} · " +
-                                "next=${formatHermesTimestamp(job.next_run) ?: "—"}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    item {
+                        CreateCronCard(
+                            name = name,
+                            prompt = prompt,
+                            schedule = schedule,
+                            delivery = delivery,
+                            deliveryTargets = state.deliveryTargets,
+                            deliveryMenuOpen = deliveryMenuOpen,
+                            onNameChange = { name = it },
+                            onPromptChange = { prompt = it },
+                            onScheduleChange = { schedule = it },
+                            onDeliveryChange = { delivery = it; deliveryMenuOpen = false },
+                            onDeliveryMenuChange = { deliveryMenuOpen = it },
+                            onCreate = {
+                                vm.create(prompt, schedule, name, delivery)
+                                if (prompt.isNotBlank() && schedule.isNotBlank()) {
+                                    prompt = ""
+                                    name = ""
+                                }
+                            },
                         )
-                        Row {
-                            TextButton(onClick = {
-                                editJob = job
-                                editPrompt = job.prompt.orEmpty()
-                                editSchedule = job.schedule.orEmpty()
-                            }) { Text("Edit") }
-                            TextButton(onClick = { scope.launch { repo.pauseCron(job.id); reload() } }) { Text("Pause") }
-                            TextButton(onClick = { scope.launch { repo.resumeCron(job.id); reload() } }) { Text("Resume") }
-                            TextButton(onClick = { scope.launch { repo.triggerCron(job.id); reload() } }) { Text("Run") }
-                            TextButton(onClick = { deleteJob = job }) { Text("Delete") }
+                    }
+                    state.message?.let { message ->
+                        item { Text(message, color = MaterialTheme.colorScheme.error) }
+                    }
+                    if (state.jobs.isEmpty()) {
+                        item {
+                            Text(
+                                "No scheduled jobs",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 12.dp),
+                            )
+                        }
+                    }
+                    items(state.jobs, key = { it.id }) { job ->
+                        CronJobCard(
+                            job = job,
+                            runs = state.runs[job.id].orEmpty(),
+                            runsExpanded = job.id in state.expandedJobs,
+                            runsBusy = state.busyJobId == job.id,
+                            busy = state.busy,
+                            onEdit = { editJob = job },
+                            onPause = { vm.pause(job.id) },
+                            onResume = { vm.resume(job.id) },
+                            onTrigger = { vm.trigger(job.id) },
+                            onToggleRuns = { vm.toggleRuns(job.id) },
+                            onDelete = { deleteJob = job },
+                        )
+                    }
+                    if (state.blueprints.isNotEmpty()) {
+                        item {
+                            Text(
+                                "Blueprints",
+                                style = MaterialTheme.typography.titleLarge,
+                                modifier = Modifier.padding(top = 12.dp),
+                            )
+                            Text(
+                                "Start a scheduled job from a reusable automation template.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        items(state.blueprints, key = { it.key }) { blueprint ->
+                            BlueprintCard(blueprint = blueprint, busy = state.busy) { values ->
+                                vm.instantiateBlueprint(blueprint.key, values)
+                            }
                         }
                     }
                 }
@@ -129,59 +157,338 @@ fun CronScreen() {
     }
 
     editJob?.let { job ->
-        AlertDialog(
-            onDismissRequest = { editJob = null },
-            title = { Text("Edit cron") },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = editPrompt,
-                        onValueChange = { editPrompt = it },
-                        label = { Text("Prompt") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = editSchedule,
-                        onValueChange = { editSchedule = it },
-                        label = { Text("Schedule") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    scope.launch {
-                        repo.updateCron(job.id, editPrompt, editSchedule)
-                            .onSuccess {
-                                editJob = null
-                                reload()
-                            }
-                            .onFailure { message = it.message }
-                    }
-                }) { Text("Save") }
-            },
-            dismissButton = {
-                TextButton(onClick = { editJob = null }) { Text("Cancel") }
+        EditCronDialog(
+            job = job,
+            deliveryTargets = (ui as? CronUiState.Content)?.deliveryTargets.orEmpty(),
+            onDismiss = { editJob = null },
+            onSave = { promptValue, scheduleValue, deliveryValue ->
+                editJob = null
+                vm.update(job.id, promptValue, scheduleValue, deliveryValue)
             },
         )
     }
-
     deleteJob?.let { job ->
         AlertDialog(
             onDismissRequest = { deleteJob = null },
             title = { Text("Delete scheduled job?") },
-            text = { Text("Permanently delete '${job.name ?: job.id}'?") },
+            text = { Text("Permanently delete '${job.name ?: job.id}' from Hermes?") },
             confirmButton = {
                 TextButton(onClick = {
                     deleteJob = null
-                    scope.launch {
-                        repo.deleteCron(job.id)
-                            .onSuccess { reload() }
-                            .onFailure { message = it.message }
-                    }
+                    vm.delete(job.id)
                 }) { Text("Delete") }
             },
             dismissButton = { TextButton(onClick = { deleteJob = null }) { Text("Cancel") } },
         )
+    }
+}
+
+@Composable
+private fun CreateCronCard(
+    name: String,
+    prompt: String,
+    schedule: String,
+    delivery: String,
+    deliveryTargets: List<CronDeliveryTarget>,
+    deliveryMenuOpen: Boolean,
+    onNameChange: (String) -> Unit,
+    onPromptChange: (String) -> Unit,
+    onScheduleChange: (String) -> Unit,
+    onDeliveryChange: (String) -> Unit,
+    onDeliveryMenuChange: (Boolean) -> Unit,
+    onCreate: () -> Unit,
+) {
+    Surface(
+        Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Create job", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(
+                value = name,
+                onValueChange = onNameChange,
+                label = { Text("Name (optional)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = prompt,
+                onValueChange = onPromptChange,
+                label = { Text("Prompt") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = schedule,
+                onValueChange = onScheduleChange,
+                label = { Text("Schedule (cron)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            ScheduleChips(schedule, onScheduleChange)
+            DeliveryPicker(
+                selected = delivery,
+                targets = deliveryTargets,
+                expanded = deliveryMenuOpen,
+                onExpandedChange = onDeliveryMenuChange,
+                onSelected = onDeliveryChange,
+            )
+            Button(onClick = onCreate, enabled = prompt.isNotBlank() && schedule.isNotBlank()) {
+                Text("Create")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScheduleChips(schedule: String, onScheduleChange: (String) -> Unit) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        listOf(
+            "Every 15m" to "*/15 * * * *",
+            "Hourly" to "0 * * * *",
+            "Daily 9:00" to "0 9 * * *",
+            "Weekdays 9:00" to "0 9 * * 1-5",
+        ).forEach { (label, value) ->
+            FilterChip(
+                selected = schedule == value,
+                onClick = { onScheduleChange(value) },
+                label = { Text(label) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun DeliveryPicker(
+    selected: String,
+    targets: List<CronDeliveryTarget>,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onSelected: (String) -> Unit,
+) {
+    Box {
+        TextButton(onClick = { onExpandedChange(true) }) {
+            Text("Delivery: ${targets.firstOrNull { it.id == selected }?.name ?: selected}")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { onExpandedChange(false) }) {
+            targets.forEach { target ->
+                DropdownMenuItem(
+                    text = { Text(target.name) },
+                    onClick = { onSelected(target.id) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CronJobCard(
+    job: ManageCronJob,
+    runs: List<CronRun>,
+    runsExpanded: Boolean,
+    runsBusy: Boolean,
+    busy: Boolean,
+    onEdit: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    onTrigger: () -> Unit,
+    onToggleRuns: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Surface(
+        Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(job.name ?: job.id, style = MaterialTheme.typography.titleLarge)
+            job.prompt?.takeIf { it.isNotBlank() }?.let { Text(it) }
+            Text(
+                listOfNotNull(
+                    job.scheduleDisplay ?: job.scheduleExpression,
+                    job.state ?: if (job.enabled == false) "disabled" else "enabled",
+                    job.deliver,
+                ).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                "last=${formatHermesTimestamp(job.lastRunAt) ?: "—"} · " +
+                    "next=${formatHermesTimestamp(job.nextRunAt) ?: "—"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            job.lastError?.takeIf { it.isNotBlank() }?.let {
+                Text("Last error: $it", color = MaterialTheme.colorScheme.error)
+            }
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                TextButton(onClick = onEdit, enabled = !busy) { Text("Edit") }
+                if (job.enabled == false || job.state.equals("paused", ignoreCase = true)) {
+                    TextButton(onClick = onResume, enabled = !busy) { Text("Resume") }
+                } else {
+                    TextButton(onClick = onPause, enabled = !busy) { Text("Pause") }
+                }
+                TextButton(onClick = onTrigger, enabled = !busy) { Text("Run") }
+                TextButton(onClick = onToggleRuns, enabled = !busy) {
+                    Text(if (runsExpanded) "Hide runs" else "Runs")
+                }
+                TextButton(onClick = onDelete, enabled = !busy) { Text("Delete") }
+            }
+            if (runsBusy) Text("Loading run history…", style = MaterialTheme.typography.bodySmall)
+            if (runsExpanded) {
+                if (runs.isEmpty() && !runsBusy) {
+                    Text("No runs recorded", style = MaterialTheme.typography.bodySmall)
+                }
+                runs.forEach { run -> CronRunRow(run) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CronRunRow(run: CronRun) {
+    var expanded by remember(run.id) { mutableStateOf(false) }
+    Surface(
+        Modifier.fillMaxWidth().padding(top = 4.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shape = MaterialTheme.shapes.small,
+    ) {
+        Column(Modifier.padding(8.dp)) {
+            Text(
+                listOfNotNull(
+                    run.status,
+                    formatHermesTimestamp(run.startedAt),
+                    run.endedAt?.let { "ended ${formatHermesTimestamp(it)}" },
+                ).joinToString(" · "),
+                style = MaterialTheme.typography.labelLarge,
+            )
+            (run.output ?: run.preview ?: run.error)?.takeIf { it.isNotBlank() }?.let {
+                Text(it.take(500), style = MaterialTheme.typography.bodySmall)
+            }
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "Hide details" else "Show details")
+            }
+            if (expanded) {
+                Text(
+                    listOfNotNull(
+                        run.endReason?.let { "reason: $it" },
+                        run.model?.let { "model: $it" },
+                        run.messageCount?.let { "$it messages" },
+                        run.toolCallCount?.let { "$it tool calls" },
+                        run.inputTokens?.let { "input $it" },
+                        run.outputTokens?.let { "output $it" },
+                    ).joinToString(" · ").ifBlank { run.raw },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (run.raw.isNotBlank()) {
+                    Text(
+                        run.raw.take(12_000),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditCronDialog(
+    job: ManageCronJob,
+    deliveryTargets: List<CronDeliveryTarget>,
+    onDismiss: () -> Unit,
+    onSave: (String, String, String) -> Unit,
+) {
+    var prompt by remember(job.id) { mutableStateOf(job.prompt.orEmpty()) }
+    var schedule by remember(job.id) { mutableStateOf(job.scheduleExpression.orEmpty()) }
+    var delivery by remember(job.id) { mutableStateOf(job.deliver ?: deliveryTargets.firstOrNull()?.id ?: "local") }
+    var expanded by remember(job.id) { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit cron") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                OutlinedTextField(
+                    value = prompt,
+                    onValueChange = { prompt = it },
+                    label = { Text("Prompt") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = schedule,
+                    onValueChange = { schedule = it },
+                    label = { Text("Schedule") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                DeliveryPicker(
+                    selected = delivery,
+                    targets = deliveryTargets,
+                    expanded = expanded,
+                    onExpandedChange = { expanded = it },
+                    onSelected = { delivery = it; expanded = false },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(prompt, schedule, delivery) },
+                enabled = prompt.isNotBlank() && schedule.isNotBlank(),
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun BlueprintCard(blueprint: AutomationBlueprint, busy: Boolean, onInstantiate: (Map<String, String>) -> Unit) {
+    var values by remember(blueprint.key) { mutableStateOf(initialBlueprintValues(blueprint)) }
+    Surface(
+        Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(
+            Modifier
+                .padding(12.dp)
+                .heightIn(min = 56.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(blueprint.title, style = MaterialTheme.typography.titleMedium)
+            blueprint.description?.takeIf { it.isNotBlank() }?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall)
+            }
+            blueprint.fields.forEach { field ->
+                val current = values[field.name].orEmpty()
+                if (field.options.isNotEmpty()) {
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        field.options.forEach { option ->
+                            FilterChip(
+                                selected = current == option,
+                                onClick = { values = values + (field.name to option) },
+                                label = { Text(option) },
+                                modifier = Modifier.padding(end = 4.dp),
+                            )
+                        }
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = current,
+                        onValueChange = { values = values + (field.name to it) },
+                        label = { Text(field.label ?: field.name) },
+                        supportingText = field.help?.let { help -> { Text(help) } },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = field.type != "textarea",
+                    )
+                }
+            }
+            TextButton(onClick = { onInstantiate(values) }, enabled = !busy) {
+                Text("Instantiate")
+            }
+        }
     }
 }

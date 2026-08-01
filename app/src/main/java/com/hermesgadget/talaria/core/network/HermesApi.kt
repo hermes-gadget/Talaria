@@ -24,6 +24,7 @@ import com.hermesgadget.talaria.domain.model.ConfigSchemaResponse
 import com.hermesgadget.talaria.domain.model.CronJob
 import com.hermesgadget.talaria.domain.model.EnvVarInfo
 import com.hermesgadget.talaria.domain.model.FsCwd
+import com.hermesgadget.talaria.domain.model.FsDataUrl
 import com.hermesgadget.talaria.domain.model.FsListResponse
 import com.hermesgadget.talaria.domain.model.FsTextFile
 import com.hermesgadget.talaria.domain.model.LearningGraph
@@ -158,6 +159,51 @@ interface HermesApi {
     @DELETE("api/cron/jobs/{id}")
     suspend fun deleteCron(@Path("id") id: String, @Query("profile") profile: String? = null): OkResponse
 
+    /** Raw cron surface for dashboard v0.19.1, whose schedule shape is not CronJob.schedule. */
+    @GET("api/cron/jobs")
+    suspend fun getCronJobsRaw(@Query("profile") profile: String? = null): JsonElement
+
+    @POST("api/cron/jobs")
+    suspend fun createCronJobRaw(@Body body: JsonObject, @Query("profile") profile: String? = null): JsonElement
+
+    @PUT("api/cron/jobs/{id}")
+    suspend fun updateCronJobRaw(
+        @Path("id") id: String,
+        @Body body: JsonObject,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
+
+    @POST("api/cron/jobs/{id}/pause")
+    suspend fun pauseCronRaw(@Path("id") id: String, @Query("profile") profile: String? = null): JsonElement
+
+    @POST("api/cron/jobs/{id}/resume")
+    suspend fun resumeCronRaw(@Path("id") id: String, @Query("profile") profile: String? = null): JsonElement
+
+    @POST("api/cron/jobs/{id}/trigger")
+    suspend fun triggerCronRaw(@Path("id") id: String, @Query("profile") profile: String? = null): JsonElement
+
+    @DELETE("api/cron/jobs/{id}")
+    suspend fun deleteCronRaw(@Path("id") id: String, @Query("profile") profile: String? = null): JsonElement
+
+    @GET("api/cron/jobs/{job_id}/runs")
+    suspend fun getCronJobRunsRaw(
+        @Path("job_id") jobId: String,
+        @Query("limit") limit: Int = 50,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
+
+    @GET("api/cron/delivery-targets")
+    suspend fun getCronDeliveryTargetsRaw(@Query("profile") profile: String? = null): JsonElement
+
+    @GET("api/cron/blueprints")
+    suspend fun getCronBlueprintsRaw(@Query("profile") profile: String? = null): JsonElement
+
+    @POST("api/cron/blueprints/instantiate")
+    suspend fun instantiateCronBlueprintRaw(
+        @Body body: JsonObject,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
+
     @GET("api/skills")
     suspend fun getSkills(@Query("profile") profile: String? = null): List<SkillInfo>
 
@@ -188,6 +234,39 @@ interface HermesApi {
 
     @POST("api/skills/hub/uninstall")
     suspend fun uninstallHubSkill(@Body body: JsonObject, @Query("profile") profile: String? = null): JsonElement
+
+    @GET("api/skills/content")
+    suspend fun getSkillContentRaw(
+        @Query("name") name: String,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
+
+    @PUT("api/skills/content")
+    suspend fun putSkillContentRaw(@Body body: JsonObject, @Query("profile") profile: String? = null): JsonElement
+
+    @POST("api/skills/hub/update")
+    suspend fun updateSkillsHubRaw(@Body body: JsonObject, @Query("profile") profile: String? = null): JsonElement
+
+    @GET("api/sessions/stats")
+    suspend fun getSessionStatsRaw(@Query("profile") profile: String? = null): JsonElement
+
+    @POST("api/sessions/bulk-delete")
+    suspend fun bulkDeleteSessionsRaw(@Body body: JsonObject): JsonElement
+
+    @DELETE("api/sessions/empty")
+    suspend fun deleteEmptySessionsRaw(@Query("profile") profile: String? = null): JsonElement
+
+    @GET("api/sessions/empty/count")
+    suspend fun getEmptySessionCountRaw(@Query("profile") profile: String? = null): JsonElement
+
+    @POST("api/sessions/import")
+    suspend fun importSessionsRaw(@Body body: JsonObject): JsonElement
+
+    @GET("api/sessions/{session_id}/latest-descendant")
+    suspend fun getLatestDescendantRaw(
+        @Path("session_id") sessionId: String,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
 
     @GET("api/mcp/servers")
     suspend fun getMcpServers(@Query("profile") profile: String? = null): McpServersResponse

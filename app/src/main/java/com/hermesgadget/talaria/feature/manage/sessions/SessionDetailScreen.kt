@@ -47,6 +47,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.util.formatHermesTimestamp
 import com.hermesgadget.talaria.domain.model.SessionMessage
@@ -68,6 +70,8 @@ fun SessionDetailScreen(sessionId: String, onDeleted: (() -> Unit)? = null) {
     val repo = TalariaApp.instance.container.hermesRepository
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val latestVm: LatestDescendantViewModel = viewModel(factory = LatestDescendantViewModel.factory())
+    val latestUi by latestVm.ui.collectAsStateWithLifecycle()
     var session by remember { mutableStateOf<SessionSummary?>(null) }
     var messages by remember { mutableStateOf<List<SessionMessage>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -91,6 +95,25 @@ fun SessionDetailScreen(sessionId: String, onDeleted: (() -> Unit)? = null) {
     }
 
     LaunchedEffect(sessionId) { reload() }
+
+    LaunchedEffect(latestUi) {
+        val result = (latestUi as? LatestDescendantUiState.Success)?.response ?: return@LaunchedEffect
+        if (result.changed) {
+            context.startActivity(
+                Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse("talaria://session/${Uri.encode(result.sessionId)}"),
+                ),
+            )
+        } else {
+            message = "This is already the latest descendant"
+        }
+        latestVm.consume()
+    }
+
+    LaunchedEffect(latestUi) {
+        (latestUi as? LatestDescendantUiState.Failure)?.let { error = it.message }
+    }
 
     if (renameOpen) {
         AlertDialog(
@@ -174,6 +197,10 @@ fun SessionDetailScreen(sessionId: String, onDeleted: (() -> Unit)? = null) {
                         .onFailure { error = it.message }
                 }
             }) { Text("Export") }
+            TextButton(
+                onClick = { latestVm.load(sessionId) },
+                enabled = latestUi !is LatestDescendantUiState.Loading,
+            ) { Text("Open latest") }
             TextButton(onClick = { confirmDelete = true }) { Text("Delete") }
         },
     ) {
