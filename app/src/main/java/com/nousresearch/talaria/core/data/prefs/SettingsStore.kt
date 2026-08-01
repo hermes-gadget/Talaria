@@ -19,15 +19,29 @@ package com.nousresearch.talaria.core.data.prefs
 
 import android.content.Context
 import androidx.core.content.edit
+import com.nousresearch.talaria.core.network.JsonConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 
 enum class ThemeMode {
     SYSTEM,
     DARK,
     LIGHT,
 }
+
+/** One persisted Chat tab: its Hermes session (if any) and user-visible title. */
+@Serializable
+data class PersistedChatTab(val sessionId: String? = null, val title: String)
+
+/** The full Chat surface for a profile: open tabs + which one was focused. */
+@Serializable
+data class PersistedChatState(
+    val tabs: List<PersistedChatTab> = emptyList(),
+    val activeSessionId: String? = null,
+)
 
 /**
  * Non-secret app preferences. Telemetry remains off by default (BuildConfig + this flag).
@@ -98,16 +112,20 @@ class SettingsStore(context: Context) {
         set(value) = prefs.edit { putBoolean("cloud_stt", value) }
 
     /**
-     * Last Hermes chat session id per connection profile, so a cold start
-     * (force-close wipes the ViewModel's in-memory tabs) can resume the last
-     * conversation instead of opening a blank new agent. Scoped by profile id
-     * so switching connections doesn't cross-restore.
+     * The Chat surface (open tabs + titles + focused tab) per connection profile,
+     * so a cold start (force-close wipes the ViewModel's in-memory tabs) restores
+     * every thread with its renamed title and resumes the right conversation
+     * instead of opening a blank new agent. Scoped by profile id so switching
+     * connections doesn't cross-restore.
      */
-    fun lastSessionId(profileId: String): String? =
-        prefs.getString("last_session_$profileId", null)
+    fun saveChatState(profileId: String, state: PersistedChatState) =
+        prefs.edit { putString("chat_state_$profileId", JsonConfig.json.encodeToString(state)) }
 
-    fun setLastSessionId(profileId: String, sessionId: String) =
-        prefs.edit { putString("last_session_$profileId", sessionId) }
+    fun loadChatState(profileId: String): PersistedChatState {
+        val raw = prefs.getString("chat_state_$profileId", null) ?: return PersistedChatState()
+        return runCatching { JsonConfig.json.decodeFromString<PersistedChatState>(raw) }
+            .getOrDefault(PersistedChatState())
+    }
 
     var httpLoggingEnabled: Boolean
         get() = prefs.getBoolean("http_log", false)

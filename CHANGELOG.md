@@ -30,12 +30,14 @@ All notable changes to Talaria are documented here.
 - **Chat stuck Disconnected after closing the app:** dead PTY tabs are reopened on
   foreground (`repeatOnLifecycle`) and via tap-to-reconnect, resuming the prior
   Hermes session id when known.
-- **Chat forgot the conversation after a full force-close:** a process kill wiped the
+- **Chat forgot everything after a full force-close:** a process kill wiped the
   in-memory tabs, so a cold start opened a blank new agent even though it reconnected.
-  The active tab's Hermes session id is now persisted per connection profile
-  (`SettingsStore.lastSessionId`) and resumed on cold start — verified on-device:
-  after force-stop + relaunch the transcript reappears **and** the agent still answers
-  from prior context (asked to recall a word set before the kill, it did).
+  The **whole Chat surface** — every open thread, each tab's (renamed) title, and which
+  tab was focused — is now persisted per connection profile (`SettingsStore` →
+  `PersistedChatState`) and rebuilt on cold start, resuming each thread's own Hermes
+  session. Verified on-device: renamed a tab "Alpha", opened a second thread,
+  force-stopped, relaunched — both tabs came back with the right names, each showing its
+  own transcript, and a resumed agent still answered from context set before the kill.
 - **Loopback WS 403 `no_credential`:** when `auth_required=false`, auto-fetch
   `__HERMES_SESSION_TOKEN__` from the dashboard HTML and attach `?token=` (REST
   worked without it; `/api/pty` / `/api/ws` did not).
