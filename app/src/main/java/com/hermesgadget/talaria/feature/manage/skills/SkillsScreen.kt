@@ -6,28 +6,25 @@
  * You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
+
 package com.hermesgadget.talaria.feature.manage.skills
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Switch
@@ -41,296 +38,339 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.hermesgadget.talaria.TalariaApp
-import com.hermesgadget.talaria.domain.model.SkillInfo
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesgadget.talaria.domain.model.HubSkill
+import com.hermesgadget.talaria.domain.model.SkillInfo
 import com.hermesgadget.talaria.domain.model.ToolsetInfo
+import com.hermesgadget.talaria.ui.components.ErrorBox
+import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
-import kotlinx.coroutines.launch
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonPrimitive
 
 @Composable
-fun SkillsScreen() {
-    val repo = TalariaApp.instance.container.hermesRepository
-    var skills by remember { mutableStateOf<List<SkillInfo>>(emptyList()) }
-    var toolsets by remember { mutableStateOf<List<ToolsetInfo>>(emptyList()) }
+fun SkillsScreen(vm: SkillsViewModel = viewModel(factory = SkillsViewModel.factory())) {
+    val ui by vm.ui.collectAsStateWithLifecycle()
     var tab by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
     var category by remember { mutableStateOf<String?>(null) }
-    var message by remember { mutableStateOf<String?>(null) }
     var hubQuery by remember { mutableStateOf("") }
-    var hubResults by remember { mutableStateOf<List<HubSkill>>(emptyList()) }
-    var hubBusy by remember { mutableStateOf(false) }
-    var hubDetail by remember { mutableStateOf<String?>(null) }
     var uninstallTarget by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
 
-    fun reloadSkills() = scope.launch {
-        repo.getSkills()
-            .onSuccess { skills = it }
-            .onFailure { message = it.message }
-    }
-    fun reloadToolsets() = scope.launch {
-        repo.getToolsets()
-            .onSuccess { toolsets = it }
-            .onFailure { message = it.message }
-    }
-
-    uninstallTarget?.let { target ->
-        AlertDialog(
-            onDismissRequest = { uninstallTarget = null },
-            title = { Text("Uninstall skill?") },
-            text = { Text("Remove '$target' from the active Hermes profile?") },
-            confirmButton = {
-                TextButton(onClick = {
-                    uninstallTarget = null
-                    hubBusy = true
-                    scope.launch {
-                        repo.uninstallHubSkill(target).fold(
-                            onSuccess = { action ->
-                                message = action.lines.lastOrNull() ?: "Uninstalled $target"
-                                hubBusy = false
-                                reloadSkills()
-                            },
-                            onFailure = { error -> message = error.message; hubBusy = false },
-                        )
-                    }
-                }) { Text("Uninstall") }
-            },
-            dismissButton = { TextButton(onClick = { uninstallTarget = null }) { Text("Cancel") } },
-        )
-    }
-
-    LaunchedEffect(Unit) {
-        reloadSkills()
-        reloadToolsets()
-    }
-
-    val categories = remember(skills) {
-        skills.mapNotNull { it.category?.ifBlank { null } }.distinct().sorted()
-    }
-    val filteredSkills = remember(skills, query, category) {
-        skills.filter { skill ->
-            val q = query.trim().lowercase()
-            val matchesQuery = q.isEmpty() ||
-                skill.name.lowercase().contains(q) ||
-                skill.description.orEmpty().lowercase().contains(q)
-            val matchesCat = category == null || skill.category == category
-            matchesQuery && matchesCat
+    when (val state = ui) {
+        SkillsUiState.Loading -> ScreenScaffold("Skills", "Skills & toolsets") { LoadingBox() }
+        is SkillsUiState.Failure -> ScreenScaffold("Skills", "Skills & toolsets") {
+            ErrorBox(state.message) { vm.refresh() }
         }
-    }
-
-    ScreenScaffold("Skills", "Skills & toolsets", actions = {
-        TextButton(onClick = {
-            when (tab) {
-                0 -> reloadSkills()
-                1 -> reloadToolsets()
-                else -> Unit
+        is SkillsUiState.Content -> {
+            val content = state.value
+            val categories = remember(content.skills) {
+                content.skills.mapNotNull { it.category?.ifBlank { null } }.distinct().sorted()
             }
-        }) { Text("Refresh") }
-    }) {
-        PrimaryTabRow(selectedTabIndex = tab) {
-            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Skills") })
-            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Toolsets") })
-            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Hub") })
-        }
-        message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-
-        if (tab == 2) {
-            OutlinedTextField(
-                value = hubQuery,
-                onValueChange = { hubQuery = it },
-                label = { Text("Search Hermes Skills Hub") },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                singleLine = true,
-            )
-            Button(
-                onClick = {
-                    hubBusy = true
-                    hubDetail = null
-                    scope.launch {
-                        repo.searchSkillHub(hubQuery).fold(
-                            onSuccess = { results -> hubResults = results; hubBusy = false },
-                            onFailure = { error -> message = error.message; hubBusy = false },
-                        )
-                    }
-                },
-                enabled = !hubBusy && hubQuery.isNotBlank(),
-            ) { Text(if (hubBusy) "Working…" else "Search") }
-            hubDetail?.let {
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                ) { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp)) }
-            }
-            LazyColumn {
-                items(hubResults, key = { it.identifier }) { skill ->
-                    Surface(
-                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        shape = MaterialTheme.shapes.medium,
-                    ) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text(skill.name, style = MaterialTheme.typography.titleMedium)
-                            skill.description?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                            Text(
-                                listOfNotNull(skill.source, skill.trust_level).joinToString(" · "),
-                                style = MaterialTheme.typography.labelSmall,
-                            )
-                            Row {
-                                TextButton(enabled = !hubBusy, onClick = {
-                                    hubBusy = true
-                                    scope.launch {
-                                        repo.previewHubSkill(skill.identifier).fold(
-                                            onSuccess = { result ->
-                                                val obj = result as? JsonObject
-                                                hubDetail = obj?.get("skill_md")?.jsonPrimitive?.contentOrNull
-                                                    ?.take(6_000) ?: result.toString().take(6_000)
-                                                hubBusy = false
-                                            },
-                                            onFailure = { error -> message = error.message; hubBusy = false },
-                                        )
-                                    }
-                                }) { Text("Preview") }
-                                TextButton(enabled = !hubBusy, onClick = {
-                                    hubBusy = true
-                                    scope.launch {
-                                        repo.scanHubSkill(skill.identifier).fold(
-                                            onSuccess = { result -> hubDetail = result.toString().take(6_000); hubBusy = false },
-                                            onFailure = { error -> message = error.message; hubBusy = false },
-                                        )
-                                    }
-                                }) { Text("Scan") }
-                                TextButton(enabled = !hubBusy, onClick = {
-                                    hubBusy = true
-                                    scope.launch {
-                                        repo.installHubSkill(skill.identifier).fold(
-                                            onSuccess = { action ->
-                                                message = action.lines.lastOrNull() ?: "Installed ${skill.name}"
-                                                hubBusy = false
-                                                reloadSkills()
-                                            },
-                                            onFailure = { error -> message = error.message; hubBusy = false },
-                                        )
-                                    }
-                                }) { Text("Install") }
-                            }
-                        }
-                    }
+            val filteredSkills = remember(content.skills, query, category) {
+                content.skills.filter { skill ->
+                    val q = query.trim().lowercase()
+                    val matchesQuery = q.isEmpty() ||
+                        skill.name.lowercase().contains(q) ||
+                        skill.description.orEmpty().lowercase().contains(q)
+                    val matchesCat = category == null || skill.category == category
+                    matchesQuery && matchesCat
                 }
             }
-        } else if (tab == 0) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                label = { Text("Search skills") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                singleLine = true,
-            )
-            Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                FilterChip(
-                    selected = category == null,
-                    onClick = { category = null },
-                    label = { Text("All") },
-                    modifier = Modifier.padding(end = 4.dp),
-                )
-                categories.forEach { cat ->
-                    FilterChip(
-                        selected = category == cat,
-                        onClick = { category = cat },
-                        label = { Text(cat) },
-                        modifier = Modifier.padding(end = 4.dp),
+
+            ScreenScaffold(
+                "Skills",
+                "Skills & toolsets",
+                actions = {
+                    if (tab == 2 || content.skills.any { it.provenance == "hub" }) {
+                        TextButton(onClick = vm::updateHub, enabled = !content.busy) { Text("Update") }
+                    }
+                    TextButton(onClick = vm::refresh, enabled = !content.busy) { Text("Refresh") }
+                },
+            ) {
+                PrimaryTabRow(selectedTabIndex = tab) {
+                    Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Skills") })
+                    Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Toolsets") })
+                    Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Hub") })
+                }
+                content.message?.let { Text(it, color = MaterialTheme.colorScheme.secondary) }
+                when (tab) {
+                    0 -> SkillsList(
+                        skills = filteredSkills,
+                        categories = categories,
+                        category = category,
+                        query = query,
+                        busy = content.busy,
+                        onQueryChange = { query = it },
+                        onCategoryChange = { category = it },
+                        onToggle = vm::toggleSkill,
+                        onEdit = vm::openEditor,
+                        onUninstall = { uninstallTarget = it },
+                    )
+                    1 -> ToolsetsList(
+                        toolsets = content.toolsets,
+                        busy = content.busy,
+                        onToggle = vm::setToolset,
+                    )
+                    else -> HubList(
+                        query = hubQuery,
+                        results = content.hubResults,
+                        detail = content.hubDetail,
+                        busy = content.busy,
+                        onQueryChange = { hubQuery = it },
+                        onSearch = { vm.searchHub(hubQuery) },
+                        onPreview = vm::previewHub,
+                        onScan = vm::scanHub,
+                        onInstall = vm::installHub,
                     )
                 }
             }
-            LazyColumn {
-                items(filteredSkills, key = { it.name }) { skill ->
-                    Surface(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        shape = MaterialTheme.shapes.medium,
-                    ) {
-                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(skill.name, style = MaterialTheme.typography.titleLarge)
-                                Text(skill.description ?: "")
-                                skill.category?.let {
-                                    Text(it, style = MaterialTheme.typography.labelLarge)
-                                }
-                            }
-                            Switch(
-                                checked = skill.enabled == true,
-                                onCheckedChange = { enabled ->
-                                    scope.launch {
-                                        repo.toggleSkill(skill.name, enabled)
-                                        reloadSkills()
-                                    }
-                                },
-                            )
-                            if (skill.provenance == "hub") {
-                                TextButton(onClick = { uninstallTarget = skill.name }, enabled = !hubBusy) {
-                                    Text("Uninstall")
-                                }
-                            }
-                        }
-                    }
-                }
+            when (val editor = content.editor) {
+                is SkillEditorState.Ready -> SkillContentEditor(
+                    editor = editor,
+                    busy = content.busy,
+                    onDismiss = vm::closeEditor,
+                    onSave = vm::saveContent,
+                )
+                is SkillEditorState.Loading -> AlertDialog(
+                    onDismissRequest = vm::closeEditor,
+                    title = { Text("Edit skill") },
+                    text = { Text("Loading ${editor.name}…") },
+                    confirmButton = {},
+                    dismissButton = { TextButton(onClick = vm::closeEditor) { Text("Cancel") } },
+                )
+                is SkillEditorState.Error -> AlertDialog(
+                    onDismissRequest = vm::closeEditor,
+                    title = { Text("Could not load skill") },
+                    text = { Text(editor.message) },
+                    confirmButton = { TextButton(onClick = vm::closeEditor) { Text("Close") } },
+                )
+                SkillEditorState.Closed -> Unit
             }
-        } else {
-            LazyColumn(modifier = Modifier.padding(top = 8.dp)) {
-                items(toolsets, key = { it.name }) { ts ->
-                    Surface(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        shape = MaterialTheme.shapes.medium,
-                    ) {
-                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(ts.label ?: ts.name, style = MaterialTheme.typography.titleMedium)
-                                ts.description?.takeIf { it.isNotBlank() }?.let {
-                                    Text(
-                                        it,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                if (ts.tools.isNotEmpty()) {
-                                    Text(
-                                        ts.tools.joinToString(),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
+            uninstallTarget?.let { target ->
+                AlertDialog(
+                    onDismissRequest = { uninstallTarget = null },
+                    title = { Text("Uninstall skill?") },
+                    text = { Text("Remove '$target' from the active Hermes profile?") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            uninstallTarget = null
+                            vm.uninstallHub(target)
+                        }, enabled = !content.busy) { Text("Uninstall") }
+                    },
+                    dismissButton = { TextButton(onClick = { uninstallTarget = null }) { Text("Cancel") } },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SkillsList(
+    skills: List<SkillInfo>,
+    categories: List<String>,
+    category: String?,
+    query: String,
+    busy: Boolean,
+    onQueryChange: (String) -> Unit,
+    onCategoryChange: (String?) -> Unit,
+    onToggle: (String, Boolean) -> Unit,
+    onEdit: (String) -> Unit,
+    onUninstall: (String) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            label = { Text("Search skills") },
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            singleLine = true,
+        )
+        Row(Modifier.horizontalScroll(rememberScrollState())) {
+            FilterChip(
+                selected = category == null,
+                onClick = { onCategoryChange(null) },
+                label = { Text("All") },
+                modifier = Modifier.padding(end = 4.dp),
+            )
+            categories.forEach { value ->
+                FilterChip(
+                    selected = category == value,
+                    onClick = { onCategoryChange(value) },
+                    label = { Text(value) },
+                    modifier = Modifier.padding(end = 4.dp),
+                )
+            }
+        }
+        LazyColumn {
+            items(skills, key = { it.name }) { skill ->
+                Surface(
+                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shape = MaterialTheme.shapes.medium,
+                ) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(skill.name, style = MaterialTheme.typography.titleLarge)
+                            Text(skill.description ?: "")
+                            skill.category?.let { Text(it, style = MaterialTheme.typography.labelLarge) }
+                            Row {
+                                TextButton(onClick = { onEdit(skill.name) }, enabled = !busy) { Text("Edit content") }
+                                if (skill.provenance == "hub") {
+                                    TextButton(onClick = { onUninstall(skill.name) }, enabled = !busy) { Text("Uninstall") }
                                 }
                             }
-                            val on = ts.enabled ?: ts.active ?: false
-                            Switch(
-                                checked = on,
-                                enabled = ts.available != false,
-                                onCheckedChange = { enabled ->
-                                    scope.launch {
-                                        repo.setToolsetEnabled(ts.name, enabled)
-                                            .onSuccess { reloadToolsets() }
-                                            .onFailure { message = it.message }
-                                    }
-                                },
-                            )
                         }
+                        Switch(
+                            checked = skill.enabled == true,
+                            enabled = !busy,
+                            onCheckedChange = { onToggle(skill.name, it) },
+                        )
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun ToolsetsList(
+    toolsets: List<ToolsetInfo>,
+    busy: Boolean,
+    onToggle: (String, Boolean) -> Unit,
+) {
+    LazyColumn(modifier = Modifier.padding(top = 8.dp)) {
+        items(toolsets, key = { it.name }) { toolset ->
+            Surface(
+                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = MaterialTheme.shapes.medium,
+            ) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(toolset.label ?: toolset.name, style = MaterialTheme.typography.titleMedium)
+                        toolset.description?.takeIf { it.isNotBlank() }?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (toolset.tools.isNotEmpty()) {
+                            Text(toolset.tools.joinToString(), style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    val enabled = toolset.enabled ?: toolset.active ?: false
+                    Switch(
+                        checked = enabled,
+                        enabled = toolset.available != false && !busy,
+                        onCheckedChange = { onToggle(toolset.name, it) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HubList(
+    query: String,
+    results: List<HubSkill>,
+    detail: String?,
+    busy: Boolean,
+    onQueryChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    onPreview: (String) -> Unit,
+    onScan: (String) -> Unit,
+    onInstall: (String) -> Unit,
+) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        label = { Text("Search Hermes Skills Hub") },
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        singleLine = true,
+    )
+    Button(onClick = onSearch, enabled = !busy && query.isNotBlank()) { Text(if (busy) "Working…" else "Search") }
+    detail?.let {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        ) { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp)) }
+    }
+    LazyColumn {
+        items(results, key = { it.identifier }) { skill ->
+            Surface(
+                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = MaterialTheme.shapes.medium,
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(skill.name, style = MaterialTheme.typography.titleMedium)
+                    skill.description?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    Text(listOfNotNull(skill.source, skill.trust_level).joinToString(" · "), style = MaterialTheme.typography.labelSmall)
+                    Row {
+                        TextButton(enabled = !busy, onClick = { onPreview(skill.identifier) }) { Text("Preview") }
+                        TextButton(enabled = !busy, onClick = { onScan(skill.identifier) }) { Text("Scan") }
+                        TextButton(enabled = !busy, onClick = { onInstall(skill.identifier) }) { Text("Install") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SkillContentEditor(
+    editor: SkillEditorState.Ready,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (String, SkillContentFields) -> Unit,
+) {
+    var name by remember(editor.targetName) { mutableStateOf(editor.fields.name) }
+    var description by remember(editor.targetName) { mutableStateOf(editor.fields.description) }
+    var body by remember(editor.targetName) { mutableStateOf(editor.fields.body) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit ${editor.targetName}") },
+        text = {
+            Column(
+                Modifier
+                    .heightIn(max = 560.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Name") },
+                    readOnly = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("Description") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = body,
+                    onValueChange = { body = it },
+                    label = { Text("Body") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 12,
+                )
+                editor.validationError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                editor.path?.let {
+                    Text("Path: $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(editor.targetName, SkillContentFields(name, description, body)) },
+                enabled = !busy,
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }

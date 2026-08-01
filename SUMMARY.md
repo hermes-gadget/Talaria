@@ -1,19 +1,20 @@
-# Files preview implementation
+# Manage-depth implementation
 
-Branch: `feature/files-preview`
+Branch: `feature/manage-depth`
 
-Implemented the Files pane media-preview and sharing parity work:
+Implemented the requested management-depth surfaces:
 
-- image previews for PNG/JPG/JPEG/GIF/WebP/BMP and image MIME types, with base64 data-URL parsing and pinch/pan zoom;
-- binary-file metadata with read-only presentation and FileProvider `ACTION_SEND` sharing for text, image, and binary files;
-- overwrite confirmation plus existing optimistic-concurrency checks for text edits;
-- pull-to-refresh and lifecycle-aware refresh when the Files destination resumes;
-- unit coverage for data-URL parsing and preview-type mapping.
+- Cron jobs now use an additive raw v0.19.1 API seam for object-shaped schedules, delivery-target selection, expandable per-job run history, and blueprint field instantiation.
+- Sessions now expose stats, multi-select bulk deletion, empty-session count/delete, SAF JSON import, and latest-descendant navigation from session detail. Destructive actions remain confirmation-gated.
+- Skills now have a validated SKILL.md content editor for name/description/body and a Skills Hub update action.
+- Added focused unit coverage for cron run parsing, blueprint instantiation, and session selection behavior.
 
-Verification passed with:
+The legacy typed cron API remains unchanged for existing repository consumers; the new raw methods and management-depth models are additive. A missing pre-existing `FsDataUrl` import in `HermesApi.kt` was also restored so the module compiles.
+
+Verification passed with the requested tasks:
 
 ```text
 ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon
 ```
 
-The shell required the installed JDK at `/home/ben/.local/jdk17` and Android SDK at `/home/ben/android-sdk`.
+The shared shell required `JAVA_HOME=/home/ben/.local/jdk17` and `ANDROID_HOME=/home/ben/android-sdk` to run Gradle. No services were restarted and no remote changes were made.
