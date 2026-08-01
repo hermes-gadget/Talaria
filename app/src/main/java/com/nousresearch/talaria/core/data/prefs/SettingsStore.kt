@@ -97,6 +97,18 @@ class SettingsStore(context: Context) {
         get() = prefs.getBoolean("cloud_stt", false)
         set(value) = prefs.edit { putBoolean("cloud_stt", value) }
 
+    /**
+     * Last Hermes chat session id per connection profile, so a cold start
+     * (force-close wipes the ViewModel's in-memory tabs) can resume the last
+     * conversation instead of opening a blank new agent. Scoped by profile id
+     * so switching connections doesn't cross-restore.
+     */
+    fun lastSessionId(profileId: String): String? =
+        prefs.getString("last_session_$profileId", null)
+
+    fun setLastSessionId(profileId: String, sessionId: String) =
+        prefs.edit { putString("last_session_$profileId", sessionId) }
+
     var httpLoggingEnabled: Boolean
         get() = prefs.getBoolean("http_log", false)
         set(value) = prefs.edit { putBoolean("http_log", value) }

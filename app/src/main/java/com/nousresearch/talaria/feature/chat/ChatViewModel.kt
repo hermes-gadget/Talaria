@@ -147,13 +147,28 @@ class ChatViewModel(
     /** Called by the screen: make sure at least one session exists (optionally resuming). */
     fun ensureStarted(resume: String? = null) {
         if (_ui.value.tabs.isEmpty()) {
-            newSession(resume = resume, draft = initialDraft)
+            // Cold start (a force-close / process kill wipes the in-memory tabs):
+            // fall back to the last chat session persisted for this profile so the
+            // user continues where they left off instead of a blank new agent.
+            val restore = resume?.takeIf { it.isNotBlank() } ?: lastSessionForActiveProfile()
+            newSession(resume = restore, draft = initialDraft)
         } else if (!resume.isNullOrBlank() && _ui.value.tabs.none { it.resumeSessionId == resume }) {
             newSession(resume = resume)
         }
         // Soft-background / process pause often drops the PTY while the ViewModel
         // (and its dead tabs) survive — reopen those sockets on the next start.
         reconnectDisconnected()
+    }
+
+    private fun lastSessionForActiveProfile(): String? {
+        val pid = container.connectionStore.activeProfile()?.id ?: return null
+        return container.settingsStore.lastSessionId(pid)
+    }
+
+    /** Remember the active tab's live session so a cold start can resume it. */
+    private fun persistLastSession(sessionId: String) {
+        val pid = container.connectionStore.activeProfile()?.id ?: return
+        container.settingsStore.setLastSessionId(pid, sessionId)
     }
 
     /**
@@ -522,6 +537,8 @@ class ChatViewModel(
                     if (id != _ui.value.tabs.firstOrNull { it.id == tabId }?.liveSessionId) {
                         updateTab(tabId) { it.copy(liveSessionId = id) }
                     }
+                    // Persist the focused tab's session so a cold start resumes it.
+                    if (_ui.value.active?.id == tabId) persistLastSession(id)
                     loadReading(tabId, id)
                 }
                 kotlinx.coroutines.delay(2500)
