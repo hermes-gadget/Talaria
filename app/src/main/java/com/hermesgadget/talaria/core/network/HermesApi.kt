@@ -24,6 +24,7 @@ import com.hermesgadget.talaria.domain.model.ConfigSchemaResponse
 import com.hermesgadget.talaria.domain.model.CronJob
 import com.hermesgadget.talaria.domain.model.EnvVarInfo
 import com.hermesgadget.talaria.domain.model.FsCwd
+import com.hermesgadget.talaria.domain.model.FsDataUrl
 import com.hermesgadget.talaria.domain.model.FsListResponse
 import com.hermesgadget.talaria.domain.model.FsTextFile
 import com.hermesgadget.talaria.domain.model.LearningGraph
