@@ -58,6 +58,7 @@ import com.hermesgadget.talaria.feature.connection.ConnectScreen
 import com.hermesgadget.talaria.feature.manage.ManageHomeScreen
 import com.hermesgadget.talaria.feature.manage.analytics.AnalyticsScreen
 import com.hermesgadget.talaria.feature.manage.apikeys.ApiKeysScreen
+import com.hermesgadget.talaria.feature.manage.artifacts.ArtifactsScreen
 import com.hermesgadget.talaria.feature.manage.channels.ChannelsScreen
 import com.hermesgadget.talaria.feature.manage.config.ConfigScreen
 import com.hermesgadget.talaria.feature.manage.cron.CronScreen
@@ -343,6 +344,11 @@ fun TalariaNavRoot(
                 composable(Routes.FILES) { FilesScreen() }
                 composable(Routes.MODELS) { ModelsScreen() }
                 composable(Routes.LEARNING) { LearningScreen() }
+                composable(Routes.ARTIFACTS) {
+                    ArtifactsScreen(onOpenSession = { id ->
+                        navController.navigate(Routes.sessionDetail(id)) { launchSingleTop = true }
+                    })
+                }
             }
         }
     }
