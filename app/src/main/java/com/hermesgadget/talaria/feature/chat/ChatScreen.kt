@@ -19,6 +19,7 @@ package com.hermesgadget.talaria.feature.chat
 import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -103,7 +104,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesgadget.talaria.TalariaApp
-import com.hermesgadget.talaria.domain.model.ChatLine
 import com.hermesgadget.talaria.domain.model.ToolCallUi
 import com.hermesgadget.talaria.domain.model.scopeId
 import com.hermesgadget.talaria.ui.components.SimpleMarkdownText
@@ -132,6 +132,7 @@ fun ChatScreen(
     var renameTarget by remember { mutableStateOf<ChatTab?>(null) }
 
     val context = LocalContext.current
+    val settings = TalariaApp.instance.container.settingsStore
     val lifecycleOwner = LocalLifecycleOwner.current
     val micPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -144,9 +145,25 @@ fun ChatScreen(
     ) { uri ->
         uri?.let(vm::attachImage)
     }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
 
     LaunchedEffect(resumeSessionId, connectionScope) {
         if (!hasConnection) onNeedConnection() else vm.ensureStarted(resumeSessionId)
+    }
+    // Ask once, in context, when the user opens a connected agent surface.
+    // Settings can re-open the system prompt if the user later enables alerts.
+    LaunchedEffect(hasConnection) {
+        if (
+            hasConnection && settings.notificationsEnabled && Build.VERSION.SDK_INT >= 33 &&
+            !settings.notificationPermissionRequested &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            settings.notificationPermissionRequested = true
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
     // Reconnect dead PTYs whenever Chat returns to the foreground (home/recents
     // leave the ViewModel alive with connected=false and no sockets).
@@ -164,34 +181,10 @@ fun ChatScreen(
         }
     }
     val active = ui.active
-    // Reading mode shows only the clean conversation (never the raw PTY/TUI dump).
-    // Terminal mode appends the in-flight streaming turn as one keyed line so
-    // chunks only recompose that single item, not the whole list.
-    val displayLines = if (ui.transcriptMode == TranscriptMode.READING) {
-        val finished = active?.readingMessages.orEmpty()
-        val streaming = active?.readingStreamingText
-        if (streaming.isNullOrEmpty()) {
-            finished
-        } else {
-            finished + ChatLine(
-                id = "reading-streaming-${active.id}",
-                role = "assistant",
-                text = streaming,
-            )
-        }
-    } else {
-        val finished = active?.lines.orEmpty()
-        val streaming = active?.streamingText
-        if (streaming.isNullOrEmpty()) {
-            finished
-        } else {
-            finished + ChatLine(
-                id = "streaming-${active.id}",
-                role = "assistant",
-                text = streaming,
-            )
-        }
-    }
+    // Active turns are always a committed-message-only reading transcript.
+    // Raw PTY/TUI output is available as an explicit diagnostic view only while idle.
+    val transcriptMode = effectiveTranscriptMode(ui.transcriptMode, active?.working == true)
+    val displayLines = visibleTranscriptLines(active, transcriptMode)
     // Follow the transcript only when the last line actually changed; instant
     // scroll (no animation) keeps up with stream-rate updates without jank.
     LaunchedEffect(displayLines.lastOrNull()?.let { it.id to it.text }, ui.activeTabId) {
@@ -377,21 +370,23 @@ fun ChatScreen(
                     }
                 },
                 actions = {
-                    val reading = ui.transcriptMode == TranscriptMode.READING
-                    if (!reading && active?.connected == true) {
+                    val reading = transcriptMode == TranscriptMode.READING
+                    if (active?.working == true && active.connected) {
                         IconButton(onClick = { vm.sendInterrupt() }) {
                             Icon(Icons.Filled.Stop, contentDescription = "Interrupt (Ctrl-C)")
                         }
                     }
-                    IconButton(onClick = {
-                        vm.setTranscriptMode(
-                            if (reading) TranscriptMode.TERMINAL else TranscriptMode.READING,
-                        )
-                    }) {
-                        Icon(
-                            if (reading) Icons.Filled.Terminal else Icons.AutoMirrored.Filled.Article,
-                            contentDescription = if (reading) "Terminal view" else "Reading view",
-                        )
+                    if (active?.working != true) {
+                        IconButton(onClick = {
+                            vm.setTranscriptMode(
+                                if (reading) TranscriptMode.TERMINAL else TranscriptMode.READING,
+                            )
+                        }) {
+                            Icon(
+                                if (reading) Icons.Filled.Terminal else Icons.AutoMirrored.Filled.Article,
+                                contentDescription = if (reading) "Terminal view" else "Reading view",
+                            )
+                        }
                     }
                     IconButton(onClick = { vm.toggleModelPicker() }) {
                         Icon(Icons.Filled.SmartToy, contentDescription = "Change model")
@@ -612,7 +607,7 @@ fun ChatScreen(
                 if (displayLines.isEmpty()) {
                     item {
                         Text(
-                            if (ui.transcriptMode == TranscriptMode.READING) {
+                            if (transcriptMode == TranscriptMode.READING) {
                                 "No messages yet — say hello to Hermes."
                             } else {
                                 "Waiting for terminal output…"
@@ -637,7 +632,7 @@ fun ChatScreen(
                         },
                         shape = MaterialTheme.shapes.medium,
                     ) {
-                        if (ui.transcriptMode == TranscriptMode.READING || line.role == "assistant") {
+                        if (transcriptMode == TranscriptMode.READING || line.role == "assistant") {
                             SimpleMarkdownText(line.text, modifier = Modifier.padding(12.dp))
                         } else {
                             // Terminal mode: selectable so users can copy PTY output.

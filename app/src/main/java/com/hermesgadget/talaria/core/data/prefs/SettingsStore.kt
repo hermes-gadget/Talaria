@@ -43,6 +43,17 @@ data class PersistedChatState(
     val activeSessionId: String? = null,
 )
 
+/** One agent turn monitored by the foreground notification service. */
+@Serializable
+data class PersistedAgentWatch(
+    val watcherId: String,
+    val agentName: String,
+    val channelId: String,
+    val sessionId: String? = null,
+    val connectionId: String? = null,
+    val managementProfile: String? = null,
+)
+
 /**
  * Non-secret app preferences. Telemetry remains off by default (BuildConfig + this flag).
  */
@@ -74,6 +85,18 @@ class SettingsStore(context: Context) {
     var notifyReplies: Boolean
         get() = prefs.getBoolean("notify_replies", true)
         set(value) = prefs.edit { putBoolean("notify_replies", value) }
+
+    var notifyAgentPermissions: Boolean
+        get() = prefs.getBoolean("notify_agent_permissions", true)
+        set(value) = prefs.edit { putBoolean("notify_agent_permissions", value) }
+
+    var notifyTaskCompletions: Boolean
+        get() = prefs.getBoolean("notify_task_completions", true)
+        set(value) = prefs.edit { putBoolean("notify_task_completions", value) }
+
+    var notificationPermissionRequested: Boolean
+        get() = prefs.getBoolean("notification_permission_requested", false)
+        set(value) = prefs.edit { putBoolean("notification_permission_requested", value) }
 
     var notifyCron: Boolean
         get() = prefs.getBoolean("notify_cron", true)
@@ -121,6 +144,63 @@ class SettingsStore(context: Context) {
         val raw = prefs.getString("chat_state_$profileId", null) ?: return PersistedChatState()
         return runCatching { JsonConfig.json.decodeFromString<PersistedChatState>(raw) }
             .getOrDefault(PersistedChatState())
+    }
+
+    @Synchronized
+    fun saveAgentWatches(watches: List<PersistedAgentWatch>) = prefs.edit {
+        putString("agent_notification_watches", JsonConfig.json.encodeToString(watches))
+    }
+
+    @Synchronized
+    fun loadAgentWatches(): List<PersistedAgentWatch> {
+        val raw = prefs.getString("agent_notification_watches", null) ?: return emptyList()
+        return runCatching { JsonConfig.json.decodeFromString<List<PersistedAgentWatch>>(raw) }
+            .getOrDefault(emptyList())
+    }
+
+    /** Atomically suppress a replayed sidecar frame without hiding later turns. */
+    @Synchronized
+    fun claimAgentNotification(
+        lane: String,
+        fingerprint: String,
+        nowMillis: Long = System.currentTimeMillis(),
+        duplicateWindowMillis: Long = 30_000L,
+    ): Boolean {
+        val slot = lane.hashCode().toUInt().toString(16)
+        val fingerprintKey = "agent_notification_fingerprint_$slot"
+        val timestampKey = "agent_notification_timestamp_$slot"
+        val previous = prefs.getString(fingerprintKey, null)
+        val previousAt = prefs.getLong(timestampKey, 0L)
+        if (previous == fingerprint && nowMillis - previousAt in 0 until duplicateWindowMillis) return false
+        prefs.edit {
+            putString(fingerprintKey, fingerprint)
+            putLong(timestampKey, nowMillis)
+        }
+        return true
+    }
+
+    @Synchronized
+    fun addActiveAgentPermission(lane: String, notificationId: Int) {
+        val key = "active_agent_permissions_${lane.hashCode().toUInt().toString(16)}"
+        val ids = prefs.getStringSet(key, emptySet()).orEmpty().toMutableSet()
+        ids += notificationId.toString()
+        prefs.edit { putStringSet(key, ids) }
+    }
+
+    @Synchronized
+    fun removeActiveAgentPermission(lane: String, notificationId: Int) {
+        val key = "active_agent_permissions_${lane.hashCode().toUInt().toString(16)}"
+        val ids = prefs.getStringSet(key, emptySet()).orEmpty().toMutableSet()
+        ids -= notificationId.toString()
+        prefs.edit { putStringSet(key, ids) }
+    }
+
+    @Synchronized
+    fun takeActiveAgentPermissions(lane: String): Set<Int> {
+        val key = "active_agent_permissions_${lane.hashCode().toUInt().toString(16)}"
+        val ids = prefs.getStringSet(key, emptySet()).orEmpty().mapNotNull(String::toIntOrNull).toSet()
+        prefs.edit { remove(key) }
+        return ids
     }
 
     var httpLoggingEnabled: Boolean

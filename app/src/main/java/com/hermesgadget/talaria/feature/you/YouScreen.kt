@@ -16,6 +16,11 @@
 
 package com.hermesgadget.talaria.feature.you
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -46,12 +51,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import com.hermesgadget.talaria.BuildConfig
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.prefs.ThemeMode
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import com.hermesgadget.talaria.ui.theme.LocalSpacing
 import com.hermesgadget.talaria.worker.SyncScheduler
+import com.hermesgadget.talaria.core.notifications.AgentTaskNotificationService
 
 @Composable
 fun YouScreen(onConnect: () -> Unit) {
@@ -59,6 +66,8 @@ fun YouScreen(onConnect: () -> Unit) {
     val context = LocalContext.current
     val spacing = LocalSpacing.current
     var notifications by remember { mutableStateOf(settings.notificationsEnabled) }
+    var agentPermissions by remember { mutableStateOf(settings.notifyAgentPermissions) }
+    var taskCompletions by remember { mutableStateOf(settings.notifyTaskCompletions) }
     var bgSync by remember { mutableStateOf(settings.backgroundSyncEnabled) }
     var tts by remember { mutableStateOf(settings.ttsEnabled) }
     var cloudStt by remember { mutableStateOf(settings.cloudSttOptIn) }
@@ -67,6 +76,15 @@ fun YouScreen(onConnect: () -> Unit) {
     var themeMode by remember { mutableStateOf(settings.themeMode) }
     var privacyExpanded by remember { mutableStateOf(false) }
     val active = TalariaApp.instance.container.connectionStore.activeProfile()
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) {
+            notifications = false
+            settings.notificationsEnabled = false
+            AgentTaskNotificationService.stopAll(context)
+        }
+    }
 
     ScreenScaffold("You", "Talaria ${BuildConfig.VERSION_NAME}", showProfileSwitcher = true) {
         Column(Modifier.verticalScroll(rememberScrollState())) {
@@ -116,6 +134,30 @@ fun YouScreen(onConnect: () -> Unit) {
             RowSwitch("Notifications", notifications) {
                 notifications = it
                 settings.notificationsEnabled = it
+                if (!it) {
+                    AgentTaskNotificationService.stopAll(context)
+                } else if (
+                    Build.VERSION.SDK_INT >= 33 &&
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                    PackageManager.PERMISSION_GRANTED
+                ) {
+                    settings.notificationPermissionRequested = true
+                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+            AnimatedVisibility(visible = notifications) {
+                Column {
+                    RowSwitch("Agent permission requests", agentPermissions) {
+                        agentPermissions = it
+                        settings.notifyAgentPermissions = it
+                        if (!it && !taskCompletions) AgentTaskNotificationService.stopAll(context)
+                    }
+                    RowSwitch("Agent task completion", taskCompletions) {
+                        taskCompletions = it
+                        settings.notifyTaskCompletions = it
+                        if (!it && !agentPermissions) AgentTaskNotificationService.stopAll(context)
+                    }
+                }
             }
             RowSwitch("Background sync (WorkManager)", bgSync) {
                 bgSync = it

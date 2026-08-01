@@ -4,6 +4,17 @@ All notable Talaria changes are documented here. Versions below correspond to re
 
 ## [Unreleased]
 
+### Added
+
+- Added thread-aware agent notifications for permission/clarification/secret requests and foreground or background task completion. A foreground monitor follows each user-started turn while Talaria is backgrounded, restores active watches after service recreation, deep-links to the exact thread, and includes the thread's selected agent name.
+- Added dedicated notification controls and Android 13+ runtime permission onboarding for agent attention and task-completion alerts.
+
+### Fixed
+
+- Typed Hermes `background.complete` and failure-only `message.complete` events, deduplicated alerts arriving through both live chat and the background monitor, and cleared stale permission notifications when a prompt expires or its task completes.
+- Replaced the legacy notification glyph with the current winged-sandal app icon.
+- Kept active turns in the clean transcript, hiding raw PTY/TUI redraws, partial deltas, and interim model commentary until the final result arrives.
+
 ## [0.4.0] — 2026-08-01
 
 ### Added

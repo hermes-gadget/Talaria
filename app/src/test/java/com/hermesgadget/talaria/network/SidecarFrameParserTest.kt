@@ -94,6 +94,15 @@ class SidecarFrameParserTest {
     }
 
     @Test
+    fun parsesMessageFailureReasonAsFailedCompletion() {
+        val event = SidecarFrameParser.parse(
+            """{"method":"event","params":{"type":"message.complete","session_id":"s1","payload":{"failure_reason":"provider unavailable"}}}""",
+        ) as HermesSideEvent.MessageComplete
+        assertEquals("provider unavailable", event.text)
+        assertEquals("error", event.status)
+    }
+
+    @Test
     fun parsesNestedApprovalDescription() {
         val frame = """{"method":"event","params":{"type":"approval.request","payload":{"command":"rm file","description":"Delete the file?"}}}"""
         val event = SidecarFrameParser.parse(frame)
@@ -149,6 +158,25 @@ class SidecarFrameParserTest {
             """{"method":"event","params":{"type":"secret.expire","session_id":"s1","payload":{"request_id":"r1"}}}""",
         ) as HermesSideEvent.PromptExpired
         assertEquals("r1", expired.requestId)
+    }
+
+    @Test
+    fun parsesBackgroundCompletion() {
+        val event = SidecarFrameParser.parse(
+            """{"method":"event","params":{"type":"background.complete","session_id":"s1","payload":{"task_id":"bg_123","text":"Report ready"}}}""",
+        ) as HermesSideEvent.BackgroundComplete
+        assertEquals("s1", event.sessionId)
+        assertEquals("bg_123", event.taskId)
+        assertEquals("Report ready", event.text)
+        assertEquals(false, event.failed)
+    }
+
+    @Test
+    fun detectsFailedBackgroundCompletion() {
+        val event = SidecarFrameParser.parse(
+            """{"type":"background.complete","session_id":"s1","payload":{"task_id":"bg_123","text":"error: unavailable"}}""",
+        ) as HermesSideEvent.BackgroundComplete
+        assertEquals(true, event.failed)
     }
 
     /** JSON-RPC result responses (id + result, no method/type) are not events. */
