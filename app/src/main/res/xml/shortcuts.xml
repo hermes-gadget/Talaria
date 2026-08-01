@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Launcher long-press shortcuts (Android ShortcutManager, static).
+  Each uses an implicit talaria:// VIEW intent so it resolves to MainActivity's
+  deep-link intent-filter regardless of applicationId suffix (debug vs release).
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="new_chat"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_chat"
+        android:shortcutShortLabel="@string/shortcut_chat_short"
+        android:shortcutLongLabel="@string/shortcut_chat_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="talaria://chat" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="status"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_status"
+        android:shortcutShortLabel="@string/shortcut_status_short"
+        android:shortcutLongLabel="@string/shortcut_status_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="talaria://status" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="activity"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_activity"
+        android:shortcutShortLabel="@string/shortcut_activity_short"
+        android:shortcutLongLabel="@string/shortcut_activity_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="talaria://activity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="manage"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_manage"
+        android:shortcutShortLabel="@string/shortcut_manage_short"
+        android:shortcutLongLabel="@string/shortcut_manage_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="talaria://manage" />
+    </shortcut>
+</shortcuts>

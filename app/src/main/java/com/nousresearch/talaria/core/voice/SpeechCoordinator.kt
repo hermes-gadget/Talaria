@@ -122,6 +122,14 @@ class SpeechCoordinator(
             SpeechRecognizer.ERROR_NO_MATCH -> "No speech match"
             SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recognizer busy"
             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission required"
+            // ERROR_LANGUAGE_UNAVAILABLE (13) / ERROR_LANGUAGE_NOT_SUPPORTED (12) are
+            // API 33+ codes; match the raw ints so we stay compilable at minSdk 28.
+            // Common when no on-device speech pack is installed (e.g. a fresh device
+            // or emulator). We don't silently fall back to cloud — that would break
+            // the offline-by-default privacy promise — so point the user at both fixes.
+            12, 13 ->
+                "On-device speech pack unavailable — install it in Settings › System › " +
+                    "Languages & input › On-device recognition, or enable cloud STT in You"
             else -> "STT error $error"
         }
 

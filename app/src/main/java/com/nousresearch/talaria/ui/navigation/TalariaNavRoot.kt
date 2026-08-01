@@ -114,6 +114,23 @@ fun TalariaNavRoot(
                 val id = link.substringAfter("session/").substringBefore('?')
                 navController.navigate("session/$id")
             }
+            // Launcher long-press shortcuts (res/xml/shortcuts.xml).
+            link.contains("status") -> {
+                currentTop = TopDest.Manage.route
+                navController.navigate(Routes.STATUS)
+            }
+            link.contains("activity") -> {
+                currentTop = TopDest.Activity.route
+                navController.navigate(TopDest.Activity.route) { launchSingleTop = true }
+            }
+            link.contains("manage") -> {
+                currentTop = TopDest.Manage.route
+                navController.navigate(TopDest.Manage.route) { launchSingleTop = true }
+            }
+            link.contains("chat") -> {
+                currentTop = TopDest.Chats.route
+                navController.navigate(Routes.chat()) { launchSingleTop = true }
+            }
             else -> navController.navigate(Routes.chat())
         }
         onDeepLinkConsumed()

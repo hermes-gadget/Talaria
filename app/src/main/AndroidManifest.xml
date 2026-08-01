@@ -38,6 +38,9 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -51,6 +54,9 @@
                 <data android:scheme="talaria" android:host="session" />
                 <data android:scheme="talaria" android:host="pairing" />
                 <data android:scheme="talaria" android:host="connect" />
+                <data android:scheme="talaria" android:host="status" />
+                <data android:scheme="talaria" android:host="activity" />
+                <data android:scheme="talaria" android:host="manage" />
             </intent-filter>
         </activity>
 

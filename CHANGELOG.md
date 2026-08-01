@@ -22,6 +22,11 @@ All notable changes to Talaria are documented here.
   was not enough). `SpeechRecognizer` is created on the main looper, continuous
   restarts are delayed, and transient `ERROR_CLIENT` / busy are retried with a
   clear message when offline speech isn't available.
+- **STT "error 13" now actionable:** missing on-device language pack
+  (`ERROR_LANGUAGE_UNAVAILABLE` / `ERROR_LANGUAGE_NOT_SUPPORTED`) previously showed a
+  cryptic "STT error 13". It now explains the two fixes — install the on-device speech
+  pack, or enable cloud STT in You — without silently falling back to cloud (which would
+  break the offline-by-default privacy promise).
 - **Chat stuck Disconnected after closing the app:** dead PTY tabs are reopened on
   foreground (`repeatOnLifecycle`) and via tap-to-reconnect, resuming the prior
   Hermes session id when known.
@@ -89,6 +94,10 @@ All notable changes to Talaria are documented here.
   top bar opens a fuzzy-filtered quick-jump sheet over every Manage destination
   (matches title, subtitle or section); tap a result to navigate. Reaches any
   settings screen in two taps.
+- **Launcher app-icon shortcuts (roadmap 15.7):** long-press the Talaria icon for
+  **New chat / Status / Activity / Manage**. Static `res/xml/shortcuts.xml` using
+  implicit `talaria://` VIEW intents (build-variant-safe, no hardcoded applicationId),
+  routed in `TalariaNavRoot` with the correct bottom-nav highlight.
 - **Files pane (roadmap 15.1 — Desktop parity):** new Manage → System → **Files**
   browser over `/api/fs`. Starts at the gateway's default cwd, lists directories
   first, and navigates in/out with an up button + `cwd` shortcut; tapping a file
