@@ -20,7 +20,9 @@ package com.hermesgadget.talaria.ui.navigation
 import android.net.Uri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.ManageAccounts
@@ -34,6 +36,7 @@ import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
+import androidx.compose.material3.adaptive.navigationsuite.rememberNavigationSuiteScaffoldState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -165,7 +168,15 @@ fun TalariaNavRoot(
     // navigation bar and NavigationSuiteType.None during recomposition can
     // invalidate NavigationSuiteScaffold's remembered slot structure and crash
     // with a ComposableLambdaImpl ClassCastException on real Android devices.
-    // The resized window already keeps the composer above the keyboard.
+    // Instead, hide the nav suite through its official state API: the suite
+    // animates the bar to zero height, so content (and the chat composer with
+    // its imePadding) reaches the keyboard instead of floating above the
+    // reserved nav-bar slot.
+    val navSuiteState = rememberNavigationSuiteScaffoldState()
+    val imeVisible = WindowInsets.isImeVisible
+    LaunchedEffect(imeVisible) {
+        if (imeVisible) navSuiteState.hide() else navSuiteState.show()
+    }
     val navSuiteType =
         NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(currentWindowAdaptiveInfo())
 
@@ -175,6 +186,7 @@ fun TalariaNavRoot(
     ) {
     NavigationSuiteScaffold(
         layoutType = navSuiteType,
+        state = navSuiteState,
         containerColor = MaterialTheme.colorScheme.background,
         contentColor = MaterialTheme.colorScheme.onBackground,
         navigationSuiteColors = NavigationSuiteDefaults.colors(
