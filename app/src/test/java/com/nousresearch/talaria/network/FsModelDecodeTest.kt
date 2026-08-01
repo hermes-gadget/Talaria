@@ -54,11 +54,21 @@ class FsModelDecodeTest {
     fun `decodes read-text with metadata`() {
         val file = json.decodeFromString(
             FsTextFile.serializer(),
-            """{"binary":false,"byteSize":40894,"language":"text","mimeType":"application/octet-stream","path":"/x/y.txt","text":"hello"}""",
+            """{"binary":false,"byteSize":40894,"language":"text","mimeType":"application/octet-stream","path":"/x/y.txt","text":"hello","truncated":true}""",
         )
         assertEquals("/x/y.txt", file.path)
         assertEquals("hello", file.text)
         assertEquals(40894L, file.byteSize)
         assertFalse(file.binary)
+        assertTrue(file.truncated)
+    }
+
+    @Test
+    fun `decodes successful filesystem error envelope`() {
+        val res = json.decodeFromString(
+            FsListResponse.serializer(),
+            """{"entries":[],"error":"EACCES"}""",
+        )
+        assertEquals("EACCES", res.error)
     }
 }

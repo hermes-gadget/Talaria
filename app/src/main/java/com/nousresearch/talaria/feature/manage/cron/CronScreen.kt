@@ -41,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.nousresearch.talaria.TalariaApp
+import com.nousresearch.talaria.core.util.formatHermesTimestamp
 import com.nousresearch.talaria.domain.model.CronJob
 import com.nousresearch.talaria.ui.components.ScreenScaffold
 import kotlinx.coroutines.launch
@@ -54,6 +55,7 @@ fun CronScreen() {
     var editJob by remember { mutableStateOf<CronJob?>(null) }
     var editPrompt by remember { mutableStateOf("") }
     var editSchedule by remember { mutableStateOf("") }
+    var deleteJob by remember { mutableStateOf<CronJob?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
@@ -104,7 +106,8 @@ fun CronScreen() {
                         Text(job.prompt ?: "")
                         Text("${job.schedule} · ${job.state} · ${job.deliver}")
                         Text(
-                            "last=${job.last_run ?: "—"} · next=${job.next_run ?: "—"}",
+                            "last=${formatHermesTimestamp(job.last_run) ?: "—"} · " +
+                                "next=${formatHermesTimestamp(job.next_run) ?: "—"}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -117,7 +120,7 @@ fun CronScreen() {
                             TextButton(onClick = { scope.launch { repo.pauseCron(job.id); reload() } }) { Text("Pause") }
                             TextButton(onClick = { scope.launch { repo.resumeCron(job.id); reload() } }) { Text("Resume") }
                             TextButton(onClick = { scope.launch { repo.triggerCron(job.id); reload() } }) { Text("Run") }
-                            TextButton(onClick = { scope.launch { repo.deleteCron(job.id); reload() } }) { Text("Delete") }
+                            TextButton(onClick = { deleteJob = job }) { Text("Delete") }
                         }
                     }
                 }
@@ -160,6 +163,25 @@ fun CronScreen() {
             dismissButton = {
                 TextButton(onClick = { editJob = null }) { Text("Cancel") }
             },
+        )
+    }
+
+    deleteJob?.let { job ->
+        AlertDialog(
+            onDismissRequest = { deleteJob = null },
+            title = { Text("Delete scheduled job?") },
+            text = { Text("Permanently delete '${job.name ?: job.id}'?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteJob = null
+                    scope.launch {
+                        repo.deleteCron(job.id)
+                            .onSuccess { reload() }
+                            .onFailure { message = it.message }
+                    }
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { deleteJob = null }) { Text("Cancel") } },
         )
     }
 }

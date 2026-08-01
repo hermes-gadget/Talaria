@@ -28,6 +28,8 @@ data class FsEntry(
 @Serializable
 data class FsListResponse(
     val entries: List<FsEntry> = emptyList(),
+    /** Hermes reports filesystem failures in a successful JSON response. */
+    val error: String? = null,
 )
 
 /** Default working directory + git branch from `/api/fs/default-cwd`. */
@@ -46,4 +48,5 @@ data class FsTextFile(
     val byteSize: Long = 0,
     val language: String? = null,
     val mimeType: String? = null,
+    val truncated: Boolean = false,
 )

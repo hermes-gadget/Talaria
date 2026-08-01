@@ -19,6 +19,7 @@ package com.nousresearch.talaria.core.network
 import com.nousresearch.talaria.domain.model.ActiveProfileResponse
 import com.nousresearch.talaria.domain.model.AnalyticsUsage
 import com.nousresearch.talaria.domain.model.AuthMeResponse
+import com.nousresearch.talaria.domain.model.AuthProvidersResponse
 import com.nousresearch.talaria.domain.model.ConfigSchemaResponse
 import com.nousresearch.talaria.domain.model.CronJob
 import com.nousresearch.talaria.domain.model.EnvVarInfo
@@ -26,8 +27,12 @@ import com.nousresearch.talaria.domain.model.FsCwd
 import com.nousresearch.talaria.domain.model.FsListResponse
 import com.nousresearch.talaria.domain.model.FsTextFile
 import com.nousresearch.talaria.domain.model.LearningGraph
+import com.nousresearch.talaria.domain.model.LearningNodeDetail
+import com.nousresearch.talaria.domain.model.ActionStatus
 import com.nousresearch.talaria.domain.model.LogLinesResponse
 import com.nousresearch.talaria.domain.model.McpServersResponse
+import com.nousresearch.talaria.domain.model.McpOAuthFlow
+import com.nousresearch.talaria.domain.model.McpCatalogResponse
 import com.nousresearch.talaria.domain.model.MessagingPlatformsResponse
 import com.nousresearch.talaria.domain.model.OkResponse
 import com.nousresearch.talaria.domain.model.PairingResponse
@@ -36,15 +41,15 @@ import com.nousresearch.talaria.domain.model.SessionMessagesResponse
 import com.nousresearch.talaria.domain.model.SessionSummary
 import com.nousresearch.talaria.domain.model.SessionsPage
 import com.nousresearch.talaria.domain.model.SkillInfo
+import com.nousresearch.talaria.domain.model.HubSkillSearchResponse
 import com.nousresearch.talaria.domain.model.StatusResponse
+import com.nousresearch.talaria.domain.model.PasswordLoginRequest
+import com.nousresearch.talaria.domain.model.PasswordLoginResponse
 import com.nousresearch.talaria.domain.model.SystemStats
 import com.nousresearch.talaria.domain.model.WebhooksResponse
 import com.nousresearch.talaria.domain.model.WsTicketResponse
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import okhttp3.RequestBody
-import okhttp3.ResponseBody
-import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
@@ -58,7 +63,7 @@ import retrofit2.http.QueryMap
 
 /**
  * Retrofit surface mapped to Hermes Web Dashboard /api/ endpoints.
- * Baseline: hermes-agent dashboard v0.17+ (session token / gated auth).
+ * Baseline: Hermes Agent v0.19.1 dashboard API (session token / gated auth).
  */
 interface HermesApi {
     @GET("api/status")
@@ -66,6 +71,9 @@ interface HermesApi {
 
     @GET("api/auth/me")
     suspend fun authMe(): AuthMeResponse
+
+    @GET("api/auth/providers")
+    suspend fun authProviders(): AuthProvidersResponse
 
     @POST("api/auth/ws-ticket")
     suspend fun wsTicket(): WsTicketResponse
@@ -156,6 +164,31 @@ interface HermesApi {
     @PUT("api/skills/toggle")
     suspend fun toggleSkill(@Body body: JsonObject, @Query("profile") profile: String? = null): OkResponse
 
+    @GET("api/skills/hub/search")
+    suspend fun searchSkillHub(
+        @Query("q") query: String,
+        @Query("limit") limit: Int = 30,
+        @Query("profile") profile: String? = null,
+    ): HubSkillSearchResponse
+
+    @GET("api/skills/hub/preview")
+    suspend fun previewHubSkill(
+        @Query("identifier") identifier: String,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
+
+    @GET("api/skills/hub/scan")
+    suspend fun scanHubSkill(
+        @Query("identifier") identifier: String,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
+
+    @POST("api/skills/hub/install")
+    suspend fun installHubSkill(@Body body: JsonObject, @Query("profile") profile: String? = null): JsonElement
+
+    @POST("api/skills/hub/uninstall")
+    suspend fun uninstallHubSkill(@Body body: JsonObject, @Query("profile") profile: String? = null): JsonElement
+
     @GET("api/mcp/servers")
     suspend fun getMcpServers(@Query("profile") profile: String? = null): McpServersResponse
 
@@ -170,6 +203,21 @@ interface HermesApi {
 
     @POST("api/mcp/servers/{name}/test")
     suspend fun testMcp(@Path("name") name: String, @Query("profile") profile: String? = null): JsonElement
+
+    @POST("api/mcp/servers/{name}/auth")
+    suspend fun startMcpOAuth(@Path("name") name: String, @Query("profile") profile: String? = null): McpOAuthFlow
+
+    @GET("api/mcp/oauth/flows/{id}")
+    suspend fun getMcpOAuthFlow(@Path("id") id: String): McpOAuthFlow
+
+    @GET("api/mcp/catalog")
+    suspend fun getMcpCatalog(@Query("profile") profile: String? = null): McpCatalogResponse
+
+    @POST("api/mcp/catalog/install")
+    suspend fun installMcpCatalogEntry(
+        @Body body: JsonObject,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
 
     @GET("api/messaging/platforms")
     suspend fun getMessagingPlatforms(@Query("profile") profile: String? = null): MessagingPlatformsResponse
@@ -213,8 +261,29 @@ interface HermesApi {
     @GET("api/profiles/active")
     suspend fun getActiveProfile(): ActiveProfileResponse
 
-    @PUT("api/profiles/active")
+    @POST("api/profiles/active")
     suspend fun setActiveProfile(@Body body: JsonObject): ActiveProfileResponse
+
+    @POST("api/profiles")
+    suspend fun createProfile(@Body body: JsonObject): JsonElement
+
+    @PATCH("api/profiles/{name}")
+    suspend fun renameProfile(@Path("name") name: String, @Body body: JsonObject): JsonElement
+
+    @DELETE("api/profiles/{name}")
+    suspend fun deleteProfile(@Path("name") name: String): JsonElement
+
+    @GET("api/profiles/{name}/soul")
+    suspend fun getProfileSoul(@Path("name") name: String): JsonElement
+
+    @PUT("api/profiles/{name}/soul")
+    suspend fun updateProfileSoul(@Path("name") name: String, @Body body: JsonObject): JsonElement
+
+    @PUT("api/profiles/{name}/description")
+    suspend fun updateProfileDescription(@Path("name") name: String, @Body body: JsonObject): JsonElement
+
+    @POST("api/profiles/{name}/describe-auto")
+    suspend fun describeProfileAuto(@Path("name") name: String, @Body body: JsonObject): JsonElement
 
     @GET("api/system/stats")
     suspend fun getSystemStats(): SystemStats
@@ -234,8 +303,23 @@ interface HermesApi {
     @GET("api/memory")
     suspend fun getMemory(): JsonElement
 
+    @PUT("api/memory/provider")
+    suspend fun setMemoryProvider(@Body body: JsonObject): JsonElement
+
+    @POST("api/memory/reset")
+    suspend fun resetMemory(@Body body: JsonObject): JsonElement
+
     @GET("api/curator")
     suspend fun getCurator(): JsonElement
+
+    @PUT("api/curator/paused")
+    suspend fun setCuratorPaused(@Body body: JsonObject): JsonElement
+
+    @POST("api/curator/run")
+    suspend fun runCurator(@Body body: JsonObject = JsonObject(emptyMap())): JsonElement
+
+    @GET("api/actions/{name}/status")
+    suspend fun getActionStatus(@Path("name") name: String, @Query("lines") lines: Int = 200): ActionStatus
 
     @POST("api/ops/doctor")
     suspend fun runDoctor(): JsonElement
@@ -255,7 +339,7 @@ interface HermesApi {
     @GET("api/model/options")
     suspend fun getModelOptions(@Query("profile") profile: String? = null): JsonElement
 
-    @PUT("api/model/set")
+    @POST("api/model/set")
     suspend fun setModel(@Body body: JsonObject, @Query("profile") profile: String? = null): JsonElement
 
     @GET("api/tools/toolsets")
@@ -268,9 +352,9 @@ interface HermesApi {
         @Query("profile") profile: String? = null,
     ): JsonElement
 
-    /** Password login for basic auth provider (form-encoded auth/password-login). */
+    /** Password-provider login. A successful response mints dashboard session cookies. */
     @POST("auth/password-login")
-    suspend fun passwordLogin(@Body body: RequestBody): Response<ResponseBody>
+    suspend fun passwordLogin(@Body body: PasswordLoginRequest): PasswordLoginResponse
 
     // --- Files pane (Desktop parity 15.1) ---
 
@@ -289,6 +373,12 @@ interface HermesApi {
         @Query("profile") profile: String? = null,
     ): FsTextFile
 
+    @POST("api/fs/write-text")
+    suspend fun fsWriteText(
+        @Body body: JsonObject,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
+
     @GET("api/fs/git-root")
     suspend fun fsGitRoot(
         @Query("path") path: String,
@@ -299,4 +389,22 @@ interface HermesApi {
 
     @GET("api/learning/graph")
     suspend fun getLearningGraph(@Query("profile") profile: String? = null): LearningGraph
+
+    @GET("api/learning/node")
+    suspend fun getLearningNode(
+        @Query("id") id: String,
+        @Query("profile") profile: String? = null,
+    ): LearningNodeDetail
+
+    @HTTP(method = "DELETE", path = "api/learning/node", hasBody = true)
+    suspend fun deleteLearningNode(
+        @Body body: JsonObject,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
+
+    @PUT("api/learning/node")
+    suspend fun updateLearningNode(
+        @Body body: JsonObject,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
 }

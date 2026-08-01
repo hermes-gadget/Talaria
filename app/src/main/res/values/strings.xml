@@ -1,10 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Talaria</string>
-    <string name="nav_chats">Chats</string>
-    <string name="nav_activity">Activity</string>
-    <string name="nav_manage">Manage</string>
-    <string name="nav_you">You</string>
     <string name="widget_status_label">Hermes status</string>
     <string name="qs_tile_label">Hermes</string>
     <string name="notif_channel_replies">Agent replies</string>
@@ -18,7 +14,6 @@
     <string name="notif_action_open">Open</string>
     <string name="notif_action_dismiss">Dismiss</string>
     <string name="notif_action_approve">Approve</string>
-    <string name="privacy_zero_telemetry">Talaria sends no telemetry by default.</string>
     <string name="shortcut_chat_short">New chat</string>
     <string name="shortcut_chat_long">Start a new chat</string>
     <string name="shortcut_status_short">Status</string>

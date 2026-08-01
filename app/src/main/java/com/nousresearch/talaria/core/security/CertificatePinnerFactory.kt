@@ -19,12 +19,26 @@ package com.nousresearch.talaria.core.security
 
 import okhttp3.CertificatePinner
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import java.util.Base64
 
 object CertificatePinnerFactory {
     fun forPin(baseUrl: String, sha256Pin: String): CertificatePinner {
         val host = baseUrl.toHttpUrlOrNull()?.host
             ?: baseUrl.removePrefix("https://").removePrefix("http://").substringBefore('/')
-        val pin = if (sha256Pin.startsWith("sha256/")) sha256Pin else "sha256/$sha256Pin"
+        val pin = normalizePin(sha256Pin)
         return CertificatePinner.Builder().add(host, pin).build()
+    }
+
+    internal fun normalizePin(raw: String): String {
+        val value = raw.trim()
+        val payload = value.removePrefix("sha256/")
+        require(payload.isNotBlank() && !value.startsWith("sha1/")) {
+            "TLS pin must be a SHA-256 certificate pin"
+        }
+        val decoded = runCatching { Base64.getDecoder().decode(payload) }.getOrNull()
+        require(decoded?.size == 32) {
+            "TLS pin must contain a base64-encoded 32-byte SHA-256 digest"
+        }
+        return "sha256/$payload"
     }
 }

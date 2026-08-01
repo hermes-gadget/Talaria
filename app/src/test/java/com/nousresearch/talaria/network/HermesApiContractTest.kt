@@ -24,12 +24,18 @@ import com.nousresearch.talaria.domain.model.AnalyticsUsage
 import com.nousresearch.talaria.domain.model.ConfigSchemaResponse
 import com.nousresearch.talaria.domain.model.CronJob
 import com.nousresearch.talaria.domain.model.McpServersResponse
+import com.nousresearch.talaria.domain.model.McpCatalogResponse
 import com.nousresearch.talaria.domain.model.MessagingPlatformsResponse
+import com.nousresearch.talaria.domain.model.PasswordLoginRequest
 import com.nousresearch.talaria.domain.model.SessionsPage
 import com.nousresearch.talaria.domain.model.SkillInfo
 import com.nousresearch.talaria.domain.model.StatusResponse
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -101,6 +107,39 @@ class HermesApiContractTest {
         val req = server.takeRequest()
         assertEquals("PUT", req.method)
         assertTrue(req.path!!.startsWith("/api/config"))
+    }
+
+    @Test
+    fun passwordLoginUsesCurrentJsonContract() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"ok":true,"next":"/"}"""))
+        api.passwordLogin(PasswordLoginRequest("local-users", "alice", "secret"))
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/auth/password-login", request.path)
+        val body = json.parseToJsonElement(request.body.readUtf8()).jsonObject
+        assertEquals("local-users", body["provider"]?.jsonPrimitive?.content)
+        assertEquals("alice", body["username"]?.jsonPrimitive?.content)
+        assertEquals("secret", body["password"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun mcpCatalogDecodesAndInstallUsesCurrentContract() = runBlocking {
+        server.enqueue(MockResponse().setBody(
+            """{"entries":[{"name":"github","description":"GitHub tools","source":"nous","transport":"stdio","auth_type":"env","required_env":[{"name":"GITHUB_TOKEN","prompt":"Token","required":true}],"command":"uvx","args":["mcp-github"],"needs_install":false,"installed":false,"enabled":false}],"diagnostics":[]}""",
+        ))
+        val catalog: McpCatalogResponse = api.getMcpCatalog()
+        assertEquals("GITHUB_TOKEN", catalog.entries.single().required_env.single().name)
+        assertEquals("/api/mcp/catalog", server.takeRequest().path)
+
+        server.enqueue(MockResponse().setBody("""{"ok":true,"name":"github","background":false}"""))
+        api.installMcpCatalogEntry(buildJsonObject {
+            put("name", "github")
+            put("enable", true)
+        })
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/mcp/catalog/install", request.path)
+        assertEquals("github", json.parseToJsonElement(request.body.readUtf8()).jsonObject["name"]?.jsonPrimitive?.content)
     }
 
     @Test

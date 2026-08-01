@@ -18,6 +18,7 @@
 package com.nousresearch.talaria.core.notifications
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -27,22 +28,39 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 import com.nousresearch.talaria.MainActivity
 import com.nousresearch.talaria.R
+import com.nousresearch.talaria.core.data.prefs.SecureConnectionStore
 import com.nousresearch.talaria.core.data.prefs.SettingsStore
+import com.nousresearch.talaria.domain.model.effectiveManagementProfile
 
 class TalariaNotifier(
     private val context: Context,
     private val settings: SettingsStore,
+    private val connections: SecureConnectionStore,
 ) {
     fun notifyReply(title: String, body: String, sessionId: String? = null) {
         if (!settings.notificationsEnabled || !settings.notifyReplies) return
+        val scope = connections.activeProfile()
         show(
             channel = NotificationChannels.REPLIES,
-            id = (sessionId ?: title).hashCode(),
+            id = "${scope?.id}|${scope?.managementProfile}|${sessionId ?: title}".hashCode(),
             title = title,
             body = body,
-            deepLink = sessionId?.let { "talaria://session/$it" } ?: "talaria://chat",
+            deepLink = sessionId?.let {
+                android.net.Uri.Builder()
+                    .scheme("talaria")
+                    .authority("session")
+                    .appendPath(it)
+                    .apply {
+                        scope?.id?.let { id -> appendQueryParameter("connection", id) }
+                        scope?.effectiveManagementProfile()
+                            ?.let { profile -> appendQueryParameter("profile", profile) }
+                    }
+                    .build()
+                    .toString()
+            } ?: "talaria://chat",
             actionableReply = true,
         )
     }
@@ -64,12 +82,22 @@ class TalariaNotifier(
         code: String? = null,
     ) {
         if (!settings.notificationsEnabled || !settings.notifyPairing) return
+        val scope = connections.activeProfile()
+        val pairingLink = android.net.Uri.Builder()
+            .scheme("talaria")
+            .authority("pairing")
+            .apply {
+                scope?.id?.let { appendQueryParameter("connection", it) }
+                scope?.effectiveManagementProfile()?.let { appendQueryParameter("profile", it) }
+            }
+            .build()
+            .toString()
         show(
             channel = NotificationChannels.PAIRING,
-            id = body.hashCode(),
+            id = "${scope?.id}|${scope?.managementProfile}|$body".hashCode(),
             title = title,
             body = body,
-            deepLink = "talaria://pairing",
+            deepLink = pairingLink,
             approvePairing = if (platform != null && code != null) platform to code else null,
         )
     }
@@ -84,6 +112,10 @@ class TalariaNotifier(
         show(NotificationChannels.TASKS, title.hashCode(), title, body, "talaria://chat")
     }
 
+    // Permission is checked immediately below. Keep the SecurityException guard as
+    // well because notification permission/app-op state can change between the
+    // check and the binder call.
+    @SuppressLint("MissingPermission")
     private fun show(
         channel: String,
         id: Int,
@@ -96,7 +128,7 @@ class TalariaNotifier(
         if (!hasPermission()) return
         val openIntent = Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
-            data = android.net.Uri.parse(deepLink)
+            data = deepLink.toUri()
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val openPi = PendingIntent.getActivity(
@@ -132,6 +164,10 @@ class TalariaNotifier(
                     action = NotificationActionReceiver.ACTION_REPLY
                     putExtra(NotificationActionReceiver.EXTRA_NOTIF_ID, id)
                     putExtra(NotificationActionReceiver.EXTRA_DEEP_LINK, deepLink)
+                    connections.activeProfile()?.let { profile ->
+                        putExtra(NotificationActionReceiver.EXTRA_CONNECTION_ID, profile.id)
+                        putExtra(NotificationActionReceiver.EXTRA_MANAGEMENT_PROFILE, profile.managementProfile)
+                    }
                 },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
             )
@@ -151,12 +187,20 @@ class TalariaNotifier(
                     putExtra(NotificationActionReceiver.EXTRA_NOTIF_ID, id)
                     putExtra(NotificationActionReceiver.EXTRA_PAIR_PLATFORM, platform)
                     putExtra(NotificationActionReceiver.EXTRA_PAIR_CODE, code)
+                    connections.activeProfile()?.let { profile ->
+                        putExtra(NotificationActionReceiver.EXTRA_CONNECTION_ID, profile.id)
+                        putExtra(NotificationActionReceiver.EXTRA_MANAGEMENT_PROFILE, profile.managementProfile)
+                    }
                 },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
             builder.addAction(0, context.getString(R.string.notif_action_approve), approvePi)
         }
-        NotificationManagerCompat.from(context).notify(id, builder.build())
+        try {
+            NotificationManagerCompat.from(context).notify(id, builder.build())
+        } catch (_: SecurityException) {
+            // Permission was revoked while the notification was being built.
+        }
     }
 
     private fun hasPermission(): Boolean {

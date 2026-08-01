@@ -17,6 +17,7 @@
 package com.nousresearch.talaria
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -38,6 +39,7 @@ import com.nousresearch.talaria.ui.theme.TalariaTheme
 
 class MainActivity : ComponentActivity() {
     private var shareText by mutableStateOf<String?>(null)
+    private var shareImage by mutableStateOf<Uri?>(null)
     private var deepLink by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,8 +61,12 @@ class MainActivity : ComponentActivity() {
                 SystemBarsForTheme(this)
                 TalariaNavRoot(
                     shareText = shareText,
+                    shareImage = shareImage,
                     deepLink = deepLink,
-                    onShareConsumed = { shareText = null },
+                    onShareConsumed = {
+                        shareText = null
+                        shareImage = null
+                    },
                     onDeepLinkConsumed = { deepLink = null },
                 )
             }
@@ -75,8 +81,15 @@ class MainActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent?) {
         when (intent?.action) {
             Intent.ACTION_SEND -> {
-                if (intent.type?.startsWith("text/") == true) {
-                    shareText = intent.getStringExtra(Intent.EXTRA_TEXT)
+                shareText = intent.getStringExtra(Intent.EXTRA_TEXT)
+                shareImage = null
+                if (intent.type?.startsWith("image/") == true) {
+                    shareImage = if (android.os.Build.VERSION.SDK_INT >= 33) {
+                        intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(Intent.EXTRA_STREAM)
+                    }
                 }
             }
             Intent.ACTION_VIEW -> deepLink = intent.data?.toString()

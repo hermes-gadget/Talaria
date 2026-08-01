@@ -17,11 +17,11 @@
 package com.nousresearch.talaria.core.network
 
 import com.nousresearch.talaria.core.data.prefs.SecureConnectionStore
+import com.nousresearch.talaria.domain.model.effectiveManagementProfile
 import com.nousresearch.talaria.core.util.AnsiStripper
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -48,6 +48,7 @@ class PtyWebSocketSession(
     private val connectionStore: SecureConnectionStore,
     private val wsAuth: WsAuthHelper,
 ) {
+    @Volatile
     private var socket: WebSocket? = null
     var channel: String = UUID.randomUUID().toString()
         private set
@@ -65,24 +66,26 @@ class PtyWebSocketSession(
                 close()
                 return@callbackFlow
             }
-        val base = profile.baseUrl.trimEnd('/')
-        val wsBase = when {
-            base.startsWith("https://") -> "wss://" + base.removePrefix("https://")
-            base.startsWith("http://") -> "ws://" + base.removePrefix("http://")
-            else -> "ws://$base"
+        // callbackFlow's builder is already suspendable. Waiting directly keeps
+        // token discovery and ticket minting off the main thread instead of
+        // freezing Compose during a remote HTTP round trip.
+        val auth = wsAuth.authQueryParam()
+        val url = HermesWebSocketUrlBuilder.build(
+            baseUrl = profile.baseUrl,
+            endpoint = "api/pty",
+            authQuery = auth,
+            query = listOf(
+                "channel" to channelId,
+                "profile" to profile.effectiveManagementProfile(),
+                "resume" to resumeSessionId,
+                "cols" to cols.toString(),
+                "rows" to rows.toString(),
+            ),
+        ) ?: run {
+            trySend(PtyEvent.Failure("Invalid dashboard URL"))
+            close()
+            return@callbackFlow
         }
-        val auth = runBlocking { wsAuth.authQueryParam() }
-        val params = buildList {
-            if (auth.isNotBlank()) add(auth)
-            add("channel=$channelId")
-            if (profile.managementProfile.isNotBlank()) {
-                add("profile=${profile.managementProfile}")
-            }
-            if (!resumeSessionId.isNullOrBlank()) add("resume=$resumeSessionId")
-            add("cols=$cols")
-            add("rows=$rows")
-        }.joinToString("&")
-        val url = "$wsBase/api/pty?$params"
         val key = UUID.randomUUID().toString()
         val request = Request.Builder().url(url).build()
         val listener = object : WebSocketListener() {

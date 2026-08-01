@@ -37,6 +37,10 @@ data class FilesUiState(
     val error: String? = null,
     val preview: FsTextFile? = null,
     val previewLoading: Boolean = false,
+    val editing: Boolean = false,
+    val editDraft: String = "",
+    val saving: Boolean = false,
+    val previewError: String? = null,
 )
 
 /**
@@ -86,7 +90,17 @@ class FilesViewModel(
         _ui.update { it.copy(previewLoading = true, preview = null) }
         viewModelScope.launch {
             repo.fsReadText(entry.path).fold(
-                onSuccess = { file -> _ui.update { it.copy(previewLoading = false, preview = file) } },
+                onSuccess = { file ->
+                    _ui.update {
+                        it.copy(
+                            previewLoading = false,
+                            preview = file,
+                            editing = false,
+                            editDraft = file.text,
+                            previewError = null,
+                        )
+                    }
+                },
                 onFailure = { e ->
                     _ui.update {
                         it.copy(
@@ -99,7 +113,43 @@ class FilesViewModel(
         }
     }
 
-    fun closePreview() = _ui.update { it.copy(preview = null) }
+    fun beginEdit() = _ui.update { state ->
+        val file = state.preview
+        if (file == null || file.binary || file.truncated) state
+        else state.copy(editing = true, editDraft = file.text, previewError = null)
+    }
+
+    fun updateDraft(value: String) = _ui.update { it.copy(editDraft = value) }
+
+    fun cancelEdit() = _ui.update { it.copy(editing = false, editDraft = it.preview?.text.orEmpty()) }
+
+    fun saveEdit() {
+        val state = _ui.value
+        val file = state.preview ?: return
+        _ui.update { it.copy(saving = true, previewError = null) }
+        viewModelScope.launch {
+            repo.fsWriteText(file.path, state.editDraft, file.text).fold(
+                onSuccess = { saved ->
+                    _ui.update {
+                        it.copy(
+                            preview = saved,
+                            editDraft = saved.text,
+                            editing = false,
+                            saving = false,
+                            previewError = null,
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    _ui.update { it.copy(saving = false, previewError = error.message ?: "Save failed") }
+                },
+            )
+        }
+    }
+
+    fun closePreview() = _ui.update {
+        it.copy(preview = null, editing = false, editDraft = "", previewError = null)
+    }
 
     companion object {
         fun factory() = object : ViewModelProvider.Factory {

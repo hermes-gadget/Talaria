@@ -20,6 +20,7 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.nousresearch.talaria.TalariaApp
+import com.nousresearch.talaria.domain.model.scopeId
 
 /**
  * Doze-aware periodic poll of Hermes status / pairing / cron for notifications.
@@ -32,56 +33,82 @@ class HermesSyncWorker(
     override suspend fun doWork(): Result {
         val container = TalariaApp.instance.container
         if (!container.settingsStore.backgroundSyncEnabled) return Result.success()
-        if (container.connectionStore.activeProfile() == null) return Result.success()
+        val profile = container.connectionStore.activeProfile() ?: return Result.success()
+        val scopeId = profile.scopeId()
         return try {
             val snap = container.hermesRepository.pollForNotifications()
-            val gatewayRunning = snap.status.gateway?.running
-            if (gatewayRunning == false) {
+            val gatewayRunning = snap.status.gateway?.running ?: snap.status.gateway_running
+            val oldGateway = container.settingsStore.syncFingerprint(scopeId, "gateway")
+            val newGateway = gatewayRunning?.let { setOf(if (it) "running" else "stopped") }.orEmpty()
+            if (gatewayRunning == false && oldGateway != newGateway) {
                 container.notifier.notifyGateway("Gateway stopped", "Hermes gateway is not running")
                 container.hermesRepository.recordActivity(
                     "gateway",
                     "Gateway stopped",
-                    "Hermes gateway is not running (pid=${snap.status.gateway?.pid})",
+                    "Hermes gateway is not running (pid=${snap.status.gateway?.pid ?: snap.status.gateway_pid})",
                 )
-            } else if (gatewayRunning == true) {
+            } else if (gatewayRunning == true && oldGateway != newGateway) {
                 container.hermesRepository.recordActivity(
                     "gateway",
                     "Gateway running",
-                    "pid=${snap.status.gateway?.pid} state=${snap.status.gateway?.state}",
+                    "pid=${snap.status.gateway?.pid ?: snap.status.gateway_pid} " +
+                        "state=${snap.status.gateway?.state ?: snap.status.gateway_state}",
                 )
             }
-            snap.pairing?.pending?.forEach { p ->
-                val body = "${p.platform}: ${p.user_name ?: p.user_id}"
-                container.notifier.notifyPairing(
-                    title = "Pairing request",
-                    body = body,
-                    platform = p.platform,
-                    code = p.code ?: p.request_id,
-                )
-                container.hermesRepository.recordActivity("pairing", "Pairing request", body)
+            if (gatewayRunning != null) {
+                container.settingsStore.setSyncFingerprint(scopeId, "gateway", newGateway)
             }
-            snap.cron.filter { it.state.equals("error", ignoreCase = true) }.forEach {
-                val body = it.name ?: it.id
-                container.notifier.notifyCron("Cron error", body)
-                container.hermesRepository.recordActivity("cron", "Cron error", body)
+
+            snap.pairing?.let { pairing ->
+                val previous = container.settingsStore.syncFingerprint(scopeId, "pairing")
+                val current = pairing.pending.associateBy { p ->
+                    "${p.platform}:${p.request_id ?: p.code ?: p.user_id}"
+                }
+                current.filterKeys { it !in previous }.values.forEach { p ->
+                    val body = "${p.platform}: ${p.user_name ?: p.user_id}"
+                    container.notifier.notifyPairing(
+                        title = "Pairing request",
+                        body = body,
+                        platform = p.platform,
+                        code = p.request_id ?: p.code,
+                    )
+                    container.hermesRepository.recordActivity("pairing", "Pairing request", body)
+                }
+                container.settingsStore.setSyncFingerprint(scopeId, "pairing", current.keys)
+            }
+
+            snap.cron?.let { jobs ->
+                val previous = container.settingsStore.syncFingerprint(scopeId, "cron_errors")
+                val current = jobs
+                    .filter { it.state.equals("error", ignoreCase = true) }
+                    .associateBy { "${it.id}:${it.last_run.orEmpty()}" }
+                current.filterKeys { it !in previous }.values.forEach {
+                    val body = it.name ?: it.id
+                    container.notifier.notifyCron("Cron error", body)
+                    container.hermesRepository.recordActivity("cron", "Cron error", body)
+                }
+                container.settingsStore.setSyncFingerprint(scopeId, "cron_errors", current.keys)
             }
             // Phase 13 offline snapshot: cache a widget-friendly summary + pairing badge.
             val gw = if (gatewayRunning == true) "GW up" else "GW down"
             val pending = snap.pairing?.pending?.size ?: 0
-            container.settingsStore.cachedStatusLine =
-                "Hermes ${snap.status.version ?: "?"} · $gw · sessions ${snap.status.active_sessions ?: 0}"
-            container.settingsStore.cachedStatusUpdatedAt = System.currentTimeMillis()
-            container.settingsStore.pendingPairingCount = pending
-            container.hermesRepository.recordActivity(
-                "sync",
-                "Background sync",
-                "status ok; pending pairing=${snap.pairing?.pending?.size ?: 0}",
+            container.settingsStore.setCachedStatusLine(
+                scopeId,
+                "Hermes ${snap.status.version ?: "?"} · $gw · sessions ${snap.status.active_sessions ?: 0}",
             )
+            container.settingsStore.setCachedStatusUpdatedAt(scopeId, System.currentTimeMillis())
+            container.settingsStore.setPendingPairingCount(scopeId, pending)
             Result.success()
         } catch (t: Throwable) {
-            container.notifier.notifyError("Sync failed", t.message ?: "unknown")
-            container.hermesRepository.recordActivity("sync", "Sync failed", t.message ?: "unknown")
-            Result.retry()
+            if (runAttemptCount == 0) {
+                container.notifier.notifyError("Sync failed", t.message ?: "unknown")
+                container.hermesRepository.recordActivity("sync", "Sync failed", t.message ?: "unknown")
+            }
+            if (runAttemptCount < MAX_RETRIES - 1) Result.retry() else Result.failure()
         }
+    }
+
+    private companion object {
+        const val MAX_RETRIES = 3
     }
 }

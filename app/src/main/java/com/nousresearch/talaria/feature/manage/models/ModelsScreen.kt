@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -55,6 +56,20 @@ import com.nousresearch.talaria.ui.components.ScreenScaffold
 fun ModelsScreen(vm: ModelsViewModel = viewModel(factory = ModelsViewModel.factory())) {
     val ui by vm.ui.collectAsStateWithLifecycle()
 
+    ui.confirmMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = vm::dismissModelConfirmation,
+            title = { Text("Confirm model") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = vm::confirmPendingModel) { Text("Use model") }
+            },
+            dismissButton = {
+                TextButton(onClick = vm::dismissModelConfirmation) { Text("Cancel") }
+            },
+        )
+    }
+
     ScreenScaffold(
         title = "Models",
         subtitle = ui.currentModel?.let { "current · $it" } ?: "providers & models",
@@ -83,7 +98,7 @@ fun ModelsScreen(vm: ModelsViewModel = viewModel(factory = ModelsViewModel.facto
                         provider = p,
                         currentModel = ui.currentModel,
                         settingModel = ui.setting,
-                        onSet = { vm.setModel(it) },
+                        onSet = { vm.setModel(p.slug, it) },
                     )
                 }
             }

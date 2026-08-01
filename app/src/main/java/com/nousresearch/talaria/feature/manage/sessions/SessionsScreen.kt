@@ -49,6 +49,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.nousresearch.talaria.TalariaApp
+import com.nousresearch.talaria.core.util.formatHermesTimestamp
 import com.nousresearch.talaria.domain.model.SessionSummary
 import com.nousresearch.talaria.ui.components.ScreenScaffold
 import com.nousresearch.talaria.ui.theme.LocalSpacing
@@ -70,6 +71,7 @@ fun SessionsScreen(onOpen: (String) -> Unit, onResume: (String) -> Unit) {
     var total by remember { mutableStateOf<Int?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var confirmPrune by remember { mutableStateOf(false) }
+    var deleteSession by remember { mutableStateOf<SessionSummary?>(null) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
 
     val knownSources = listOf(
@@ -133,6 +135,25 @@ fun SessionsScreen(onOpen: (String) -> Unit, onResume: (String) -> Unit) {
             dismissButton = {
                 TextButton(onClick = { confirmPrune = false }) { Text("Cancel") }
             },
+        )
+    }
+
+    deleteSession?.let { session ->
+        AlertDialog(
+            onDismissRequest = { deleteSession = null },
+            title = { Text("Delete session?") },
+            text = { Text("Permanently delete '${session.title ?: session.id}' from Hermes?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteSession = null
+                    scope.launch {
+                        repo.deleteSession(session.id)
+                            .onSuccess { reload() }
+                            .onFailure { message = it.message }
+                    }
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { deleteSession = null }) { Text("Cancel") } },
         )
     }
 
@@ -208,7 +229,7 @@ fun SessionsScreen(onOpen: (String) -> Unit, onResume: (String) -> Unit) {
                                     s.source,
                                     s.model,
                                     s.message_count?.let { "$it msgs" },
-                                    s.last_active,
+                                    formatHermesTimestamp(s.last_active),
                                 ).joinToString(" · "),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -219,13 +240,7 @@ fun SessionsScreen(onOpen: (String) -> Unit, onResume: (String) -> Unit) {
                             Row {
                                 TextButton(onClick = { onResume(s.id) }) { Text("Resume") }
                                 TextButton(onClick = { onOpen(s.id) }) { Text("Open") }
-                                TextButton(onClick = {
-                                    scope.launch {
-                                        repo.deleteSession(s.id)
-                                            .onSuccess { reload() }
-                                            .onFailure { message = it.message }
-                                    }
-                                }) { Text("Delete") }
+                                TextButton(onClick = { deleteSession = s }) { Text("Delete") }
                             }
                         }
                     }

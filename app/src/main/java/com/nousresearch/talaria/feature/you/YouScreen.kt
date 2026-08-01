@@ -16,9 +16,6 @@
 
 package com.nousresearch.talaria.feature.you
 
-import android.content.Intent
-import android.net.Uri
-import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -35,7 +32,6 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -138,17 +134,6 @@ fun YouScreen(onConnect: () -> Unit) {
                 telemetry = it
                 settings.telemetryEnabled = it
             }
-
-            Spacer(Modifier.height(spacing.sm))
-            OutlinedButton(
-                onClick = {
-                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                        data = Uri.parse("package:${context.packageName}")
-                    }
-                    runCatching { context.startActivity(intent) }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Battery optimization settings") }
 
             // Privacy folded in as an expandable section (was a standalone screen).
             SectionHeader("Privacy")

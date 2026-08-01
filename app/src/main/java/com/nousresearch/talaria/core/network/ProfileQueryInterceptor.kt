@@ -18,6 +18,7 @@
 package com.nousresearch.talaria.core.network
 
 import com.nousresearch.talaria.core.data.prefs.SecureConnectionStore
+import com.nousresearch.talaria.domain.model.effectiveManagementProfile
 import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.Response
@@ -30,7 +31,7 @@ class ProfileQueryInterceptor(
     private val connectionStore: SecureConnectionStore,
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
-        val profile = connectionStore.activeProfile()?.managementProfile?.trim().orEmpty()
+        val profile = connectionStore.activeProfile()?.effectiveManagementProfile().orEmpty()
         val request = chain.request()
         if (profile.isEmpty() || request.url.queryParameter("profile") != null) {
             return chain.proceed(request)
@@ -50,7 +51,7 @@ class ProfileQueryInterceptor(
             "/api/messaging/platforms", "/api/model/", "/api/pairing",
             "/api/sessions", "/api/logs", "/api/memory", "/api/portal",
             "/api/cron", "/api/webhooks", "/api/ops", "/api/hermes",
-            "/api/curator", "/api/system",
+            "/api/curator", "/api/system", "/api/fs", "/api/learning",
         )
     }
 }

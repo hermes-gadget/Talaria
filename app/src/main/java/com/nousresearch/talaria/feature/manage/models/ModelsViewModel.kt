@@ -35,6 +35,9 @@ data class ModelsUiState(
     val currentProvider: String? = null,
     val message: String? = null,
     val setting: String? = null,
+    val pendingProvider: String? = null,
+    val pendingModel: String? = null,
+    val confirmMessage: String? = null,
 )
 
 /** Model management (roadmap 15.12): provider catalog + set active model via the model API. */
@@ -59,17 +62,47 @@ class ModelsViewModel(
         }
     }
 
-    fun setModel(model: String) {
+    fun setModel(provider: String, model: String, confirmExpensive: Boolean = false) {
         _ui.update { it.copy(setting = model, message = null) }
         viewModelScope.launch {
-            repo.setModel(model).fold(
-                onSuccess = {
-                    _ui.update { it.copy(setting = null, message = "Set model to $model") }
-                    refresh()
+            repo.setModel(provider, model, confirmExpensive).fold(
+                onSuccess = { result ->
+                    if (result.confirmRequired) {
+                        _ui.update {
+                            it.copy(
+                                setting = null,
+                                pendingProvider = provider,
+                                pendingModel = model,
+                                confirmMessage = result.confirmMessage
+                                    ?: "This model may be unusually expensive. Continue?",
+                            )
+                        }
+                    } else {
+                        _ui.update {
+                            it.copy(
+                                setting = null,
+                                pendingProvider = null,
+                                pendingModel = null,
+                                confirmMessage = null,
+                                message = "Set model to $provider / $model",
+                            )
+                        }
+                        refresh()
+                    }
                 },
                 onFailure = { e -> _ui.update { it.copy(setting = null, message = "Failed: ${e.message}") } },
             )
         }
+    }
+
+    fun confirmPendingModel() {
+        val provider = _ui.value.pendingProvider ?: return
+        val model = _ui.value.pendingModel ?: return
+        setModel(provider, model, confirmExpensive = true)
+    }
+
+    fun dismissModelConfirmation() = _ui.update {
+        it.copy(pendingProvider = null, pendingModel = null, confirmMessage = null)
     }
 
     fun clearMessage() = _ui.update { it.copy(message = null) }

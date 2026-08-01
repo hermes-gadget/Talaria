@@ -20,7 +20,6 @@ package com.nousresearch.talaria.core.notifications
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
-import android.os.Build
 import androidx.core.content.getSystemService
 import com.nousresearch.talaria.R
 
@@ -34,7 +33,6 @@ object NotificationChannels {
     const val SYNC = "sync"
 
     fun ensure(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = context.getSystemService<NotificationManager>() ?: return
         val channels = listOf(
             NotificationChannel(REPLIES, context.getString(R.string.notif_channel_replies), NotificationManager.IMPORTANCE_HIGH),

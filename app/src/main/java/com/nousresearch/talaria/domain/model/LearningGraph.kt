@@ -54,3 +54,11 @@ data class LearningGraph(
     val clusters: List<LearningCluster> = emptyList(),
     val stats: LearningStats = LearningStats(),
 )
+
+@Serializable
+data class LearningNodeDetail(
+    val ok: Boolean = false,
+    val content: String = "",
+    val kind: String = "",
+    val label: String = "",
+)

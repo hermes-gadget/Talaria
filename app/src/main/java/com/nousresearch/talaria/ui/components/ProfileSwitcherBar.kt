@@ -61,6 +61,7 @@ fun ProfileSwitcherChip() {
 
     var hermesNames by remember { mutableStateOf<List<String>>(emptyList()) }
     var expanded by remember { mutableStateOf(false) }
+    var switching by remember { mutableStateOf(false) }
 
     LaunchedEffect(active?.id, managementProfile) {
         container.hermesRepository.getProfiles()
@@ -75,7 +76,7 @@ fun ProfileSwitcherChip() {
     val displayLabel = if (nonDefault) managementProfile else "default"
 
     AssistChip(
-        onClick = { expanded = true },
+        onClick = { if (!switching) expanded = true },
         label = { Text(displayLabel, style = MaterialTheme.typography.labelMedium) },
         leadingIcon = {
             Icon(Icons.Outlined.Dns, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -103,14 +104,16 @@ fun ProfileSwitcherChip() {
                 onClick = {
                     expanded = false
                     scope.launch {
+                        switching = true
+                        // This chip scopes Talaria's API/WS requests only. The
+                        // Profiles screen has the separate, explicit action that
+                        // changes Hermes' sticky CLI default on the host.
                         connectionStore.setManagementProfile(name)
-                        if (name.isNotBlank()) {
-                            container.hermesRepository.setActiveProfileName(name)
-                        }
                         container.hermesRepository.clearCache()
                         container.eventClient.stop()
                         container.clientFactory.invalidate()
                         container.wsAuthHelper.invalidate()
+                        switching = false
                     }
                 },
             )

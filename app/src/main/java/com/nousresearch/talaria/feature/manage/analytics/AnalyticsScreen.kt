@@ -39,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -65,7 +66,7 @@ fun AnalyticsScreen() {
     var data by remember { mutableStateOf<AnalyticsUsage?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
-    var days by remember { mutableStateOf(30) }
+    var days by remember { mutableIntStateOf(30) }
     val scope = rememberCoroutineScope()
 
     fun reload() = scope.launch {
@@ -102,23 +103,30 @@ fun AnalyticsScreen() {
             error != null && data == null -> ErrorBox(error!!, onRetry = { reload() })
             else -> {
                 val a = data ?: return@ScreenScaffold
+                val totals = a.totals
+                val inputTokens = totals?.total_input ?: a.total_input_tokens
+                val outputTokens = totals?.total_output ?: a.total_output_tokens
+                val sessions = totals?.total_sessions ?: a.session_count
+                val cost = totals?.total_actual_cost?.takeIf { it > 0.0 }
+                    ?: totals?.total_estimated_cost
+                    ?: a.total_cost
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TotalCard("Sessions", a.session_count?.toString() ?: "—", Modifier.weight(1f))
-                        TotalCard("Cost", a.total_cost?.let { "%.2f".format(it) } ?: "—", Modifier.weight(1f))
+                        TotalCard("Sessions", sessions?.toString() ?: "—", Modifier.weight(1f))
+                        TotalCard("Cost", cost?.let { "$%.2f".format(it) } ?: "—", Modifier.weight(1f))
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TotalCard(
                             "Input",
-                            formatTokens(a.total_input_tokens),
+                            formatTokens(inputTokens),
                             Modifier.weight(1f),
                         )
                         TotalCard(
                             "Output",
-                            formatTokens(a.total_output_tokens),
+                            formatTokens(outputTokens),
                             Modifier.weight(1f),
                         )
                     }
@@ -158,7 +166,7 @@ fun AnalyticsScreen() {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    val modelLines = parseModelBreakdown(a.models)
+                    val modelLines = parseModelBreakdown(a.by_model ?: a.models)
                     if (modelLines.isNotEmpty()) {
                         Text("By model / provider", style = MaterialTheme.typography.titleMedium)
                         modelLines.forEach { line ->
@@ -180,9 +188,13 @@ private fun parseModelBreakdown(models: kotlinx.serialization.json.JsonElement?)
                 ?: obj["model"]?.toString()?.trim('"')
                 ?: obj["provider"]?.toString()?.trim('"')
                 ?: "model"
-            val tokens = obj["tokens"]?.toString()?.trim('"')
-                ?: obj["total_tokens"]?.toString()?.trim('"')
-            val cost = obj["cost"]?.toString()?.trim('"')
+            val tokens = obj["tokens"]?.jsonPrimitive?.longOrNull
+                ?: obj["total_tokens"]?.jsonPrimitive?.longOrNull
+                ?: ((obj["input_tokens"]?.jsonPrimitive?.longOrNull ?: 0L) +
+                    (obj["output_tokens"]?.jsonPrimitive?.longOrNull ?: 0L))
+            val cost = obj["cost"]?.jsonPrimitive?.doubleOrNull
+                ?: obj["actual_cost"]?.jsonPrimitive?.doubleOrNull?.takeIf { it > 0.0 }
+                ?: obj["estimated_cost"]?.jsonPrimitive?.doubleOrNull
             listOfNotNull(name, tokens?.let { "$it tok" }, cost?.let { "\$$it" }).joinToString(" · ")
         }
         is kotlinx.serialization.json.JsonObject -> models.entries.map { (k, v) ->
@@ -237,7 +249,11 @@ private fun parseDailyBars(daily: kotlinx.serialization.json.JsonElement?): List
                         ?: el["total"]?.jsonPrimitive?.doubleOrNull
                         ?: el["count"]?.jsonPrimitive?.doubleOrNull
                         ?: el["value"]?.jsonPrimitive?.doubleOrNull
-                        ?: el["input_tokens"]?.jsonPrimitive?.longOrNull?.toDouble()
+                        ?: run {
+                            val input = el["input_tokens"]?.jsonPrimitive?.longOrNull
+                            val output = el["output_tokens"]?.jsonPrimitive?.longOrNull
+                            if (input != null || output != null) (input ?: 0L).toDouble() + (output ?: 0L) else null
+                        }
                         ?: return@mapNotNull null
                     val label = el["date"]?.jsonPrimitive?.contentOrNull
                         ?: el["day"]?.jsonPrimitive?.contentOrNull

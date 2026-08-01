@@ -17,6 +17,11 @@
 
 package com.nousresearch.talaria.ui.navigation
 
+import java.net.URI
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
+
 sealed class TopDest(val route: String, val label: String) {
     data object Chats : TopDest("chats", "Chats")
     data object Activity : TopDest("activity", "Activity")
@@ -51,5 +56,69 @@ object Routes {
     const val SETTINGS = "settings"
 
     fun chat(resume: String? = null) =
-        if (resume.isNullOrBlank()) "chat?resume=" else "chat?resume=$resume"
+        if (resume.isNullOrBlank()) "chat?resume=" else "chat?resume=${encode(resume)}"
+
+    fun sessionDetail(id: String) = "session/${encode(id)}"
+
+    private fun encode(value: String): String =
+        URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")
+}
+
+sealed interface TalariaDeepLink {
+    data object Chat : TalariaDeepLink
+    data class Pairing(val connectionId: String? = null, val profile: String? = null) : TalariaDeepLink
+    data class Connect(val profile: String?) : TalariaDeepLink
+    data class Session(
+        val id: String,
+        val connectionId: String? = null,
+        val profile: String? = null,
+    ) : TalariaDeepLink
+    data object Status : TalariaDeepLink
+    data object Activity : TalariaDeepLink
+    data object Manage : TalariaDeepLink
+}
+
+/** Strict parser for the app's `talaria://` notification and shortcut links. */
+object TalariaDeepLinkParser {
+    fun parse(raw: String): TalariaDeepLink? {
+        val uri = runCatching { URI(raw) }.getOrNull() ?: return null
+        if (!uri.scheme.equals("talaria", ignoreCase = true)) return null
+        return when (uri.host?.lowercase()) {
+            "chat" -> TalariaDeepLink.Chat
+            "pairing" -> TalariaDeepLink.Pairing(
+                connectionId = queryValue(uri.rawQuery, "connection"),
+                profile = queryValue(uri.rawQuery, "profile"),
+            )
+            "connect" -> TalariaDeepLink.Connect(queryValue(uri.rawQuery, "profile"))
+            "session" -> uri.rawPath
+                ?.removePrefix("/")
+                ?.takeIf { it.isNotBlank() && !it.contains('/') }
+                ?.let(::decode)
+                ?.takeIf { it.isNotBlank() && !it.contains('/') && !it.contains('\\') }
+                ?.let { id ->
+                    TalariaDeepLink.Session(
+                        id = id,
+                        connectionId = queryValue(uri.rawQuery, "connection"),
+                        profile = queryValue(uri.rawQuery, "profile"),
+                    )
+                }
+            "status" -> TalariaDeepLink.Status
+            "activity" -> TalariaDeepLink.Activity
+            "manage" -> TalariaDeepLink.Manage
+            else -> null
+        }
+    }
+
+    private fun queryValue(query: String?, wanted: String): String? = query
+        ?.split('&')
+        ?.asSequence()
+        ?.map { it.substringBefore('=') to it.substringAfter('=', "") }
+        ?.firstOrNull { (name, _) -> decode(name) == wanted }
+        ?.second
+        ?.let(::decode)
+        ?.takeIf { it.isNotBlank() }
+
+    private fun decode(value: String): String = runCatching {
+        URLDecoder.decode(value, StandardCharsets.UTF_8.name())
+    }.getOrDefault(value)
 }

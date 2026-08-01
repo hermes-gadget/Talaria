@@ -1,100 +1,72 @@
 # Architecture
 
-Talaria is a single-module Android app (`:app`) organized by clean-architecture packages: **ui → feature ViewModels → repositories → network / Room / secure prefs**.
+Talaria is a single-module native Android application. It is a remote client: the Python Hermes runtime, shell, tools, and model credentials remain on the user’s Hermes host.
 
-## Goals
+The verified protocol baseline is Hermes Agent `v0.19.1` at upstream commit `470cf66b039c73bdd2c21d43094ce41a4db74eae` (2026-08-01).
 
-1. Remote client only — never embeds the Python Hermes runtime.
-2. Treat the official Web Dashboard REST `/api/*` + WebSockets as the contract.
-3. Privacy-first defaults: no telemetry, Keystore secrets, network only to user endpoints.
-4. Battery-aware background work via WorkManager; optional FGS when the user opts into continuous sync/dictation.
+## Layers
 
-## Layering
-
-```
-┌─────────────────────────────────────────────┐
-│  UI (Compose + NavigationSuite)             │
-│  Chats · Activity · Manage · You            │
-├─────────────────────────────────────────────┤
-│  Feature ViewModels (StateFlow)             │
-├─────────────────────────────────────────────┤
-│  Repositories                               │
-│  ConnectionRepository · HermesRepository    │
-│  ChatRepository                             │
-├─────────────────────────────────────────────┤
-│  Core                                       │
-│  Retrofit/OkHttp · PTY WebSocket · Room     │
-│  EncryptedSharedPreferences · WorkManager   │
-│  SpeechRecognizer / TTS · Notifications     │
-└─────────────────────────────────────────────┘
-            │ HTTPS/WSS (user Hermes URL)
-            ▼
-     Hermes Agent dashboard (:9119)
+```text
+Compose UI and navigation
+        ↓
+Feature ViewModels (StateFlow)
+        ↓
+HermesRepository / ChatRepository / ConnectionRepository
+        ↓
+Retrofit + OkHttp WebSockets | Room | encrypted preferences | WorkManager
+        ↓
+User-configured Hermes dashboard over HTTP(S) and WS(S)
 ```
 
-Manual DI lives in `di/AppContainer` (constructed from `TalariaApp`). This keeps the graph obvious and unit-testable without a DI framework.
+Manual dependency injection lives in `di/AppContainer`, created by `TalariaApp`. `HermesClientFactory` rebuilds the HTTP client when the active server, credentials, management profile, or TLS pin changes.
 
-## Auth model
+## Connection and data boundaries
 
-Mapped from Hermes dashboard behavior (v0.17+):
+A saved connection and its selected Hermes management profile form one local scope. Room caches, drafts, restored chat tabs, sync fingerprints, widget summaries, REST caches, PTY sessions, sidecar sockets, and notification actions use that scope. Switching either part tears down live transports and recreates the navigation/ViewModel graph, preventing data from one Hermes home appearing in another.
 
-| Mode | Client behavior |
-|------|-----------------|
-| Loopback / token | `X-Hermes-Session-Token` on REST; `?token=` on WS |
-| Gated basic | Password login + cookie jar; WS via `POST /api/auth/ws-ticket` → `?ticket=` (extension point; PTY currently also accepts token when available) |
-| Bearer | `Authorization: Bearer …` |
-| OIDC browser | Custom Tabs / deep link to `/auth/login` (operator completes login; cookies stored) |
+The local blank profile name represents Hermes’ `default` profile. Profile-scoped REST and WebSocket calls still send `profile=default` explicitly, so Talaria does not inherit the dashboard process’s sticky CLI profile by accident.
 
-`ProfileQueryInterceptor` appends `?profile=` for management-scoped families, matching `web/src/lib/api.ts` `PROFILE_SCOPED_PREFIXES`.
+## Authentication
 
-Optional **certificate pinning** per connection profile via OkHttp `CertificatePinner`.
+| Mode | Behavior |
+|---|---|
+| None / loopback | Discovers the injected dashboard session token before opening protected WebSockets |
+| Session token | `X-Hermes-Session-Token` on REST and `token=` where the dashboard protocol requires it |
+| Password | Discovers password providers, posts JSON to `/auth/password-login`, and persists the scoped session cookie |
+| Bearer | Sends `Authorization: Bearer …` |
+| Native OIDC | RFC 8252 loopback callback, PKCE S256, state validation, encrypted refresh token, proactive synchronized refresh |
+
+When Hermes reports `auth_required`, Talaria mints short-lived tickets through `POST /api/auth/ws-ticket` for `/api/pty`, `/api/ws`, and `/api/events`. Cookies retain their name/domain/path identity and standard expiry, Secure, and path matching semantics. Connection URLs reject embedded credentials and query/fragment ambiguity. Optional SHA-256 certificate pins are accepted only for HTTPS.
 
 ## Chat transport
 
-Dashboard Chat is a real `hermes --tui` behind `/api/pty` (plus `/api/ws` JSON-RPC sidecar for structured events).
+Hermes exposes the TUI through `/api/pty`. Talaria opens one PTY per chat tab and adds two structured sidecars:
 
-Talaria’s v0.1 chat path:
+- `/api/ws` for JSON-RPC state, command completion, image attachment, model state, and approval/clarification/sudo/secret responses.
+- `/api/events` for lifecycle, tool progress, prompt, usage, notification, and completion events.
 
-1. Open OkHttp WebSocket to `/api/pty` with auth query + optional `resume=` / `profile=`.
-2. Strip ANSI (`AnsiStripper`) into a Compose transcript.
-3. Send user lines as PTY input (newline-terminated).
-4. On disconnect / background, surface notifications for completed assistant buffers.
+Reading mode combines structured live state with REST session messages; Terminal mode shows the ANSI-stripped PTY stream and supports interrupt/copy. Chat tabs and drafts survive process death. Image attachments are signature-validated, capped at 25 MB, staged through `image.attach_bytes`, and associated with the exact live PTY session before the prompt is sent.
 
-**Gap:** Full Ink/xterm fidelity, slash-command palettes, and `/api/ws` tool sidebars are not pixel-parity yet. Extension points exist in `PtyWebSocketSession` and `ChatRepository`. Session browsing uses REST `/api/sessions*` for offline-friendly history.
+Slash completion starts with a bundled compatibility catalog, then replaces it with live `commands.catalog` data. The palette ranks exact, prefix, alias, fuzzy-name, and description matches while `complete.slash` supplies argument completions. Debouncing and request generation checks prevent stale results replacing newer input.
 
-## Notifications & background
+## Background work and notifications
 
-- Channels: replies, cron, gateway, pairing, errors, tasks, sync.
-- Actions: Open (deep link), Dismiss, Reply (`RemoteInput` → `ReplyWorker` short PTY send).
-- `HermesSyncWorker` (Periodic WorkManager, network-constrained) polls status/pairing/cron.
-- Optional `HermesSyncForegroundService` for users who disable battery optimizations.
-- BootReceiver re-schedules work after reboot.
-- All toggles live under **You**; Doze-aware by default (15+ minute periods).
+`HermesSyncWorker` performs network-constrained periodic polling. There is no long-running sync or microphone foreground service. Process lifecycle stops sidecar sockets in the background and reconnects with fresh authorization on return.
 
-## Voice
+Reply and pairing notification actions carry the expected connection/profile scope. Workers refuse an action if the user has since switched scope. Deep links use strict route parsing and cannot select an unknown saved connection.
 
-- Prefer on-device `SpeechRecognizer` with `EXTRA_PREFER_OFFLINE` unless cloud STT opt-in.
-- Continuous dictation with partial results; optional `VoiceDictationService` FGS (microphone type).
-- TTS via Android `TextToSpeech` when enabled.
-
-Optional Whisper.cpp / Vosk bindings are **not** bundled (size/licensing); documented as future optional modules.
-
-## Persistence
+## Persistence and privacy
 
 | Store | Contents |
-|-------|----------|
-| EncryptedSharedPreferences | Connection profiles metadata + secrets |
-| SharedPreferences | Non-secret settings (notifications, TTS, …) |
-| Room | Cached sessions/messages, activity feed, chat drafts |
+|---|---|
+| EncryptedSharedPreferences | Connection metadata, passwords, session/bearer tokens, OIDC refresh state |
+| DataStore / SharedPreferences | Non-secret UI, notification, sync, and widget preferences |
+| Room | Scoped session/message caches, activity history, and chat drafts |
 
-Cloud backup / device transfer excludes secure prefs and DBs (`backup_rules` / `data_extraction_rules`).
+Android backup and device transfer exclude encrypted connection state and Room databases. Talaria includes no analytics or crash-upload SDK.
 
-## UI
+## UI adaptation boundary
 
-- Material 3 + optional dynamic color; default Hermes dark aesthetic (void/ink/ember/wing).
-- `NavigationSuiteScaffold`: Chats / Activity / Manage / You.
-- Manage is a hub into dashboard feature screens adapted for one-handed lists/forms.
+Talaria implements remote agent/chat and dashboard management workflows in touch-native Compose screens. Desktop-only host integrations—local Electron window management, desktop quick-entry/pet overlays, native terminal multiplexing, and local drag/drop shell integration—are not meaningful Android parity targets. The mobile equivalents are Android shares, notifications, widgets, app shortcuts, the Quick Settings tile, photo picker, SAF import/export, and on-device speech APIs.
 
-## Version mapping
-
-`BuildConfig.HERMES_API_BASELINE` documents the dashboard API generation (`dashboard-v0.17+`). See [docs/API.md](docs/API.md) for endpoint coverage and known gaps.
+See [docs/API.md](docs/API.md) for endpoint coverage and [ROADMAP.md](ROADMAP.md) for remaining work.

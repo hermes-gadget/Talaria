@@ -42,6 +42,10 @@ class NotificationActionReceiver : BroadcastReceiver() {
                             workDataOf(
                                 PairingApproveWorker.KEY_PLATFORM to platform,
                                 PairingApproveWorker.KEY_CODE to code,
+                                PairingApproveWorker.KEY_CONNECTION_ID to
+                                    intent.getStringExtra(EXTRA_CONNECTION_ID),
+                                PairingApproveWorker.KEY_MANAGEMENT_PROFILE to
+                                    intent.getStringExtra(EXTRA_MANAGEMENT_PROFILE).orEmpty(),
                             ),
                         )
                         .build()
@@ -58,6 +62,9 @@ class NotificationActionReceiver : BroadcastReceiver() {
                             workDataOf(
                                 ReplyWorker.KEY_TEXT to reply,
                                 ReplyWorker.KEY_DEEP_LINK to intent.getStringExtra(EXTRA_DEEP_LINK),
+                                ReplyWorker.KEY_CONNECTION_ID to intent.getStringExtra(EXTRA_CONNECTION_ID),
+                                ReplyWorker.KEY_MANAGEMENT_PROFILE to
+                                    intent.getStringExtra(EXTRA_MANAGEMENT_PROFILE).orEmpty(),
                             ),
                         )
                         .build()
@@ -76,6 +83,8 @@ class NotificationActionReceiver : BroadcastReceiver() {
         const val EXTRA_DEEP_LINK = "deep_link"
         const val EXTRA_PAIR_PLATFORM = "pair_platform"
         const val EXTRA_PAIR_CODE = "pair_code"
+        const val EXTRA_CONNECTION_ID = "connection_id"
+        const val EXTRA_MANAGEMENT_PROFILE = "management_profile"
         const val KEY_REPLY = "talaria_reply"
     }
 }

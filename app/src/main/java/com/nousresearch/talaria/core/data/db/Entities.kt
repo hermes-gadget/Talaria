@@ -20,9 +20,9 @@ package com.nousresearch.talaria.core.data.db
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "cached_sessions")
+@Entity(tableName = "cached_sessions", primaryKeys = ["connectionId", "id"])
 data class CachedSessionEntity(
-    @PrimaryKey val id: String,
+    val id: String,
     val connectionId: String,
     val title: String?,
     val source: String?,
@@ -34,9 +34,9 @@ data class CachedSessionEntity(
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
-@Entity(tableName = "cached_messages")
+@Entity(tableName = "cached_messages", primaryKeys = ["connectionId", "key"])
 data class CachedMessageEntity(
-    @PrimaryKey val key: String,
+    val key: String,
     val sessionId: String,
     val connectionId: String,
     val role: String?,

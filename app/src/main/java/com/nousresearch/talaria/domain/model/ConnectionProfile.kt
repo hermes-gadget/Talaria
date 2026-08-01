@@ -17,6 +17,8 @@
 package com.nousresearch.talaria.domain.model
 
 import kotlinx.serialization.Serializable
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 enum class AuthMode {
     NONE,
@@ -33,6 +35,8 @@ data class ConnectionProfile(
     val baseUrl: String,
     val authMode: AuthMode = AuthMode.SESSION_TOKEN,
     val username: String? = null,
+    /** Hermes dashboard-auth provider name used by password login. */
+    val authProvider: String = "",
     /** Secret material is stored separately in encrypted prefs; only presence flags live here. */
     val hasPassword: Boolean = false,
     val hasSessionToken: Boolean = false,
@@ -49,4 +53,24 @@ data class ConnectionSecrets(
     val sessionToken: String? = null,
     val password: String? = null,
     val bearerToken: String? = null,
+    val oidcRefreshToken: String? = null,
+    /** Epoch seconds from Hermes `/auth/native/token`. */
+    val oidcExpiresAt: Long? = null,
+    val oidcProvider: String? = null,
 )
+
+/** Stable local-storage/runtime namespace for one server and one isolated Hermes home. */
+fun normalizeManagementProfile(value: String): String =
+    value.trim().takeUnless { it.equals("default", ignoreCase = true) }.orEmpty()
+
+fun ConnectionProfile.effectiveManagementProfile(): String =
+    normalizeManagementProfile(managementProfile).ifBlank { "default" }
+
+fun ConnectionProfile.scopeId(): String {
+    val normalized = normalizeManagementProfile(managementProfile)
+    return if (normalized.isBlank()) {
+        id
+    } else {
+        "$id|profile|${URLEncoder.encode(normalized, StandardCharsets.UTF_8.name())}"
+    }
+}

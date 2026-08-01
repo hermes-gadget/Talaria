@@ -24,7 +24,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -35,28 +37,35 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nousresearch.talaria.domain.model.MemoryProvider
-import com.nousresearch.talaria.domain.model.MemoryState
-import com.nousresearch.talaria.feature.manage.SimpleManageViewModel
 import com.nousresearch.talaria.ui.components.ErrorBox
 import com.nousresearch.talaria.ui.components.LoadingBox
 import com.nousresearch.talaria.ui.components.ScreenScaffold
 import com.nousresearch.talaria.ui.theme.LocalSpacing
 
 @Composable
-fun MemoryScreen() {
+fun MemoryScreen(vm: MemoryViewModel = viewModel(factory = MemoryViewModel.factory())) {
     val spacing = LocalSpacing.current
-    val vm: SimpleManageViewModel = viewModel(
-        factory = SimpleManageViewModel.factory { getMemoryState() },
-    )
     val ui by vm.ui.collectAsStateWithLifecycle()
-    val state = ui.data as? MemoryState
+    val state = ui.state
+
+    ui.resetTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = vm::cancelReset,
+            title = { Text("Reset ${if (target == "all") "all memory" else target}") },
+            text = { Text("This permanently deletes the selected built-in memory file data on the Hermes host.") },
+            confirmButton = {
+                TextButton(onClick = vm::confirmReset) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = vm::cancelReset) { Text("Cancel") } },
+        )
+    }
 
     ScreenScaffold("Memory", actions = {
         TextButton(onClick = { vm.refresh() }) { Text("Refresh") }
     }) {
         when {
             ui.loading && state == null -> LoadingBox()
-            ui.error != null && state == null -> ErrorBox(ui.error!!, onRetry = { vm.refresh() })
+            ui.error != null && state == null -> ErrorBox(ui.error!!, onRetry = vm::refresh)
             state == null -> Text("No memory providers.")
             else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(spacing.itemGap)) {
                 item {
@@ -67,14 +76,56 @@ fun MemoryScreen() {
                         modifier = Modifier.padding(vertical = spacing.xs),
                     )
                 }
-                items(state.providers, key = { it.name }) { p -> ProviderCard(p) }
+                ui.error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
+                items(state.providers, key = { it.name }) { p ->
+                    ProviderCard(
+                        p = p,
+                        active = p.name == state.active,
+                        busy = ui.busy,
+                        onActivate = { vm.activate(p.name) },
+                    )
+                }
+                item {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shape = MaterialTheme.shapes.medium,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(spacing.cardPad),
+                            verticalArrangement = Arrangement.spacedBy(spacing.xs),
+                        ) {
+                            Text("Built-in memory files", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "MEMORY.md · ${formatMemoryBytes(state.builtin_files.memory)}   USER.md · ${formatMemoryBytes(state.builtin_files.user)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(spacing.xs)) {
+                                OutlinedButton(
+                                    onClick = { vm.requestReset("memory") },
+                                    enabled = !ui.busy && state.builtin_files.memory > 0,
+                                ) { Text("Reset memory") }
+                                OutlinedButton(
+                                    onClick = { vm.requestReset("user") },
+                                    enabled = !ui.busy && state.builtin_files.user > 0,
+                                ) { Text("Reset user") }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun ProviderCard(p: MemoryProvider) {
+private fun ProviderCard(
+    p: MemoryProvider,
+    active: Boolean,
+    busy: Boolean,
+    onActivate: () -> Unit,
+) {
     val spacing = LocalSpacing.current
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -134,6 +185,18 @@ private fun ProviderCard(p: MemoryProvider) {
                     )
                 }
             }
+            if (!active) {
+                OutlinedButton(
+                    onClick = onActivate,
+                    enabled = !busy && p.available && p.configured,
+                    modifier = Modifier.padding(top = spacing.xs),
+                ) { Text("Activate") }
+            }
         }
     }
+}
+
+private fun formatMemoryBytes(bytes: Long): String = when {
+    bytes < 1024 -> "$bytes B"
+    else -> "${bytes / 1024} KB"
 }

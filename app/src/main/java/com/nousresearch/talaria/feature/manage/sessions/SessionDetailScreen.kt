@@ -48,12 +48,16 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.nousresearch.talaria.TalariaApp
+import com.nousresearch.talaria.core.util.formatHermesTimestamp
 import com.nousresearch.talaria.domain.model.SessionMessage
 import com.nousresearch.talaria.domain.model.SessionSummary
 import com.nousresearch.talaria.ui.components.ScreenScaffold
 import com.nousresearch.talaria.ui.components.SimpleMarkdownText
 import java.io.File
+import java.security.MessageDigest
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -141,26 +145,31 @@ fun SessionDetailScreen(sessionId: String, onDeleted: (() -> Unit)? = null) {
         "Session",
         sessionId.take(24),
         actions = {
-            TextButton(onClick = { renameOpen = true; renameTitle = "" }) { Text("Rename") }
+            TextButton(onClick = { renameOpen = true; renameTitle = session?.title.orEmpty() }) { Text("Rename") }
             TextButton(onClick = {
                 scope.launch {
                     repo.exportSessionMarkdown(sessionId)
                         .onSuccess { md ->
-                            val dir = File(context.cacheDir, "exports").apply { mkdirs() }
-                            val file = File(dir, "session-$sessionId.md")
-                            file.writeText(md)
-                            val uri: Uri = FileProvider.getUriForFile(
-                                context,
-                                "${context.packageName}.files",
-                                file,
-                            )
-                            val intent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/markdown"
-                                putExtra(Intent.EXTRA_STREAM, uri)
-                                putExtra(Intent.EXTRA_SUBJECT, "Hermes session $sessionId")
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            runCatching {
+                                val file = withContext(Dispatchers.IO) {
+                                    val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+                                    File(dir, safeSessionExportFilename(sessionId)).also { it.writeText(md) }
+                                }
+                                val uri: Uri = FileProvider.getUriForFile(
+                                    context,
+                                    "${context.packageName}.files",
+                                    file,
+                                )
+                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/markdown"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    putExtra(Intent.EXTRA_SUBJECT, "Hermes session $sessionId")
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(intent, "Export session"))
+                            }.onFailure {
+                                error = it.message ?: "Could not share the session export"
                             }
-                            context.startActivity(Intent.createChooser(intent, "Export session"))
                         }
                         .onFailure { error = it.message }
                 }
@@ -220,6 +229,19 @@ fun SessionDetailScreen(sessionId: String, onDeleted: (() -> Unit)? = null) {
     }
 }
 
+internal fun safeSessionExportFilename(sessionId: String): String {
+    val stem = sessionId
+        .replace(Regex("[^A-Za-z0-9._-]+"), "_")
+        .trim('.', '_', '-')
+        .take(72)
+        .ifBlank { "export" }
+    val digest = MessageDigest.getInstance("SHA-256")
+        .digest(sessionId.toByteArray(Charsets.UTF_8))
+        .take(6)
+        .joinToString("") { "%02x".format(it) }
+    return "session-$stem-$digest.md"
+}
+
 @Composable
 private fun roleColor(role: String?): Color {
     return when (role?.lowercase()) {
@@ -254,7 +276,7 @@ private fun SessionHeaderCard(s: SessionSummary) {
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f, fill = false),
                 )
-                if (s.live == true) {
+                if (s.live == true || s.is_active == true) {
                     Surface(
                         color = MaterialTheme.colorScheme.tertiaryContainer,
                         shape = MaterialTheme.shapes.small,
@@ -274,21 +296,27 @@ private fun SessionHeaderCard(s: SessionSummary) {
                     s.model?.let { "model: $it" },
                     s.message_count?.let { "$it msgs" },
                     s.tool_call_count?.let { "$it tool calls" },
-                    formatTokens(s.tokens),
+                    formatTokens(s.tokens, s.input_tokens, s.output_tokens),
                 ).joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             s.last_active?.let {
-                Text("last active: $it", style = MaterialTheme.typography.labelSmall)
+                Text("last active: ${formatHermesTimestamp(it)}", style = MaterialTheme.typography.labelSmall)
             }
         }
     }
 }
 
 /** Compact token accounting for the header; mirrors the Status screen renderer. */
-private fun formatTokens(tokens: kotlinx.serialization.json.JsonElement?): String? {
-    if (tokens == null) return null
+private fun formatTokens(
+    tokens: kotlinx.serialization.json.JsonElement?,
+    topInput: Long? = null,
+    topOutput: Long? = null,
+): String? {
+    if (tokens == null) {
+        return if (topInput != null || topOutput != null) "tok ${topInput ?: "?"}→${topOutput ?: "?"}" else null
+    }
     return when (tokens) {
         is JsonPrimitive -> tokens.contentOrNull?.let { "tok $it" }
         is JsonObject -> {

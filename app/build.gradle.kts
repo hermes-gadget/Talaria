@@ -18,8 +18,9 @@ fun propOrDefault(name: String, default: String): String =
     (findProperty(name) as String?)?.takeIf { it.isNotBlank() } ?: default
 
 // Overridable via -Ptalaria.versionName / -Ptalaria.versionCode (CI sets these from the git tag).
-val talariaVersionName = propOrDefault("talaria.versionName", "0.3.0")
-val talariaVersionCode = propOrDefault("talaria.versionCode", "300").toInt()
+val talariaVersionName = propOrDefault("talaria.versionName", "0.4.0")
+val talariaVersionCode = propOrDefault("talaria.versionCode", "400").toInt()
+val hermesApiBaseline = propOrDefault("talaria.hermesApiBaseline", "hermes-v0.19.1")
 
 // Persistent CI upload keystore for Obtainium / GitHub release APKs.
 val ciKeystorePath = System.getenv("TALARIA_CI_KEYSTORE")
@@ -46,7 +47,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
 
-        buildConfigField("String", "HERMES_API_BASELINE", "\"dashboard-v0.17+\"")
+        buildConfigField("String", "HERMES_API_BASELINE", "\"$hermesApiBaseline\"")
         buildConfigField("Boolean", "DEFAULT_TELEMETRY", "false")
     }
 

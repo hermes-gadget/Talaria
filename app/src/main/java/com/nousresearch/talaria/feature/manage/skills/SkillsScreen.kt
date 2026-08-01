@@ -15,8 +15,6 @@
  */
 package com.nousresearch.talaria.feature.manage.skills
 
-import android.net.Uri
-import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,6 +24,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -45,24 +45,31 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.domain.model.SkillInfo
+import com.nousresearch.talaria.domain.model.HubSkill
 import com.nousresearch.talaria.domain.model.ToolsetInfo
 import com.nousresearch.talaria.ui.components.ScreenScaffold
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 @Composable
 fun SkillsScreen() {
     val repo = TalariaApp.instance.container.hermesRepository
-    val context = LocalContext.current
     var skills by remember { mutableStateOf<List<SkillInfo>>(emptyList()) }
     var toolsets by remember { mutableStateOf<List<ToolsetInfo>>(emptyList()) }
     var tab by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
     var category by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+    var hubQuery by remember { mutableStateOf("") }
+    var hubResults by remember { mutableStateOf<List<HubSkill>>(emptyList()) }
+    var hubBusy by remember { mutableStateOf(false) }
+    var hubDetail by remember { mutableStateOf<String?>(null) }
+    var uninstallTarget by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     fun reloadSkills() = scope.launch {
@@ -74,6 +81,31 @@ fun SkillsScreen() {
         repo.getToolsets()
             .onSuccess { toolsets = it }
             .onFailure { message = it.message }
+    }
+
+    uninstallTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { uninstallTarget = null },
+            title = { Text("Uninstall skill?") },
+            text = { Text("Remove '$target' from the active Hermes profile?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    uninstallTarget = null
+                    hubBusy = true
+                    scope.launch {
+                        repo.uninstallHubSkill(target).fold(
+                            onSuccess = { action ->
+                                message = action.lines.lastOrNull() ?: "Uninstalled $target"
+                                hubBusy = false
+                                reloadSkills()
+                            },
+                            onFailure = { error -> message = error.message; hubBusy = false },
+                        )
+                    }
+                }) { Text("Uninstall") }
+            },
+            dismissButton = { TextButton(onClick = { uninstallTarget = null }) { Text("Cancel") } },
+        )
     }
 
     LaunchedEffect(Unit) {
@@ -112,21 +144,88 @@ fun SkillsScreen() {
         message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
         if (tab == 2) {
-            Text(
-                "Hermes Skills Hub install APIs are not stable in the dashboard yet. " +
-                    "Browse docs in a Custom Tab, then install skills on the host.",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(vertical = 12.dp),
+            OutlinedTextField(
+                value = hubQuery,
+                onValueChange = { hubQuery = it },
+                label = { Text("Search Hermes Skills Hub") },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                singleLine = true,
             )
-            OutlinedButton(
+            Button(
                 onClick = {
-                    CustomTabsIntent.Builder().build().launchUrl(
-                        context,
-                        Uri.parse("https://hermes-agent.nousresearch.com/docs/user-guide/features/skills"),
-                    )
+                    hubBusy = true
+                    hubDetail = null
+                    scope.launch {
+                        repo.searchSkillHub(hubQuery).fold(
+                            onSuccess = { results -> hubResults = results; hubBusy = false },
+                            onFailure = { error -> message = error.message; hubBusy = false },
+                        )
+                    }
                 },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Browse Skills Hub docs") }
+                enabled = !hubBusy && hubQuery.isNotBlank(),
+            ) { Text(if (hubBusy) "Working…" else "Search") }
+            hubDetail?.let {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                ) { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp)) }
+            }
+            LazyColumn {
+                items(hubResults, key = { it.identifier }) { skill ->
+                    Surface(
+                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shape = MaterialTheme.shapes.medium,
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(skill.name, style = MaterialTheme.typography.titleMedium)
+                            skill.description?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                            Text(
+                                listOfNotNull(skill.source, skill.trust_level).joinToString(" · "),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                            Row {
+                                TextButton(enabled = !hubBusy, onClick = {
+                                    hubBusy = true
+                                    scope.launch {
+                                        repo.previewHubSkill(skill.identifier).fold(
+                                            onSuccess = { result ->
+                                                val obj = result as? JsonObject
+                                                hubDetail = obj?.get("skill_md")?.jsonPrimitive?.contentOrNull
+                                                    ?.take(6_000) ?: result.toString().take(6_000)
+                                                hubBusy = false
+                                            },
+                                            onFailure = { error -> message = error.message; hubBusy = false },
+                                        )
+                                    }
+                                }) { Text("Preview") }
+                                TextButton(enabled = !hubBusy, onClick = {
+                                    hubBusy = true
+                                    scope.launch {
+                                        repo.scanHubSkill(skill.identifier).fold(
+                                            onSuccess = { result -> hubDetail = result.toString().take(6_000); hubBusy = false },
+                                            onFailure = { error -> message = error.message; hubBusy = false },
+                                        )
+                                    }
+                                }) { Text("Scan") }
+                                TextButton(enabled = !hubBusy, onClick = {
+                                    hubBusy = true
+                                    scope.launch {
+                                        repo.installHubSkill(skill.identifier).fold(
+                                            onSuccess = { action ->
+                                                message = action.lines.lastOrNull() ?: "Installed ${skill.name}"
+                                                hubBusy = false
+                                                reloadSkills()
+                                            },
+                                            onFailure = { error -> message = error.message; hubBusy = false },
+                                        )
+                                    }
+                                }) { Text("Install") }
+                            }
+                        }
+                    }
+                }
+            }
         } else if (tab == 0) {
             OutlinedTextField(
                 value = query,
@@ -179,6 +278,11 @@ fun SkillsScreen() {
                                     }
                                 },
                             )
+                            if (skill.provenance == "hub") {
+                                TextButton(onClick = { uninstallTarget = skill.name }, enabled = !hubBusy) {
+                                    Text("Uninstall")
+                                }
+                            }
                         }
                     }
                 }

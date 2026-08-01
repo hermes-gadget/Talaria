@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.domain.model.SessionSummary
 import com.nousresearch.talaria.domain.model.StatusResponse
+import com.nousresearch.talaria.core.util.formatHermesTimestamp
 import com.nousresearch.talaria.ui.components.ErrorBox
 import com.nousresearch.talaria.ui.components.LoadingBox
 import com.nousresearch.talaria.ui.components.PollEffect
@@ -63,6 +64,7 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
     val repo = TalariaApp.instance.container.hermesRepository
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf<StatusResponse?>(null) }
+    var currentSessions by remember { mutableStateOf<List<SessionSummary>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     var refreshing by remember { mutableStateOf(false) }
@@ -79,7 +81,7 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
 
     // Poll only while the screen is RESUMED so we stop hitting the network when the
     // app is backgrounded (a plain LaunchedEffect loop would keep going off-screen).
-    PollEffect(intervalMs = 5_000, tick) {
+    PollEffect(intervalMs = 10_000, tick) {
         repo.refreshStatus()
             .onSuccess { applySuccess(it) }
             .onFailure {
@@ -87,6 +89,8 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
                 loading = false
                 refreshing = false
             }
+        repo.getSessionsPage(limit = 20)
+            .onSuccess { currentSessions = it.sessions }
     }
 
     val lastUpdatedLabel = if (lastUpdatedMs == 0L) {
@@ -97,7 +101,7 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
 
     ScreenScaffold(
         "Status",
-        "Live overview · auto-refresh 5s · updated $lastUpdatedLabel",
+        "Live overview · auto-refresh 10s · updated $lastUpdatedLabel",
         actions = {
             TextButton(onClick = {
                 refreshing = true
@@ -124,6 +128,8 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
                                     error = it.message
                                     refreshing = false
                                 }
+                            repo.getSessionsPage(limit = 20)
+                                .onSuccess { currentSessions = it.sessions }
                         }
                     },
                 ) {
@@ -155,7 +161,7 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
                                 val running = gw?.running ?: s.gateway_running
                                 Text(
                                     if (running == true) {
-                                        "Running · pid=${gw?.pid ?: "?"}"
+                                        "Running · pid=${gw?.pid ?: s.gateway_pid ?: "?"}"
                                     } else if (running == false) {
                                         "Stopped"
                                     } else {
@@ -168,14 +174,14 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
                                         null -> MaterialTheme.colorScheme.onSurfaceVariant
                                     },
                                 )
-                                gw?.state?.let {
+                                (gw?.state ?: s.gateway_state)?.let {
                                     Text("State: $it", style = MaterialTheme.typography.bodyMedium)
                                 }
                             }
                         }
                         item {
                             SectionCard("Platforms") {
-                                val platforms = formatPlatforms(s.gateway?.platforms)
+                                val platforms = formatPlatforms(s.gateway?.platforms ?: s.gateway_platforms)
                                 if (platforms.isEmpty()) {
                                     Text("No platform info", style = MaterialTheme.typography.bodyMedium)
                                 } else {
@@ -197,7 +203,7 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
                                 color = MaterialTheme.colorScheme.secondary,
                             )
                         }
-                        val recent = s.sessions.take(20)
+                        val recent = (if (currentSessions.isNotEmpty()) currentSessions else s.sessions).take(20)
                         if (recent.isEmpty()) {
                             item {
                                 Text("No recent sessions", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -244,8 +250,8 @@ private fun SessionRow(session: SessionSummary, onOpenSession: ((String) -> Unit
                     session.source,
                     session.model,
                     session.message_count?.let { "$it msgs" },
-                    formatTokens(session.tokens),
-                    session.last_active,
+                    formatTokens(session.tokens, session.input_tokens, session.output_tokens),
+                    formatHermesTimestamp(session.last_active),
                 ).joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -284,8 +290,14 @@ private fun SectionCard(title: String, content: @Composable () -> Unit) {
     }
 }
 
-private fun formatTokens(tokens: kotlinx.serialization.json.JsonElement?): String? {
-    if (tokens == null) return null
+private fun formatTokens(
+    tokens: kotlinx.serialization.json.JsonElement?,
+    topInput: Long? = null,
+    topOutput: Long? = null,
+): String? {
+    if (tokens == null) {
+        return if (topInput != null || topOutput != null) "tok ${topInput ?: "?"}→${topOutput ?: "?"}" else null
+    }
     return when (tokens) {
         is JsonPrimitive -> tokens.contentOrNull?.let { "tok $it" }
         is JsonObject -> {

@@ -17,6 +17,7 @@
 package com.nousresearch.talaria.core.network
 
 import com.nousresearch.talaria.core.data.prefs.SecureConnectionStore
+import com.nousresearch.talaria.domain.model.effectiveManagementProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,13 +28,18 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
@@ -41,6 +47,7 @@ import okhttp3.WebSocketListener
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.resume
 
 /**
  * Sidecar sockets used by the web Chat tab:
@@ -67,12 +74,18 @@ class HermesEventClient(
 
     /** Consecutive failures per socket name; reset on a successful open. */
     private val reconnectAttempts = ConcurrentHashMap<String, Int>()
+    private val reconnectJobs = ConcurrentHashMap<String, Job>()
     private val reconnectBackoff = longArrayOf(1_000L, 2_000L, 4_000L, 8_000L, 15_000L, 30_000L)
 
     private val _events = MutableSharedFlow<HermesSideEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<HermesSideEvent> = _events.asSharedFlow()
 
-    private val pendingRpc = ConcurrentHashMap<Long, (JsonElement?) -> Unit>()
+    private data class PendingRpc(
+        val callback: (JsonElement?) -> Unit,
+        val timeout: Job,
+    )
+
+    private val pendingRpc = ConcurrentHashMap<Long, PendingRpc>()
 
     fun currentChannel(): String? = channelId
 
@@ -91,6 +104,8 @@ class HermesEventClient(
         // Guard first: close callbacks must not schedule reconnects.
         stopped = true
         reconnectAttempts.clear()
+        reconnectJobs.values.forEach(Job::cancel)
+        reconnectJobs.clear()
         job?.cancel()
         job = null
         eventsSocket?.close(1000, "stop")
@@ -98,6 +113,10 @@ class HermesEventClient(
         eventsSocket = null
         rpcSocket = null
         channelId = null
+        pendingRpc.values.forEach {
+            it.timeout.cancel()
+            it.callback(null)
+        }
         pendingRpc.clear()
     }
 
@@ -108,32 +127,106 @@ class HermesEventClient(
 
     fun sendRpc(method: String, params: JsonObject = JsonObject(emptyMap()), onResult: ((JsonElement?) -> Unit)? = null) {
         val id = rpcId.getAndIncrement()
-        if (onResult != null) pendingRpc[id] = onResult
+        if (onResult != null) {
+            val timeout = scope.launch {
+                delay(RPC_TIMEOUT_MS)
+                pendingRpc.remove(id)?.callback?.invoke(null)
+            }
+            pendingRpc[id] = PendingRpc(onResult, timeout)
+        }
         // Quote the method name — unquoted `method:model.info` is rejected by Hermes
         // (`Expecting value` parse errors on every connect; see gui.log).
         val safeMethod = method.replace("\\", "\\\\").replace("\"", "\\\"")
         val body = """{"jsonrpc":"2.0","id":$id,"method":"$safeMethod","params":$params}"""
-        rpcSocket?.send(body) ?: onResult?.invoke(null)
+        if (rpcSocket?.send(body) != true) {
+            pendingRpc.remove(id)?.let {
+                it.timeout.cancel()
+                it.callback(null)
+            }
+        }
     }
 
-    fun respondPrompt(approved: Boolean, text: String? = null) {
-        val params = JsonObject(
-            buildMap {
-                put("approved", JsonPrimitive(approved))
-                if (text != null) put("text", JsonPrimitive(text))
-            },
-        )
-        rpcSocket?.send(
-            """{"jsonrpc":"2.0","method":"prompt.respond","params":$params}""",
-        )
+    /** Awaitable form for ordered workflows such as attaching several images before a prompt. */
+    suspend fun requestRpc(method: String, params: JsonObject = JsonObject(emptyMap())): JsonElement? =
+        suspendCancellableCoroutine { continuation ->
+            sendRpc(method, params) { result ->
+                if (continuation.isActive) continuation.resume(result)
+            }
+        }
+
+    fun respondPrompt(
+        kind: PromptKind,
+        sessionId: String?,
+        requestId: String?,
+        approved: Boolean,
+        text: String?,
+        approvalChoice: String = "once",
+        onResult: (Boolean) -> Unit,
+    ) {
+        val method = when (kind) {
+            PromptKind.APPROVAL -> "approval.respond"
+            PromptKind.CLARIFY -> "clarify.respond"
+            PromptKind.SUDO -> "sudo.respond"
+            PromptKind.SECRET -> "secret.respond"
+        }
+        val params = buildJsonObject {
+            when (kind) {
+                PromptKind.APPROVAL -> {
+                    sessionId?.let { put("session_id", it) }
+                    put("choice", if (approved) approvalChoice else "deny")
+                }
+                PromptKind.CLARIFY -> {
+                    put("request_id", requestId.orEmpty())
+                    put("answer", if (approved) text.orEmpty() else "")
+                }
+                PromptKind.SUDO -> {
+                    put("request_id", requestId.orEmpty())
+                    put("password", if (approved) text.orEmpty() else "")
+                }
+                PromptKind.SECRET -> {
+                    put("request_id", requestId.orEmpty())
+                    put("value", if (approved) text.orEmpty() else "")
+                }
+            }
+        }
+        sendRpc(method, params) { result ->
+            val root = result as? JsonObject
+            val success = when (kind) {
+                PromptKind.APPROVAL -> root?.get("resolved")?.jsonPrimitive?.booleanOrNull != false && root != null
+                else -> root?.get("status")?.jsonPrimitive?.contentOrNull in setOf("ok", "expired")
+            }
+            onResult(success)
+        }
     }
 
-    private fun wsBase(): String? {
-        val base = connectionStore.activeProfile()?.baseUrl?.trimEnd('/') ?: return null
-        return when {
-            base.startsWith("https://") -> "wss://" + base.removePrefix("https://")
-            base.startsWith("http://") -> "ws://" + base.removePrefix("http://")
-            else -> "ws://$base"
+    /** Request context-aware slash completions from the connected Hermes TUI. */
+    fun requestSlashCompletions(
+        text: String,
+        onResult: (List<SidecarSlashCompletion>) -> Unit,
+    ) {
+        sendRpc("complete.slash", buildJsonObject { put("text", text) }) { result ->
+            val root = result as? JsonObject
+            if (root == null) {
+                onResult(emptyList())
+                return@sendRpc
+            }
+            val replaceFrom = root["replace_from"]?.jsonPrimitive?.intOrNull ?: 1
+            val prefix = if (replaceFrom > 1) text.take(replaceFrom.coerceAtMost(text.length)) else ""
+            val completions = (root["items"] as? JsonArray).orEmpty().mapNotNull { element ->
+                val item = element as? JsonObject ?: return@mapNotNull null
+                val raw = item["text"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                val replacement = when {
+                    replaceFrom > 1 -> prefix + raw
+                    raw.startsWith('/') -> raw
+                    else -> "/$raw"
+                }
+                SidecarSlashCompletion(
+                    replacement = replacement,
+                    description = item["meta"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    kind = item["kind"]?.jsonPrimitive?.contentOrNull,
+                )
+            }
+            onResult(completions)
         }
     }
 
@@ -142,8 +235,14 @@ class HermesEventClient(
      * re-mints auth (single-use WS tickets may have expired), and gives up
      * after [MAX_RECONNECT_ATTEMPTS] consecutive failures.
      */
-    private fun scheduleReconnect(name: String) {
+    private fun scheduleReconnect(name: String, failedSocket: WebSocket) {
         if (stopped) return
+        val isCurrent = when (name) {
+            "events" -> eventsSocket === failedSocket
+            "rpc" -> rpcSocket === failedSocket
+            else -> false
+        }
+        if (!isCurrent || reconnectJobs.containsKey(name)) return
         val attempt = reconnectAttempts.merge(name, 1, Int::plus) ?: 1
         if (attempt > MAX_RECONNECT_ATTEMPTS) {
             reconnectAttempts.remove(name)
@@ -153,10 +252,15 @@ class HermesEventClient(
             return
         }
         val delayMs = reconnectBackoff.getOrElse(attempt - 1) { reconnectBackoff.last() }
-        scope.launch {
+        val reconnectJob = scope.launch {
             delay(delayMs)
+            reconnectJobs.remove(name)
             if (stopped) return@launch
-            val auth = runCatching { wsAuth.authQueryParam() }.getOrNull() ?: return@launch
+            val auth = runCatching { wsAuth.authQueryParam() }.getOrElse {
+                _events.tryEmit(HermesSideEvent.TransportError(name, it.message ?: "authentication failed"))
+                scheduleReconnect(name, failedSocket)
+                return@launch
+            }
             when (name) {
                 "events" -> {
                     val ch = channelId ?: return@launch
@@ -165,18 +269,18 @@ class HermesEventClient(
                 "rpc" -> openRpc(auth)
             }
         }
+        reconnectJobs[name] = reconnectJob
     }
 
     private fun openEvents(channel: String, auth: String) {
-        val base = wsBase() ?: return
-        val qs = buildList {
-            add("channel=$channel")
-            if (auth.isNotBlank()) add(auth)
-            connectionStore.activeProfile()?.managementProfile?.takeIf { it.isNotBlank() }?.let {
-                add("profile=$it")
-            }
-        }.joinToString("&")
-        val req = Request.Builder().url("$base/api/events?$qs").build()
+        val profile = connectionStore.activeProfile() ?: return
+        val url = HermesWebSocketUrlBuilder.build(
+            baseUrl = profile.baseUrl,
+            endpoint = "api/events",
+            authQuery = auth,
+            query = listOf("channel" to channel, "profile" to profile.effectiveManagementProfile()),
+        ) ?: return
+        val req = Request.Builder().url(url).build()
         eventsSocket = clientFactory.webSocketClient().newWebSocket(
             req,
             object : WebSocketListener() {
@@ -188,24 +292,23 @@ class HermesEventClient(
                 override fun onMessage(webSocket: WebSocket, text: String) = parseRpc(text)
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     _events.tryEmit(HermesSideEvent.TransportError("events", t.message ?: "events WS failed"))
-                    scheduleReconnect("events")
+                    scheduleReconnect("events", webSocket)
                 }
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    if (!stopped) scheduleReconnect("events")
+                    if (!stopped) scheduleReconnect("events", webSocket)
                 }
             },
         )
     }
 
     private fun openRpc(auth: String) {
-        val base = wsBase() ?: return
-        val qs = buildList {
-            if (auth.isNotBlank()) add(auth)
-            connectionStore.activeProfile()?.managementProfile?.takeIf { it.isNotBlank() }?.let {
-                add("profile=$it")
-            }
-        }.joinToString("&")
-        val url = if (qs.isEmpty()) "$base/api/ws" else "$base/api/ws?$qs"
+        val profile = connectionStore.activeProfile() ?: return
+        val url = HermesWebSocketUrlBuilder.build(
+            baseUrl = profile.baseUrl,
+            endpoint = "api/ws",
+            authQuery = auth,
+            query = listOf("profile" to profile.effectiveManagementProfile()),
+        ) ?: return
         val req = Request.Builder().url(url).build()
         rpcSocket = clientFactory.webSocketClient().newWebSocket(
             req,
@@ -223,14 +326,21 @@ class HermesEventClient(
                             HermesSideEvent.Model(name, obj["connected"]?.jsonPrimitive?.booleanOrNull),
                         )
                     }
+                    // This is the authoritative command surface for the active
+                    // Hermes instance: built-ins, quick commands, and skills.
+                    sendRpc("commands.catalog") { result ->
+                        parseCommandCatalog(result).takeIf { it.isNotEmpty() }?.let {
+                            _events.tryEmit(HermesSideEvent.CommandCatalog(it))
+                        }
+                    }
                 }
                 override fun onMessage(webSocket: WebSocket, text: String) = parseRpc(text)
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     _events.tryEmit(HermesSideEvent.TransportError("ws", t.message ?: "rpc WS failed"))
-                    scheduleReconnect("rpc")
+                    scheduleReconnect("rpc", webSocket)
                 }
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    if (!stopped) scheduleReconnect("rpc")
+                    if (!stopped) scheduleReconnect("rpc", webSocket)
                 }
             },
         )
@@ -240,7 +350,17 @@ class HermesEventClient(
         val el = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
         val id = el["id"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
         if (id != null && el.containsKey("result")) {
-            pendingRpc.remove(id)?.invoke(el["result"])
+            pendingRpc.remove(id)?.let {
+                it.timeout.cancel()
+                it.callback(el["result"])
+            }
+            return
+        }
+        if (id != null && el.containsKey("error")) {
+            pendingRpc.remove(id)?.let {
+                it.timeout.cancel()
+                it.callback(null)
+            }
             return
         }
         // Non-result frames: classify into a typed event (pure logic below).
@@ -249,6 +369,34 @@ class HermesEventClient(
 
     companion object {
         const val MAX_RECONNECT_ATTEMPTS = 6
+        const val RPC_TIMEOUT_MS = 15_000L
+    }
+
+    private fun parseCommandCatalog(result: JsonElement?): List<SidecarSlashCommand> {
+        val root = result as? JsonObject ?: return emptyList()
+        val commands = linkedMapOf<String, SidecarSlashCommand>()
+
+        fun addPairs(pairs: JsonElement?, category: String) {
+            (pairs as? JsonArray).orEmpty().forEach { pairElement ->
+                val pair = pairElement as? JsonArray ?: return@forEach
+                val command = pair.getOrNull(0)?.jsonPrimitive?.contentOrNull ?: return@forEach
+                val description = pair.getOrNull(1)?.jsonPrimitive?.contentOrNull.orEmpty()
+                if (!command.startsWith('/')) return@forEach
+                commands.putIfAbsent(
+                    command.lowercase(),
+                    SidecarSlashCommand(command, description, category),
+                )
+            }
+        }
+
+        (root["categories"] as? JsonArray).orEmpty().forEach { sectionElement ->
+            val section = sectionElement as? JsonObject ?: return@forEach
+            val category = section["name"]?.jsonPrimitive?.contentOrNull.orEmpty().ifBlank { "Commands" }
+            addPairs(section["pairs"], category)
+        }
+        // Quick commands and skills can be present only in the flat list.
+        addPairs(root["pairs"], "Skills & custom")
+        return commands.values.toList()
     }
 }
 
@@ -276,32 +424,93 @@ object SidecarFrameParser {
         val type = frame["type"]?.jsonPrimitive?.contentOrNull
             ?: frame["event"]?.jsonPrimitive?.contentOrNull
             ?: return null
+        // Gateway event envelopes keep event-specific fields under `payload`.
+        // Flat frames used by older Hermes versions keep them at the top level.
+        val payload = (frame["payload"] as? JsonObject) ?: frame
+        val sessionId = frame["session_id"]?.jsonPrimitive?.contentOrNull
         return when {
+            type == "message.start" -> HermesSideEvent.MessageStart(sessionId)
+            type == "message.delta" -> HermesSideEvent.MessageDelta(
+                sessionId = sessionId,
+                text = payload["text"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            )
+            type == "message.interim" -> HermesSideEvent.MessageInterim(
+                sessionId = sessionId,
+                text = payload["text"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                alreadyStreamed = payload["already_streamed"]?.jsonPrimitive?.booleanOrNull == true,
+            )
+            type == "message.complete" -> {
+                val usage = payload["usage"] as? JsonObject
+                val prompt = usage?.longField("prompt_tokens", "input_tokens", "prompt")
+                val completion = usage?.longField("completion_tokens", "output_tokens", "completion")
+                val total = usage?.longField("total_tokens", "tokens")
+                    ?: if (prompt != null || completion != null) (prompt ?: 0) + (completion ?: 0) else null
+                HermesSideEvent.MessageComplete(
+                    sessionId = sessionId,
+                    text = payload["text"]?.jsonPrimitive?.contentOrNull
+                        ?: payload["rendered"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    status = payload["status"]?.jsonPrimitive?.contentOrNull,
+                    totalTokens = total,
+                    costUsd = usage?.doubleField("cost", "cost_usd", "total_cost"),
+                )
+            }
+            type == "status.update" -> HermesSideEvent.Status(
+                sessionId = sessionId,
+                kind = payload["kind"]?.jsonPrimitive?.contentOrNull,
+                text = payload["text"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            )
             type.contains("tool") -> {
-                val name = frame["name"]?.jsonPrimitive?.contentOrNull
-                    ?: frame["tool"]?.jsonPrimitive?.contentOrNull
+                val name = payload["name"]?.jsonPrimitive?.contentOrNull
+                    ?: payload["tool"]?.jsonPrimitive?.contentOrNull
                     ?: "tool"
-                val id = frame["id"]?.jsonPrimitive?.contentOrNull
-                    ?: frame["call_id"]?.jsonPrimitive?.contentOrNull
+                val id = payload["tool_id"]?.jsonPrimitive?.contentOrNull
+                    ?: payload["id"]?.jsonPrimitive?.contentOrNull
+                    ?: payload["call_id"]?.jsonPrimitive?.contentOrNull
                     ?: name
                 val status = when {
                     type.endsWith("complete") || type.endsWith("end") || type.endsWith("done") -> ToolCallStatus.DONE
                     type.endsWith("error") || type.endsWith("fail") -> ToolCallStatus.ERROR
                     else -> ToolCallStatus.RUNNING
                 }
-                val args = frame["args"]?.toString() ?: frame["arguments"]?.toString()
-                HermesSideEvent.Tool(id, name, status, args, frame["message"]?.jsonPrimitive?.contentOrNull)
+                val args = payload["args_text"]?.jsonPrimitive?.contentOrNull
+                    ?: payload["args"]?.toString()
+                    ?: payload["arguments"]?.toString()
+                val message = payload["summary"]?.jsonPrimitive?.contentOrNull
+                    ?: payload["error"]?.jsonPrimitive?.contentOrNull
+                    ?: payload["message"]?.jsonPrimitive?.contentOrNull
+                HermesSideEvent.Tool(id, name, status, args, message)
             }
-            type.contains("prompt") || type.contains("approval") || type.contains("clarify") || type.contains("sudo") -> {
-                val message = frame["message"]?.jsonPrimitive?.contentOrNull
-                    ?: frame["prompt"]?.jsonPrimitive?.contentOrNull
+            type.endsWith(".expire") -> HermesSideEvent.PromptExpired(
+                sessionId = sessionId,
+                requestId = payload["request_id"]?.jsonPrimitive?.contentOrNull,
+            )
+            type.endsWith(".request") && (
+                type.startsWith("approval.") || type.startsWith("clarify.") ||
+                    type.startsWith("sudo.") || type.startsWith("secret.")
+                ) -> {
+                val message = payload["message"]?.jsonPrimitive?.contentOrNull
+                    ?: payload["prompt"]?.jsonPrimitive?.contentOrNull
+                    ?: payload["question"]?.jsonPrimitive?.contentOrNull
+                    ?: payload["description"]?.jsonPrimitive?.contentOrNull
+                    ?: payload["command"]?.jsonPrimitive?.contentOrNull
                     ?: "Approval required"
                 val kind = when {
                     type.contains("sudo") -> PromptKind.SUDO
                     type.contains("clarify") -> PromptKind.CLARIFY
+                    type.contains("secret") -> PromptKind.SECRET
                     else -> PromptKind.APPROVAL
                 }
-                HermesSideEvent.Prompt(kind, message, frame)
+                val choices = (payload["choices"] as? JsonArray).orEmpty().mapNotNull {
+                    it.jsonPrimitive.contentOrNull
+                }
+                HermesSideEvent.Prompt(
+                    kind = kind,
+                    message = message,
+                    sessionId = sessionId,
+                    requestId = payload["request_id"]?.jsonPrimitive?.contentOrNull,
+                    choices = choices,
+                    raw = payload,
+                )
             }
             // Rich per-session status pushed on connect / model change.
             type == "session.info" -> {
@@ -317,8 +526,10 @@ object SidecarFrameParser {
                 )
             }
             // Token/cost accounting when a provider emits it (not all do).
-            type.contains("usage") || type.contains("cost") || frame.containsKey("usage") -> {
-                val usage = (frame["usage"] as? JsonObject) ?: frame
+            type.contains("usage") || type.contains("cost") || payload.containsKey("usage") -> {
+                val usage = (payload["usage"] as? JsonObject)
+                    ?: (frame["usage"] as? JsonObject)
+                    ?: payload
                 val prompt = usage.longField("prompt_tokens", "input_tokens", "prompt")
                 val completion = usage.longField("completion_tokens", "output_tokens", "completion")
                 val total = usage.longField("total_tokens", "tokens")
@@ -331,10 +542,10 @@ object SidecarFrameParser {
                 }
             }
             type.contains("model") -> {
-                val model = frame["model"]?.jsonPrimitive?.contentOrNull
-                    ?: frame["name"]?.jsonPrimitive?.contentOrNull
+                val model = payload["model"]?.jsonPrimitive?.contentOrNull
+                    ?: payload["name"]?.jsonPrimitive?.contentOrNull
                 if (model != null) {
-                    HermesSideEvent.Model(model, frame["connected"]?.jsonPrimitive?.booleanOrNull)
+                    HermesSideEvent.Model(model, payload["connected"]?.jsonPrimitive?.booleanOrNull)
                 } else {
                     HermesSideEvent.Raw(type, frame)
                 }
@@ -361,7 +572,19 @@ private fun JsonObject.doubleField(vararg names: String): Double? {
 }
 
 enum class ToolCallStatus { RUNNING, DONE, ERROR }
-enum class PromptKind { APPROVAL, CLARIFY, SUDO }
+enum class PromptKind { APPROVAL, CLARIFY, SUDO, SECRET }
+
+data class SidecarSlashCommand(
+    val command: String,
+    val description: String,
+    val category: String,
+)
+
+data class SidecarSlashCompletion(
+    val replacement: String,
+    val description: String,
+    val kind: String?,
+)
 
 sealed class HermesSideEvent {
     data class Tool(
@@ -372,8 +595,33 @@ sealed class HermesSideEvent {
         val message: String?,
     ) : HermesSideEvent()
 
-    data class Prompt(val kind: PromptKind, val message: String, val raw: JsonObject) : HermesSideEvent()
+    data class Prompt(
+        val kind: PromptKind,
+        val message: String,
+        val sessionId: String?,
+        val requestId: String?,
+        val choices: List<String>,
+        val raw: JsonObject,
+    ) : HermesSideEvent()
+    data class PromptExpired(val sessionId: String?, val requestId: String?) : HermesSideEvent()
     data class Model(val name: String, val connected: Boolean?) : HermesSideEvent()
+    data class CommandCatalog(val commands: List<SidecarSlashCommand>) : HermesSideEvent()
+
+    data class MessageStart(val sessionId: String?) : HermesSideEvent()
+    data class MessageDelta(val sessionId: String?, val text: String) : HermesSideEvent()
+    data class MessageInterim(
+        val sessionId: String?,
+        val text: String,
+        val alreadyStreamed: Boolean,
+    ) : HermesSideEvent()
+    data class MessageComplete(
+        val sessionId: String?,
+        val text: String,
+        val status: String?,
+        val totalTokens: Long?,
+        val costUsd: Double?,
+    ) : HermesSideEvent()
+    data class Status(val sessionId: String?, val kind: String?, val text: String) : HermesSideEvent()
 
     /** Live agent config for a session (model, provider, reasoning, approval mode). */
     data class SessionInfo(

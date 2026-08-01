@@ -32,6 +32,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -187,7 +188,12 @@ fun ConfigScreen() {
                             val meta = fields[key]?.jsonObject
                             val type = meta?.get("type")?.jsonPrimitive?.contentOrNull
                             val desc = meta?.get("description")?.jsonPrimitive?.contentOrNull
-                            val current = configObj?.get(key)?.toString()?.trim('"') ?: ""
+                            val currentElement = configObj?.let { configValueAtPath(it, key) }
+                            val current = when (currentElement) {
+                                is JsonPrimitive -> currentElement.content
+                                null -> ""
+                                else -> currentElement.toString()
+                            }
                             val enumValues = meta?.let { enumOptions(it) }
                             when {
                                 !enumValues.isNullOrEmpty() -> {
@@ -207,7 +213,10 @@ fun ConfigScreen() {
                                                 ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
                                             },
                                             modifier = Modifier
-                                                .menuAnchor()
+                                                .menuAnchor(
+                                                    ExposedDropdownMenuAnchorType.PrimaryNotEditable,
+                                                    enabled = true,
+                                                )
                                                 .fillMaxWidth(),
                                         )
                                         ExposedDropdownMenu(
@@ -218,7 +227,7 @@ fun ConfigScreen() {
                                                 DropdownMenuItem(
                                                     text = { Text(option) },
                                                     onClick = {
-                                                        text = updateConfigKey(text, key, option)
+                                                        text = updateConfigKey(text, key, option, type)
                                                         expanded = false
                                                     },
                                                 )
@@ -243,7 +252,7 @@ fun ConfigScreen() {
                                         androidx.compose.material3.Switch(
                                             checked = checked,
                                             onCheckedChange = { on ->
-                                                text = updateConfigKey(text, key, on.toString())
+                                                text = updateConfigKey(text, key, on.toString(), "boolean")
                                             },
                                         )
                                     }
@@ -252,7 +261,7 @@ fun ConfigScreen() {
                                     OutlinedTextField(
                                         value = current,
                                         onValueChange = { newVal ->
-                                            text = updateConfigKey(text, key, newVal)
+                                            text = updateConfigKey(text, key, newVal, type)
                                         },
                                         label = { Text(key) },
                                         supportingText = desc?.let { { Text(it) } },
@@ -369,17 +378,49 @@ private fun enumOptions(meta: JsonObject): List<String> {
     return emptyList()
 }
 
-private fun updateConfigKey(text: String, key: String, newVal: String): String {
+internal fun configValueAtPath(root: JsonObject, path: String): kotlinx.serialization.json.JsonElement? {
+    var current: kotlinx.serialization.json.JsonElement = root
+    for (part in path.split('.')) {
+        current = (current as? JsonObject)?.get(part) ?: return null
+    }
+    return current
+}
+
+internal fun updateConfigKey(text: String, key: String, newVal: String, expectedType: String?): String {
     return runCatching {
-        val obj = JsonConfig.json.parseToJsonElement(text).jsonObject.toMutableMap()
         val trimmed = newVal.trim()
-        obj[key] = when {
-            trimmed.equals("true", true) || trimmed.equals("false", true) ->
+        val value = when (expectedType) {
+            "boolean", "bool" ->
                 JsonPrimitive(trimmed.toBoolean())
-            trimmed.toLongOrNull() != null -> JsonPrimitive(trimmed.toLong())
-            trimmed.toDoubleOrNull() != null -> JsonPrimitive(trimmed.toDouble())
+            "number", "integer" -> trimmed.toLongOrNull()?.let(::JsonPrimitive)
+                ?: trimmed.toDoubleOrNull()?.let(::JsonPrimitive)
+                ?: error("Expected a number")
+            "list", "array" -> JsonConfig.json.parseToJsonElement(trimmed).also {
+                require(it is JsonArray) { "Expected a JSON array" }
+            }
+            "object" -> JsonConfig.json.parseToJsonElement(trimmed).also {
+                require(it is JsonObject) { "Expected a JSON object" }
+            }
             else -> JsonPrimitive(newVal)
         }
-        JsonConfig.json.encodeToString(JsonObject(obj))
+        val root = JsonConfig.json.parseToJsonElement(text).jsonObject
+        JsonConfig.json.encodeToString(setConfigValueAtPath(root, key.split('.'), value))
     }.getOrDefault(text)
+}
+
+private fun setConfigValueAtPath(
+    root: JsonObject,
+    parts: List<String>,
+    value: kotlinx.serialization.json.JsonElement,
+): JsonObject {
+    require(parts.isNotEmpty())
+    val out = root.toMutableMap()
+    val head = parts.first()
+    if (parts.size == 1) {
+        out[head] = value
+    } else {
+        val child = out[head] as? JsonObject ?: JsonObject(emptyMap())
+        out[head] = setConfigValueAtPath(child, parts.drop(1), value)
+    }
+    return JsonObject(out)
 }

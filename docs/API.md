@@ -1,48 +1,65 @@
-# Hermes Dashboard API map (Talaria)
+# Hermes API map
 
-Baseline: `BuildConfig.HERMES_API_BASELINE` = `dashboard-v0.17+`.  
-Upstream references: Hermes `web/src/lib/api.ts`, `hermes_cli/web_server.py`.
+Verified baseline: Hermes Agent `v0.19.1`, upstream commit `470cf66b039c73bdd2c21d43094ce41a4db74eae` (2026-08-01). `BuildConfig.HERMES_API_BASELINE` is `hermes-v0.19.1`.
 
-## Auth
+Primary contract sources are upstream `hermes_cli/web_server.py`, `hermes_cli/web_routers/*`, `hermes_cli/dashboard_auth/routes.py`, and `apps/desktop/src/hermes.ts`. This document records UI coverage, not every Retrofit annotation.
 
-| Call | Notes |
-|------|--------|
-| REST | Session token header / basic / bearer / cookie jar (OIDC Custom Tabs) |
-| `POST /api/auth/ws-ticket` | Used when `auth_required` — WS query `ticket=` |
-| Loopback / token mode | WS query `token=` |
-| Close `4401` / `4403` | Surface via `WsAuthHelper.explainCloseCode` + Connection doctor |
+## Authentication and sockets
 
-## Chat sockets
+| Contract | Talaria behavior |
+|---|---|
+| `/auth/password-login`, `/api/auth/providers`, `/api/auth/me` | Provider discovery, JSON password login, persistent scoped cookies |
+| Native OIDC discovery/token routes | RFC 8252 loopback callback, PKCE/state validation, encrypted refresh state |
+| `POST /api/auth/ws-ticket` | Fresh ticket for gated WebSockets |
+| `/api/pty` | One resumable Hermes TUI process per Android chat tab |
+| `/api/ws` | JSON-RPC commands, completions, images, prompts, model/session state |
+| `/api/events` | Tool, lifecycle, prompt, usage, completion, and notification events |
 
-| Socket | Role |
-|--------|------|
-| `/api/pty?channel=&resume=&profile=&cols=&rows=` | TUI bridge; resize `\x1b[RESIZE:cols;rows]` + JSON |
-| `/api/ws` | JSON-RPC: model state, `prompt.respond`, notify |
-| `/api/events?channel=` | Tool start/progress/complete fan-out |
+Talaria recognizes authentication close codes `4401` and `4403`, never sends expired OIDC access tokens after failed refresh, and scopes the cached `auth_required` result to the saved connection.
 
-Sidecar sockets stop when the process backgrounds (`HermesForegroundObserver`). Chat reconnects on next open with a fresh ticket.
+## Implemented mobile UI
 
-## Profile scope
+| Area | Coverage |
+|---|---|
+| Status and system | `/api/status`, system stats, gateway start/stop/restart, action polling, update check |
+| Sessions | List/paging, source filters, search, details/messages, rename, delete, prune, safe share export |
+| Config and credentials | Typed schema/defaults, nested config editing, SAF import/share export, env set/delete, bundled provider catalog |
+| Models and tools | Model info/options/set with expensive-model confirmation; toolset list/toggle |
+| Cron | Job list/create/update/pause/resume/trigger/delete |
+| Skills | Installed list/toggle; Hub search/preview/scan/install/uninstall |
+| MCP | Server list/add/delete/enable/test; OAuth browser flow; approved catalog browse/install with required environment values |
+| Messaging | Platform list, environment editing, enable/update, connection test |
+| Pairing and webhooks | Pairing approve/revoke/clear; notification approval; webhook create/enable/toggle/delete and one-time result display |
+| Profiles | List/create/clone/rename/delete, explicit host-active switch, SOUL and description editing, automatic description |
+| Files and learning | Remote workspace `/api/fs` browse/read/edit with stale-write protection; learning graph/node inspect/edit/delete |
+| Memory and curator | Provider/status/reset plus curator pause/run/status |
+| Operations | Doctor, security audit, backup, action-log polling, logs, analytics |
 
-`ProfileQueryInterceptor` appends `?profile=` for management-profile-scoped prefixes including status, sessions, config, env, skills, toolsets, mcp, messaging, model, pairing, logs, analytics, cron, webhooks, gateway, ops, hermes, portal, memory, curator, system.
+`ProfileQueryInterceptor` explicitly scopes management calls to the selected Hermes profile. Pairing request bodies also include the effective profile because current Hermes requires it.
 
-## Implemented REST (UI wired)
+## Known remote-capable gaps
 
-Status, sessions (+ search/prune/patch/delete/messages), config (+ schema/defaults, enum dropdowns from `enum`/`choices`/`oneOf`, SAF file import + paste import + share export), env, logs, analytics, cron CRUD/lifecycle, skills toggle, toolsets, MCP CRUD/test, messaging platforms update/test, pairing approve/revoke/clear-pending (+ notification **Approve** action), webhooks create/enable/delete, profiles active get/set, system stats, portal/memory/curator, ops doctor/audit/backup, hermes update check, model info/options/set.
+These APIs exist in the verified upstream baseline but do not yet have complete Talaria UI coverage. They are backlog, not “blocked upstream” and not part of a released parity claim.
 
-## Gaps / wontfix
+| Area | Missing coverage |
+|---|---|
+| Session administration | Bulk/empty cleanup, import, stats, latest-descendant helpers |
+| Cron | Run history, delivery targets, blueprints, direct fire |
+| Skills and tools | Skill create/content edit/update; per-toolset provider/model/env setup; terminal backend/computer-use setup |
+| MCP | Editing an existing server and catalog diagnostics (install and OAuth are implemented) |
+| Managed files/media | `/api/files` upload/download/mkdir/delete and `/api/media`; workspace text `/api/fs` is implemented |
+| Providers/models | Provider validation/OAuth/custom endpoints, credential pools, recommended/auxiliary models, MoA configuration |
+| Messaging onboarding | Guided Telegram and WhatsApp onboarding flows |
+| Operations | Imports/uploads, hooks, checkpoints, raw config, prompt-size/dump/migrate/debug-share, backup download |
+| Audio | Hermes-hosted transcribe/speak/voice APIs; Talaria currently uses Android STT/TTS |
+| Git/review | Remote Git status/worktrees/branches/review/stage/commit/push/PR routes |
+| Dashboard extensions | Theme/font preferences and agent-plugin marketplace/management |
 
-All remaining entries are blocked upstream or explicit non-goals — the `1.0.0` parity-freeze
-exit criteria ("Gaps table empty or wontfix-only") are met.
+## Intentional Android adaptations
 
-| Area | Status |
-|------|--------|
-| Skills Hub install/uninstall API | **wontfix (blocked)** — dashboard routes unstable; Custom Tabs docs fallback only |
-| MCP OAuth / catalog install | **wontfix (blocked)** — until upstream exposes a stable flow |
-| Pixel xterm.js / VT emulator | **non-goal** — Compose Terminal + Reading modes instead |
-| `/api/files*` browser / share targets | **wontfix** — not exposed by the dashboard |
-| Dashboard plugins / themes | **non-goal** — out of scope for a remote client |
-| OpenAI-compatible `/v1/chat/completions` | **non-goal** — not used by the dashboard client |
-| On-device Whisper/Vosk STT module | **non-goal (by design)** — on-device `SpeechRecognizer` ships; heavier engines are opt-in, not in the default APK |
+- Talaria does not embed an xterm.js pixel clone; it offers clean Reading mode and a selectable ANSI-stripped Terminal mode.
+- OpenAI-compatible `/v1/chat/completions` is not used because Hermes chat parity runs through its PTY and sidecar protocols.
+- Electron-only window, tray, pet overlay, native desktop terminal, and local filesystem integrations are replaced with Android notifications, app shortcuts, widgets, Quick Settings, Photo Picker, and SAF.
+- Large bundled Whisper/Vosk engines remain out of the default APK. Android on-device speech recognition is preferred; cloud recognition requires opt-in.
 
-When Hermes adds or renames endpoints, update `HermesApi.kt`, this file, and `BuildConfig.HERMES_API_BASELINE`.
+When the Hermes contract changes, update `HermesApi.kt`, compatibility tests, this map, and `BuildConfig.HERMES_API_BASELINE` together.

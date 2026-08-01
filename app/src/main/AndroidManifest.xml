@@ -5,14 +5,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:name=".TalariaApp"
@@ -26,7 +22,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Talaria"
         android:usesCleartextTraffic="true"
-        tools:targetApi="35">
+        tools:targetApi="36">
 
         <activity
             android:name=".MainActivity"
@@ -45,30 +41,22 @@
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
+                <data android:mimeType="image/*" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="talaria" android:host="chat" />
-                <data android:scheme="talaria" android:host="session" />
-                <data android:scheme="talaria" android:host="pairing" />
-                <data android:scheme="talaria" android:host="connect" />
-                <data android:scheme="talaria" android:host="status" />
-                <data android:scheme="talaria" android:host="activity" />
-                <data android:scheme="talaria" android:host="manage" />
+                <data android:scheme="talaria" />
+                <data android:host="chat" />
+                <data android:host="session" />
+                <data android:host="pairing" />
+                <data android:host="connect" />
+                <data android:host="status" />
+                <data android:host="activity" />
+                <data android:host="manage" />
             </intent-filter>
         </activity>
-
-        <service
-            android:name=".worker.HermesSyncForegroundService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
-
-        <service
-            android:name=".voice.VoiceDictationService"
-            android:exported="false"
-            android:foregroundServiceType="microphone" />
 
         <receiver
             android:name=".worker.BootReceiver"

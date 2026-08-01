@@ -72,6 +72,7 @@ fun WebhooksScreen() {
     var name by remember { mutableStateOf("") }
     var prompt by remember { mutableStateOf("") }
     var createdRoute by remember { mutableStateOf<WebhookRoute?>(null) }
+    var deleteTarget by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     fun reload() = scope.launch {
@@ -109,6 +110,24 @@ fun WebhooksScreen() {
             dismissButton = {
                 TextButton(onClick = { confirmEnable = false }) { Text("Cancel") }
             },
+        )
+    }
+    deleteTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Delete webhook?") },
+            text = { Text("Permanently delete '$target'?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteTarget = null
+                    scope.launch {
+                        repo.deleteWebhook(target)
+                            .onSuccess { reload() }
+                            .onFailure { error = it.message }
+                    }
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } },
         )
     }
 
@@ -250,13 +269,7 @@ fun WebhooksScreen() {
                                             Text("Copy URL")
                                         }
                                     }
-                                    TextButton(onClick = {
-                                        scope.launch {
-                                            repo.deleteWebhook(w.name)
-                                                .onSuccess { reload() }
-                                                .onFailure { error = it.message }
-                                        }
-                                    }) { Text("Delete") }
+                                    TextButton(onClick = { deleteTarget = w.name }) { Text("Delete") }
                                 }
                             }
                         }

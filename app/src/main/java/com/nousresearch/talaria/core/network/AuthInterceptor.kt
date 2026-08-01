@@ -19,7 +19,6 @@ package com.nousresearch.talaria.core.network
 
 import com.nousresearch.talaria.core.data.prefs.SecureConnectionStore
 import com.nousresearch.talaria.domain.model.AuthMode
-import okhttp3.Credentials
 import okhttp3.Interceptor
 import okhttp3.Response
 
@@ -27,10 +26,13 @@ import okhttp3.Response
  * Attaches Hermes dashboard auth for the active connection profile.
  *
  * Loopback / token mode: `X-Hermes-Session-Token`
- * Gated basic/bearer: Authorization header (cookies also flow via CookieJar)
+ * Gated password auth: Hermes session cookies minted by password-login
+ * Gated native/bearer auth: Authorization bearer token
  */
 class AuthInterceptor(
     private val connectionStore: SecureConnectionStore,
+    private val oidcTokenRefresher: OidcTokenRefresher,
+    private val passwordSessionManager: PasswordSessionManager,
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val active = connectionStore.activeProfile()
@@ -41,10 +43,8 @@ class AuthInterceptor(
                 req.header(SESSION_HEADER, it)
             }
             AuthMode.BASIC -> {
-                val user = active.username.orEmpty()
-                val pass = secrets?.password.orEmpty()
-                if (user.isNotBlank()) {
-                    req.header("Authorization", Credentials.basic(user, pass))
+                if (!isPasswordBootstrapPath(chain.request().url.encodedPath)) {
+                    passwordSessionManager.ensureSession(active, chain.request().url)
                 }
                 secrets?.sessionToken?.takeIf { it.isNotBlank() }?.let {
                     req.header(SESSION_HEADER, it)
@@ -53,7 +53,17 @@ class AuthInterceptor(
             AuthMode.BEARER -> secrets?.bearerToken?.takeIf { it.isNotBlank() }?.let {
                 req.header("Authorization", "Bearer $it")
             }
-            AuthMode.OIDC_BROWSER, AuthMode.NONE, null -> {
+            AuthMode.OIDC_BROWSER -> {
+                if (!chain.request().url.encodedPath.contains("/auth/native/")) {
+                    oidcTokenRefresher.accessToken(active)?.let {
+                        req.header("Authorization", "Bearer $it")
+                    }
+                }
+                secrets?.sessionToken?.takeIf { it.isNotBlank() }?.let {
+                    req.header(SESSION_HEADER, it)
+                }
+            }
+            AuthMode.NONE, null -> {
                 secrets?.sessionToken?.takeIf { it.isNotBlank() }?.let {
                     req.header(SESSION_HEADER, it)
                 }
@@ -65,5 +75,11 @@ class AuthInterceptor(
 
     companion object {
         const val SESSION_HEADER = "X-Hermes-Session-Token"
+
+        private fun isPasswordBootstrapPath(path: String): Boolean =
+            path == "/api/status" ||
+                path == "/api/auth/providers" ||
+                path == "/auth/password-login" ||
+                path.startsWith("/auth/native/")
     }
 }

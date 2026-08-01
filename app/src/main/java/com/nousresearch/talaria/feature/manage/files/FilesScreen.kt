@@ -35,10 +35,12 @@ import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -74,20 +76,57 @@ fun FilesScreen(vm: FilesViewModel = viewModel(factory = FilesViewModel.factory(
                     append(" · ")
                     append(formatBytes(file.byteSize))
                     if (file.binary) append(" · binary")
+                    if (file.truncated) append(" · truncated")
                 },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
-            Text(
-                if (file.binary) "Binary file — preview unavailable." else file.text,
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
-                    .verticalScroll(rememberScrollState()),
-            )
+            if (ui.editing) {
+                OutlinedTextField(
+                    value = ui.editDraft,
+                    onValueChange = vm::updateDraft,
+                    label = { Text("File contents") },
+                    textStyle = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    ),
+                    minLines = 12,
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                )
+                ui.previewError?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = vm::cancelEdit, enabled = !ui.saving) { Text("Cancel") }
+                    Button(onClick = vm::saveEdit, enabled = !ui.saving) {
+                        Text(if (ui.saving) "Saving…" else "Save")
+                    }
+                }
+            } else {
+                Text(
+                    if (file.binary) "Binary file — preview unavailable." else file.text,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .verticalScroll(rememberScrollState()),
+                )
+                if (!file.binary && !file.truncated) {
+                    TextButton(onClick = vm::beginEdit, modifier = Modifier.padding(horizontal = 8.dp)) {
+                        Text("Edit")
+                    }
+                } else if (file.truncated) {
+                    Text(
+                        "Editing is disabled because only a preview was downloaded.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
+            }
             Spacer(Modifier.height(24.dp))
         }
     }

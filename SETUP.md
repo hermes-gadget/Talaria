@@ -24,7 +24,7 @@ sdk.dir=/home/you/Android/Sdk
 
 Required packages:
 
-- `platforms;android-35`
+- `platforms;android-36`
 - `build-tools;35.0.0`
 - `platform-tools`
 
@@ -114,17 +114,16 @@ apksigner verify app-release.apk
 
 - Notifications (Android 13+)
 - Microphone (dictation)
-- Optional: ignore battery optimizations (long-lived sync FGS)
 
 ## Emulator networking
 
 `127.0.0.1` on the emulator is the emulator itself. Use `10.0.2.2:9119` to reach a dashboard on the host machine, or a LAN/Tailscale IP for physical devices.
 
 
-## OIDC / Custom Tabs login
+## Native OIDC login
 
 1. On Connect, set **Auth mode** to `OIDC_BROWSER`.
-2. Tap **Open portal login** — Chrome Custom Tabs opens `{dashboard}/auth/login`.
-3. Complete login in the browser. If the host redirects to `talaria://…`, the app resumes and keeps cookies in the OkHttp jar.
-4. Tap **Save & connect**. Talaria will mint WS tickets when `auth_required` is true.
-5. If the redirect never returns to the app, copy a session token from the dashboard loopback SPA and use **SESSION_TOKEN** mode instead.
+2. Tap **Sign in with browser**. Talaria discovers the server's native OIDC provider and opens its authorization URL.
+3. Complete login in the browser. The provider redirects to a temporary loopback listener on the phone; Talaria validates the callback state and exchanges the PKCE verifier for tokens.
+4. Talaria stores the refresh token in encrypted preferences, refreshes access before expiry, and mints WebSocket tickets when required.
+5. If the server does not advertise native OIDC, use its password provider or a session token instead.

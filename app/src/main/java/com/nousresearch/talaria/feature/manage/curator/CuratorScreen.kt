@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -33,27 +35,23 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nousresearch.talaria.domain.model.CuratorState
-import com.nousresearch.talaria.feature.manage.SimpleManageViewModel
 import com.nousresearch.talaria.ui.components.ErrorBox
 import com.nousresearch.talaria.ui.components.LoadingBox
 import com.nousresearch.talaria.ui.components.ScreenScaffold
 import com.nousresearch.talaria.ui.theme.LocalSpacing
 
 @Composable
-fun CuratorScreen() {
+fun CuratorScreen(vm: CuratorViewModel = viewModel(factory = CuratorViewModel.factory())) {
     val spacing = LocalSpacing.current
-    val vm: SimpleManageViewModel = viewModel(
-        factory = SimpleManageViewModel.factory { getCuratorState() },
-    )
     val ui by vm.ui.collectAsStateWithLifecycle()
-    val state = ui.data as? CuratorState
+    val state = ui.state
 
     ScreenScaffold("Curator", actions = {
         TextButton(onClick = { vm.refresh() }) { Text("Refresh") }
     }) {
         when {
             ui.loading && state == null -> LoadingBox()
-            ui.error != null && state == null -> ErrorBox(ui.error!!, onRetry = { vm.refresh() })
+            ui.error != null && state == null -> ErrorBox(ui.error!!, onRetry = vm::refresh)
             state == null -> Text("Curator unavailable.")
             else -> Column(verticalArrangement = Arrangement.spacedBy(spacing.itemGap)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
@@ -61,6 +59,25 @@ fun CuratorScreen() {
                     if (state.paused) StatusChip("paused", false)
                 }
                 CuratorCard(state)
+                Row(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
+                    OutlinedButton(
+                        onClick = { vm.setPaused(!state.paused) },
+                        enabled = !ui.busy && state.enabled,
+                    ) { Text(if (state.paused) "Resume" else "Pause") }
+                    Button(onClick = vm::runNow, enabled = !ui.busy && state.enabled && !state.paused) {
+                        Text(if (ui.busy) "Running…" else "Run now")
+                    }
+                }
+                ui.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                ui.action?.let { action ->
+                    Text(
+                        if (action.exit_code == 0) "Curator completed" else "Curator exited ${action.exit_code ?: "?"}",
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    if (action.lines.isNotEmpty()) {
+                        Text(action.lines.joinToString("\n"), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             }
         }
     }

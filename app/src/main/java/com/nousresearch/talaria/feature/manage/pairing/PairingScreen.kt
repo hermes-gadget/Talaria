@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -38,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.domain.model.PairingResponse
+import com.nousresearch.talaria.domain.model.PairingUser
 import com.nousresearch.talaria.ui.components.ScreenScaffold
 import kotlinx.coroutines.launch
 
@@ -46,6 +48,8 @@ fun PairingScreen() {
     val repo = TalariaApp.instance.container.hermesRepository
     var data by remember { mutableStateOf<PairingResponse?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+    var revokeTarget by remember { mutableStateOf<PairingUser?>(null) }
+    var confirmClear by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     fun reload() = scope.launch {
@@ -55,20 +59,48 @@ fun PairingScreen() {
     }
     LaunchedEffect(Unit) { reload() }
 
+    revokeTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { revokeTarget = null },
+            title = { Text("Revoke messaging access?") },
+            text = { Text("Revoke ${target.user_name ?: target.user_id} on ${target.platform}?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    revokeTarget = null
+                    scope.launch {
+                        repo.revokePairing(target.platform, target.user_id)
+                            .onSuccess { reload() }
+                            .onFailure { message = it.message }
+                    }
+                }) { Text("Revoke") }
+            },
+            dismissButton = { TextButton(onClick = { revokeTarget = null }) { Text("Cancel") } },
+        )
+    }
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Clear pending requests?") },
+            text = { Text("Discard every pending messaging pairing request?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClear = false
+                    scope.launch {
+                        repo.clearPendingPairing()
+                            .onSuccess { message = "Cleared pending"; reload() }
+                            .onFailure { message = it.message }
+                    }
+                }) { Text("Clear") }
+            },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancel") } },
+        )
+    }
+
     ScreenScaffold("Pairing", "Approve messaging users", actions = {
         TextButton(onClick = { reload() }) { Text("Refresh") }
     }) {
         Row {
-            OutlinedButton(onClick = {
-                scope.launch {
-                    repo.clearPendingPairing()
-                        .onSuccess {
-                            message = "Cleared pending"
-                            reload()
-                        }
-                        .onFailure { message = it.message }
-                }
-            }) { Text("Clear pending") }
+            OutlinedButton(onClick = { confirmClear = true }) { Text("Clear pending") }
         }
         message?.let {
             Text(it, color = MaterialTheme.colorScheme.secondary)
@@ -120,9 +152,7 @@ fun PairingScreen() {
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text("${p.platform}: ${p.user_name ?: p.user_id}")
-                        TextButton(onClick = {
-                            scope.launch { repo.revokePairing(p.platform, p.user_id); reload() }
-                        }) { Text("Revoke") }
+                        TextButton(onClick = { revokeTarget = p }) { Text("Revoke") }
                     }
                 }
             }

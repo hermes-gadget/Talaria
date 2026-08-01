@@ -18,7 +18,9 @@ package com.nousresearch.talaria.feature.chat
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -37,6 +39,7 @@ import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -53,6 +56,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Mic
@@ -90,6 +94,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -100,6 +105,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.domain.model.ChatLine
 import com.nousresearch.talaria.domain.model.ToolCallUi
+import com.nousresearch.talaria.domain.model.scopeId
 import com.nousresearch.talaria.ui.components.SimpleMarkdownText
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -107,13 +113,21 @@ import com.nousresearch.talaria.ui.components.SimpleMarkdownText
 fun ChatScreen(
     resumeSessionId: String? = null,
     initialShare: String? = null,
+    initialShareImage: Uri? = null,
+    onInitialShareConsumed: () -> Unit = {},
     onOpenSessions: () -> Unit,
     onNeedConnection: () -> Unit,
     vm: ChatViewModel = viewModel(factory = ChatViewModel.factory()),
 ) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
-    val hasConnection = TalariaApp.instance.container.connectionStore.activeProfile() != null
+    val connectionStore = TalariaApp.instance.container.connectionStore
+    val connectionProfiles by connectionStore.profiles.collectAsStateWithLifecycle()
+    val activeConnectionId by connectionStore.activeId.collectAsStateWithLifecycle()
+    val activeConnection = connectionProfiles.find { it.id == activeConnectionId }
+        ?: connectionProfiles.firstOrNull()
+    val connectionScope = activeConnection?.scopeId()
+    val hasConnection = connectionScope != null
     val density = LocalDensity.current
     var renameTarget by remember { mutableStateOf<ChatTab?>(null) }
 
@@ -125,27 +139,46 @@ fun ChatScreen(
         if (granted) vm.toggleListen()
         else vm.reportError("Microphone permission denied")
     }
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        uri?.let(vm::attachImage)
+    }
 
-    LaunchedEffect(resumeSessionId, hasConnection) {
+    LaunchedEffect(resumeSessionId, connectionScope) {
         if (!hasConnection) onNeedConnection() else vm.ensureStarted(resumeSessionId)
     }
     // Reconnect dead PTYs whenever Chat returns to the foreground (home/recents
     // leave the ViewModel alive with connected=false and no sockets).
-    LaunchedEffect(lifecycleOwner, hasConnection) {
+    LaunchedEffect(lifecycleOwner, connectionScope) {
         if (!hasConnection) return@LaunchedEffect
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             vm.reconnectDisconnected()
         }
     }
-    LaunchedEffect(initialShare) {
-        if (!initialShare.isNullOrBlank()) vm.updateDraft(initialShare)
+    LaunchedEffect(initialShare, initialShareImage, ui.activeTabId) {
+        if ((!initialShare.isNullOrBlank() || initialShareImage != null) && ui.activeTabId != null) {
+            if (!initialShare.isNullOrBlank()) vm.updateDraft(initialShare)
+            initialShareImage?.let(vm::attachImage)
+            onInitialShareConsumed()
+        }
     }
     val active = ui.active
     // Reading mode shows only the clean conversation (never the raw PTY/TUI dump).
     // Terminal mode appends the in-flight streaming turn as one keyed line so
     // chunks only recompose that single item, not the whole list.
     val displayLines = if (ui.transcriptMode == TranscriptMode.READING) {
-        active?.readingMessages.orEmpty()
+        val finished = active?.readingMessages.orEmpty()
+        val streaming = active?.readingStreamingText
+        if (streaming.isNullOrEmpty()) {
+            finished
+        } else {
+            finished + ChatLine(
+                id = "reading-streaming-${active.id}",
+                role = "assistant",
+                text = streaming,
+            )
+        }
     } else {
         val finished = active?.lines.orEmpty()
         val streaming = active?.streamingText
@@ -181,19 +214,33 @@ fun ChatScreen(
     if (active?.prompt != null) {
         val prompt = active.prompt
         var clarifyText by remember(prompt.message) { mutableStateOf("") }
-        val needsText = prompt.kind.name == "CLARIFY" || prompt.kind.name == "SUDO"
+        val needsText = prompt.kind != com.nousresearch.talaria.core.network.PromptKind.APPROVAL
+        val masksText = prompt.kind == com.nousresearch.talaria.core.network.PromptKind.SUDO ||
+            prompt.kind == com.nousresearch.talaria.core.network.PromptKind.SECRET
         AlertDialog(
-            onDismissRequest = vm::dismissPrompt,
+            onDismissRequest = { vm.respondPrompt(false) },
             title = { Text(prompt.kind.name) },
             text = {
                 Column {
                     Text(prompt.message)
+                    if (prompt.choices.isNotEmpty()) {
+                        Text(
+                            "Choices: ${prompt.choices.joinToString(", ")}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     if (needsText) {
                         Spacer(Modifier.height(8.dp))
                         OutlinedTextField(
                             value = clarifyText,
                             onValueChange = { clarifyText = it },
-                            label = { Text("Response") },
+                            label = { Text(if (masksText) "Secure response" else "Response") },
+                            visualTransformation = if (masksText) {
+                                PasswordVisualTransformation()
+                            } else {
+                                androidx.compose.ui.text.input.VisualTransformation.None
+                            },
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
@@ -371,16 +418,30 @@ fun ChatScreen(
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
                     if (ui.showSlashPalette) {
-                        ui.slashSuggestions.forEach { cmd ->
-                            Text(
-                                "${cmd.command} — ${cmd.description}",
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { vm.pickSlash(cmd) }
-                                    .padding(vertical = 6.dp),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 240.dp),
+                        ) {
+                            items(ui.slashSuggestions, key = { "${it.command}-${it.category}" }) { cmd ->
+                                ListItem(
+                                    headlineContent = {
+                                        Text(
+                                            cmd.command,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    },
+                                    supportingContent = {
+                                        Text(
+                                            "${cmd.category} · ${cmd.description}",
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                    modifier = Modifier.clickable { vm.pickSlash(cmd) },
+                                )
+                            }
                         }
                     }
                     if (ui.partialDictation.isNotBlank()) {
@@ -389,6 +450,63 @@ fun ChatScreen(
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.secondary,
                         )
+                    }
+                    if (active?.imageAttachments?.isNotEmpty() == true) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .padding(bottom = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            active.imageAttachments.forEach { attachment ->
+                                val busy = attachment.status == ChatImageAttachmentStatus.UPLOADING
+                                val staged = attachment.status == ChatImageAttachmentStatus.ATTACHED
+                                Surface(
+                                    shape = MaterialTheme.shapes.small,
+                                    color = if (attachment.status == ChatImageAttachmentStatus.ERROR) {
+                                        MaterialTheme.colorScheme.errorContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.secondaryContainer
+                                    },
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(start = 8.dp),
+                                    ) {
+                                        if (busy) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(14.dp),
+                                                strokeWidth = 2.dp,
+                                            )
+                                            Spacer(Modifier.width(6.dp))
+                                        }
+                                        Text(
+                                            when {
+                                                staged -> "${attachment.filename} · staged"
+                                                attachment.status == ChatImageAttachmentStatus.ERROR ->
+                                                    "${attachment.filename} · retry"
+                                                else -> attachment.filename
+                                            },
+                                            style = MaterialTheme.typography.labelMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        IconButton(
+                                            onClick = { vm.removeImageAttachment(attachment.id) },
+                                            enabled = !busy && !staged,
+                                            modifier = Modifier.size(32.dp),
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.Close,
+                                                contentDescription = "Remove ${attachment.filename}",
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(
@@ -406,6 +524,19 @@ fun ChatScreen(
                             maxLines = 4,
                         )
                         Spacer(Modifier.width(4.dp))
+                        IconButton(
+                            onClick = {
+                                imagePickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                )
+                            },
+                            enabled = active?.connected == true &&
+                                active.imageAttachments.none {
+                                    it.status == ChatImageAttachmentStatus.UPLOADING
+                                },
+                        ) {
+                            Icon(Icons.Filled.AttachFile, contentDescription = "Attach image")
+                        }
                         IconButton(
                             onClick = {
                                 if (ui.listening) {
@@ -427,7 +558,11 @@ fun ChatScreen(
                         }
                         FilledIconButton(
                             onClick = { vm.send() },
-                            enabled = active?.connected == true && !active.draft.isBlank(),
+                            enabled = active?.connected == true &&
+                                (!active.draft.isBlank() || active.imageAttachments.isNotEmpty()) &&
+                                active.imageAttachments.none {
+                                    it.status == ChatImageAttachmentStatus.UPLOADING
+                                },
                         ) {
                             Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                         }

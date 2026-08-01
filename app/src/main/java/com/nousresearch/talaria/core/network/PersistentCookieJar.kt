@@ -29,14 +29,26 @@ class PersistentCookieJar : CookieJar {
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
         val host = url.host
         val map = store.getOrPut(host) { ConcurrentHashMap() }
-        cookies.forEach { map[it.name] = it }
+        // RFC 6265 cookie identity is name + domain + path. Gated deployments
+        // behind two path-prefixed dashboards on the same host must not replace
+        // one another's session cookies merely because the names match.
+        cookies.forEach { map[cookieKey(it)] = it }
     }
 
     override fun loadForRequest(url: HttpUrl): List<Cookie> {
         val map = store[url.host] ?: return emptyList()
         val now = System.currentTimeMillis()
-        return map.values.filter { !it.persistent || it.expiresAt >= now }
+        map.entries.removeIf { (_, cookie) -> cookie.expiresAt < now }
+        // CookieJar implementations must return only cookies that match the
+        // request URL. In particular, never leak Secure or path-scoped auth
+        // cookies to cleartext/unrelated requests on the same host.
+        return map.values.filter { it.matches(url) }
     }
 
+    fun hasCookiesFor(url: HttpUrl): Boolean = loadForRequest(url).isNotEmpty()
+
     fun clear() = store.clear()
+
+    private fun cookieKey(cookie: Cookie): String =
+        "${cookie.name}\u0000${cookie.domain}\u0000${cookie.path}"
 }

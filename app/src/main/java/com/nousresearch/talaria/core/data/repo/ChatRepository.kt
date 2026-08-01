@@ -23,6 +23,7 @@ import com.nousresearch.talaria.core.network.HermesClientFactory
 import com.nousresearch.talaria.core.network.PtyEvent
 import com.nousresearch.talaria.core.network.PtyWebSocketSession
 import com.nousresearch.talaria.core.network.WsAuthHelper
+import com.nousresearch.talaria.domain.model.scopeId
 import kotlinx.coroutines.flow.Flow
 import java.util.UUID
 
@@ -43,12 +44,12 @@ class ChatRepository(
     }
 
     suspend fun saveDraft(text: String) {
-        val id = connectionStore.activeProfile()?.id ?: return
+        val id = connectionStore.activeProfile()?.scopeId() ?: return
         db.drafts().upsert(ChatDraftEntity(id, text))
     }
 
     suspend fun loadDraft(): String {
-        val id = connectionStore.activeProfile()?.id ?: return ""
+        val id = connectionStore.activeProfile()?.scopeId() ?: return ""
         return db.drafts().get(id)?.text.orEmpty()
     }
 }

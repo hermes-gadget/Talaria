@@ -21,6 +21,13 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.nousresearch.talaria.TalariaApp
+import com.nousresearch.talaria.ui.navigation.TalariaDeepLink
+import com.nousresearch.talaria.ui.navigation.TalariaDeepLinkParser
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import java.io.IOException
+
+private class ReplySent : CancellationException()
 
 /** Delivers notification inline-replies by opening a short-lived PTY send. */
 class ReplyWorker(
@@ -29,32 +36,51 @@ class ReplyWorker(
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
         val text = inputData.getString(KEY_TEXT) ?: return Result.failure()
+        val resumeSessionId = sessionIdFromDeepLink(inputData.getString(KEY_DEEP_LINK))
         val container = TalariaApp.instance.container
+        val expectedConnectionId = inputData.getString(KEY_CONNECTION_ID) ?: return Result.failure()
+        val expectedProfile = inputData.getString(KEY_MANAGEMENT_PROFILE).orEmpty()
+        val active = container.connectionStore.activeProfile() ?: return Result.failure()
+        if (active.id != expectedConnectionId || active.managementProfile != expectedProfile) {
+            return Result.failure()
+        }
         return try {
-            val (session, flow) = container.chatRepository.openPty()
+            val (session, flow) = container.chatRepository.openPty(resumeSessionId = resumeSessionId)
             // Best-effort: wait for connect then send
             kotlinx.coroutines.withTimeout(15_000) {
                 flow.collect { event ->
                     if (event is com.nousresearch.talaria.core.network.PtyEvent.Connected) {
                         session.sendText(text)
                         session.close()
-                        throw kotlinx.coroutines.CancellationException("sent")
+                        throw ReplySent()
                     }
                     if (event is com.nousresearch.talaria.core.network.PtyEvent.Failure) {
-                        error(event.message)
+                        throw IOException(event.message)
+                    }
+                    if (event is com.nousresearch.talaria.core.network.PtyEvent.Closed) {
+                        throw IOException("Chat closed before reply was sent (${event.code})")
                     }
                 }
             }
             Result.success()
-        } catch (_: kotlinx.coroutines.CancellationException) {
+        } catch (_: ReplySent) {
             Result.success()
+        } catch (_: TimeoutCancellationException) {
+            if (runAttemptCount < 3) Result.retry() else Result.failure()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Throwable) {
-            Result.retry()
+            if (runAttemptCount < 3) Result.retry() else Result.failure()
         }
     }
 
     companion object {
         const val KEY_TEXT = "text"
         const val KEY_DEEP_LINK = "deep_link"
+        const val KEY_CONNECTION_ID = "connection_id"
+        const val KEY_MANAGEMENT_PROFILE = "management_profile"
+
+        internal fun sessionIdFromDeepLink(deepLink: String?): String? =
+            (deepLink?.let(TalariaDeepLinkParser::parse) as? TalariaDeepLink.Session)?.id
     }
 }

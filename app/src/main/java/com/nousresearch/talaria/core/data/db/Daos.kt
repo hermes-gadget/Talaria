@@ -37,14 +37,14 @@ interface SessionDao {
 
 @Dao
 interface MessageDao {
-    @Query("SELECT * FROM cached_messages WHERE sessionId = :sessionId ORDER BY ordinal ASC")
-    fun observeMessages(sessionId: String): Flow<List<CachedMessageEntity>>
+    @Query("SELECT * FROM cached_messages WHERE connectionId = :connectionId AND sessionId = :sessionId ORDER BY ordinal ASC")
+    fun observeMessages(connectionId: String, sessionId: String): Flow<List<CachedMessageEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(items: List<CachedMessageEntity>)
 
-    @Query("DELETE FROM cached_messages WHERE sessionId = :sessionId")
-    suspend fun clearSession(sessionId: String)
+    @Query("DELETE FROM cached_messages WHERE connectionId = :connectionId AND sessionId = :sessionId")
+    suspend fun clearSession(connectionId: String, sessionId: String)
 }
 
 @Dao
@@ -54,6 +54,9 @@ interface ActivityDao {
 
     @Insert
     suspend fun insert(event: ActivityEventEntity): Long
+
+    @Query("DELETE FROM activity_events WHERE connectionId = :connectionId AND id NOT IN (SELECT id FROM activity_events WHERE connectionId = :connectionId ORDER BY createdAt DESC, id DESC LIMIT :keep)")
+    suspend fun trim(connectionId: String, keep: Int)
 
     @Query("UPDATE activity_events SET read = 1 WHERE connectionId = :connectionId")
     suspend fun markAllRead(connectionId: String)

@@ -32,6 +32,8 @@ class HermesClientFactory(
     private val settingsStore: SettingsStore,
 ) {
     val cookieJar = PersistentCookieJar()
+    private val oidcTokenRefresher = OidcTokenRefresher(connectionStore)
+    private val passwordSessionManager = PasswordSessionManager(connectionStore, cookieJar)
 
     @Volatile
     private var cached: Pair<String, HermesApi>? = null
@@ -43,7 +45,7 @@ class HermesClientFactory(
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(120, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
-            .addInterceptor(AuthInterceptor(connectionStore))
+            .addInterceptor(AuthInterceptor(connectionStore, oidcTokenRefresher, passwordSessionManager))
             .addInterceptor(ProfileQueryInterceptor(connectionStore))
             // Network interceptor: rewrite Host for emulator→host loopback (10.0.2.2).
             .addNetworkInterceptor(EmulatorLoopbackInterceptor())
@@ -77,6 +79,7 @@ class HermesClientFactory(
     fun invalidate() {
         cached = null
         cookieJar.clear()
+        passwordSessionManager.clearFailure()
     }
 
     fun webSocketClient(): OkHttpClient = okHttp()

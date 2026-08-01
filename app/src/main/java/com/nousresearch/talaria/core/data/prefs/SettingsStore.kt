@@ -99,10 +99,6 @@ class SettingsStore(context: Context) {
         get() = prefs.getLong("sync_interval_min", 30)
         set(value) = prefs.edit { putLong("sync_interval_min", value) }
 
-    var ignoreBatteryOptimizationsRequested: Boolean
-        get() = prefs.getBoolean("ignore_battery_asked", false)
-        set(value) = prefs.edit { putBoolean("ignore_battery_asked", value) }
-
     var ttsEnabled: Boolean
         get() = prefs.getBoolean("tts", false)
         set(value) = prefs.edit { putBoolean("tts", value) }
@@ -148,18 +144,24 @@ class SettingsStore(context: Context) {
 
     // --- Offline snapshot (Phase 13): last-good status for the widget / offline UI ---
 
-    /** One-line status summary from the last successful poll (widget + offline fallback). */
-    var cachedStatusLine: String?
-        get() = prefs.getString("cache_status_line", null)
-        set(value) = prefs.edit { putString("cache_status_line", value) }
+    /** Widget/offline status is isolated per connection + Hermes management profile. */
+    fun cachedStatusLine(scopeId: String): String? = prefs.getString("cache_status_line_$scopeId", null)
 
-    /** Epoch millis of the last successful status poll, 0 if never. */
-    var cachedStatusUpdatedAt: Long
-        get() = prefs.getLong("cache_status_at", 0L)
-        set(value) = prefs.edit { putLong("cache_status_at", value) }
+    fun setCachedStatusLine(scopeId: String, value: String) =
+        prefs.edit { putString("cache_status_line_$scopeId", value) }
 
-    /** Pending pairing requests seen at the last poll (widget badge). */
-    var pendingPairingCount: Int
-        get() = prefs.getInt("cache_pending_pairing", 0)
-        set(value) = prefs.edit { putInt("cache_pending_pairing", value) }
+    fun setCachedStatusUpdatedAt(scopeId: String, value: Long) =
+        prefs.edit { putLong("cache_status_at_$scopeId", value) }
+
+    fun pendingPairingCount(scopeId: String): Int = prefs.getInt("cache_pending_pairing_$scopeId", 0)
+
+    fun setPendingPairingCount(scopeId: String, value: Int) =
+        prefs.edit { putInt("cache_pending_pairing_$scopeId", value) }
+
+    /** Last successful background-poll state, scoped per connection to suppress duplicate alerts. */
+    fun syncFingerprint(profileId: String, category: String): Set<String> =
+        prefs.getStringSet("sync_${category}_$profileId", emptySet())?.toSet().orEmpty()
+
+    fun setSyncFingerprint(profileId: String, category: String, values: Set<String>) =
+        prefs.edit { putStringSet("sync_${category}_$profileId", values.toSet()) }
 }

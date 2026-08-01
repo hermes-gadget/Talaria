@@ -37,6 +37,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.domain.model.MessagingPlatform
@@ -46,6 +47,9 @@ import com.nousresearch.talaria.ui.components.ScreenScaffold
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 @Composable
 fun ChannelsScreen() {
@@ -112,36 +116,78 @@ fun ChannelsScreen() {
                                         },
                                     )
                                 }
-                                OutlinedTextField(
-                                    value = envDrafts[p.id].orEmpty(),
-                                    onValueChange = { envDrafts[p.id] = it },
-                                    label = { Text("Env KEY=value (optional)") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true,
-                                )
+                                val fields = p.env_vars.ifEmpty {
+                                    p.env_keys.map { key ->
+                                        com.nousresearch.talaria.domain.model.MessagingEnvVarInfo(key = key)
+                                    }
+                                }
+                                fields.forEach { field ->
+                                    val draftKey = "${p.id}:${field.key}"
+                                    OutlinedTextField(
+                                        value = envDrafts[draftKey].orEmpty(),
+                                        onValueChange = { envDrafts[draftKey] = it },
+                                        label = {
+                                            Text(
+                                                (field.prompt ?: field.key) + if (field.required) " *" else "",
+                                            )
+                                        },
+                                        supportingText = {
+                                            Text(
+                                                field.redacted_value?.let { "Currently $it" }
+                                                    ?: field.description.orEmpty(),
+                                            )
+                                        },
+                                        visualTransformation = if (field.is_password) {
+                                            PasswordVisualTransformation()
+                                        } else {
+                                            androidx.compose.ui.text.input.VisualTransformation.None
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                    )
+                                    if (field.is_set) {
+                                        TextButton(onClick = {
+                                            scope.launch {
+                                                repo.updateChannel(p.id, null, null, clearEnv = listOf(field.key))
+                                                    .onSuccess {
+                                                        envDrafts.remove(draftKey)
+                                                        testResult = "Cleared ${field.key}"
+                                                        reload()
+                                                    }
+                                                    .onFailure { error = it.message }
+                                            }
+                                        }) { Text("Clear ${field.key}") }
+                                    }
+                                }
                                 Row {
                                     TextButton(onClick = {
                                         scope.launch {
-                                            val draft = envDrafts[p.id].orEmpty().trim()
-                                            val env = if (draft.contains("=")) {
-                                                val k = draft.substringBefore("=").trim()
-                                                val v = draft.substringAfter("=").trim()
-                                                buildJsonObject { put(k, v) }
-                                            } else {
-                                                null
+                                            val values = fields.mapNotNull { field ->
+                                                val value = envDrafts["${p.id}:${field.key}"]?.trim().orEmpty()
+                                                value.takeIf { it.isNotEmpty() }?.let { field.key to it }
                                             }
+                                            val env = buildJsonObject { values.forEach { (key, value) -> put(key, value) } }
                                             repo.updateChannel(p.id, null, env)
                                                 .onSuccess {
+                                                    values.forEach { (key, _) -> envDrafts.remove("${p.id}:$key") }
                                                     testResult = "Updated ${p.id}"
                                                     reload()
                                                 }
                                                 .onFailure { error = it.message }
                                         }
-                                    }) { Text("Save env") }
+                                    }, enabled = fields.any { envDrafts["${p.id}:${it.key}"].orEmpty().isNotBlank() }) {
+                                        Text("Save credentials")
+                                    }
                                     TextButton(onClick = {
                                         scope.launch {
                                             repo.testChannel(p.id)
-                                                .onSuccess { testResult = "${p.name}: $it" }
+                                                .onSuccess { result ->
+                                                    val obj = result.jsonObject
+                                                    val message = obj["message"]?.jsonPrimitive?.contentOrNull
+                                                        ?: obj["state"]?.jsonPrimitive?.contentOrNull
+                                                        ?: if (obj["ok"]?.jsonPrimitive?.content == "true") "OK" else result.toString()
+                                                    testResult = "${p.name}: $message"
+                                                }
                                                 .onFailure { testResult = "${p.name}: ${it.message}" }
                                         }
                                     }) { Text("Test") }

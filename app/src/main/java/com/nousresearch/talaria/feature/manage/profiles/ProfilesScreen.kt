@@ -21,9 +21,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -51,27 +53,157 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
     var list by remember { mutableStateOf<List<ProfileInfo>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+    var activeName by remember { mutableStateOf<String?>(null) }
+    var createName by remember { mutableStateOf("") }
+    var createDescription by remember { mutableStateOf("") }
+    var cloneFrom by remember { mutableStateOf("") }
+    var renameTarget by remember { mutableStateOf<String?>(null) }
+    var renameName by remember { mutableStateOf("") }
+    var descriptionTarget by remember { mutableStateOf<String?>(null) }
+    var descriptionText by remember { mutableStateOf("") }
+    var soulTarget by remember { mutableStateOf<String?>(null) }
+    var soulText by remember { mutableStateOf("") }
+    var deleteTarget by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     fun reload() = scope.launch {
-        repo.getProfiles()
+        repo.getProfiles(force = true)
             .onSuccess {
                 list = it
                 error = null
             }
             .onFailure { error = it.message }
+        repo.getActiveProfileName().onSuccess { activeName = it ?: "default" }
     }
     LaunchedEffect(Unit) { reload() }
 
-    fun switchActive(name: String) {
+    fun switchActive(name: String, after: (() -> Unit)? = null) {
         scope.launch {
-            connectionStore.setManagementProfile(name)
-            repo.setActiveProfileName(name)
+            repo.setActiveProfileName(name.ifBlank { "default" })
+                .onSuccess {
+                    connectionStore.setManagementProfile(name)
+                    container.clientFactory.invalidate()
+                    message = if (name.isBlank()) "Switched to default" else "Managing $name"
+                    reload()
+                    after?.invoke()
+                }
                 .onFailure { message = it.message }
-            container.clientFactory.invalidate()
-            message = if (name.isBlank()) "Switched to default" else "Managing $name"
-            reload()
         }
+    }
+
+    renameTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("Rename profile") },
+            text = {
+                OutlinedTextField(
+                    value = renameName,
+                    onValueChange = { renameName = it },
+                    label = { Text("New name") },
+                    singleLine = true,
+                )
+            },
+            confirmButton = {
+                TextButton(enabled = renameName.isNotBlank(), onClick = {
+                    val newName = renameName.trim()
+                    renameTarget = null
+                    scope.launch {
+                        repo.renameProfile(target, newName)
+                            .onSuccess {
+                                if (connectionStore.activeProfile()?.managementProfile == target) {
+                                    connectionStore.setManagementProfile(newName)
+                                    container.clientFactory.invalidate()
+                                }
+                                message = "Renamed $target to $newName"
+                                reload()
+                            }
+                            .onFailure { error = it.message }
+                    }
+                }) { Text("Rename") }
+            },
+            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } },
+        )
+    }
+
+    descriptionTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { descriptionTarget = null },
+            title = { Text("Profile description") },
+            text = {
+                OutlinedTextField(
+                    value = descriptionText,
+                    onValueChange = { descriptionText = it },
+                    label = { Text("Description (blank clears)") },
+                    minLines = 3,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val value = descriptionText
+                    descriptionTarget = null
+                    scope.launch {
+                        repo.updateProfileDescription(target, value)
+                            .onSuccess { message = "Description saved"; reload() }
+                            .onFailure { error = it.message }
+                    }
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { descriptionTarget = null }) { Text("Cancel") } },
+        )
+    }
+
+    soulTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { soulTarget = null },
+            title = { Text("$target · SOUL.md") },
+            text = {
+                OutlinedTextField(
+                    value = soulText,
+                    onValueChange = { soulText = it },
+                    label = { Text("Agent identity and behavior") },
+                    minLines = 10,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val value = soulText
+                    soulTarget = null
+                    scope.launch {
+                        repo.updateProfileSoul(target, value)
+                            .onSuccess { message = "SOUL.md saved for $target" }
+                            .onFailure { error = it.message }
+                    }
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { soulTarget = null }) { Text("Cancel") } },
+        )
+    }
+
+    deleteTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Delete profile?") },
+            text = { Text("Permanently delete '$target' and its isolated Hermes home?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteTarget = null
+                    scope.launch {
+                        repo.deleteProfile(target)
+                            .onSuccess {
+                                if (connectionStore.activeProfile()?.managementProfile == target) {
+                                    connectionStore.setManagementProfile("")
+                                    container.clientFactory.invalidate()
+                                }
+                                message = "Deleted $target"
+                                reload()
+                            }
+                            .onFailure { error = it.message }
+                    }
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } },
+        )
     }
 
     ScreenScaffold("Profiles", "Isolated Hermes homes", actions = {
@@ -100,6 +232,46 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
                     Text("Use default (clear management profile)")
                 }
                 LazyColumn {
+                    item {
+                        Text("Create profile", style = MaterialTheme.typography.titleMedium)
+                        OutlinedTextField(
+                            value = createName,
+                            onValueChange = { createName = it },
+                            label = { Text("Name") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = createDescription,
+                            onValueChange = { createDescription = it },
+                            label = { Text("Description (optional)") },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = cloneFrom,
+                            onValueChange = { cloneFrom = it },
+                            label = { Text("Clone from profile (optional)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Button(
+                            enabled = createName.isNotBlank(),
+                            onClick = {
+                                val name = createName.trim()
+                                scope.launch {
+                                    repo.createProfile(name, createDescription, cloneFrom)
+                                        .onSuccess {
+                                            createName = ""
+                                            createDescription = ""
+                                            cloneFrom = ""
+                                            message = "Created $name"
+                                            reload()
+                                        }
+                                        .onFailure { error = it.message }
+                                }
+                            },
+                        ) { Text("Create") }
+                    }
                     items(list.orEmpty(), key = { it.name }) { p ->
                         Surface(
                             Modifier
@@ -112,23 +284,57 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
                                 Text(p.name, style = MaterialTheme.typography.titleLarge)
                                 Text(p.description ?: "")
                                 Text(
-                                    "model=${p.model ?: "—"} skills=${p.skill_count ?: 0} " +
-                                        "active=${p.is_active} default=${p.is_default}",
+                                    "model=${p.provider?.let { "$it/" }.orEmpty()}${p.model ?: "—"} " +
+                                        "skills=${p.skill_count ?: 0} gateway=${p.gateway_running == true} " +
+                                        "active=${p.name == activeName} default=${p.is_default}",
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                                 Button(onClick = { switchActive(p.name) }) {
-                                    Text(if (p.is_active == true) "Active · switch local" else "Switch active")
+                                    Text(if (p.name == activeName) "Active · manage" else "Switch active")
                                 }
                                 if (onShortcut != null) {
                                     Row {
                                         TextButton(onClick = {
-                                            switchActive(p.name)
-                                            onShortcut("skills")
+                                            switchActive(p.name) { onShortcut("skills") }
                                         }) { Text("Manage skills") }
                                         TextButton(onClick = {
-                                            switchActive(p.name)
-                                            onShortcut("config")
+                                            switchActive(p.name) { onShortcut("config") }
                                         }) { Text("Open config") }
+                                    }
+                                }
+                                Row {
+                                    TextButton(onClick = {
+                                        renameTarget = p.name
+                                        renameName = p.name
+                                    }) { Text("Rename") }
+                                    TextButton(onClick = {
+                                        descriptionTarget = p.name
+                                        descriptionText = p.description.orEmpty()
+                                    }) { Text("Description") }
+                                    TextButton(onClick = {
+                                        scope.launch {
+                                            repo.getProfileSoul(p.name)
+                                                .onSuccess {
+                                                    soulText = it
+                                                    soulTarget = p.name
+                                                }
+                                                .onFailure { error = it.message }
+                                        }
+                                    }) { Text("SOUL") }
+                                }
+                                Row {
+                                    TextButton(onClick = {
+                                        scope.launch {
+                                            repo.describeProfileAutomatically(p.name)
+                                                .onSuccess {
+                                                    message = "Generated description for ${p.name}"
+                                                    reload()
+                                                }
+                                                .onFailure { error = it.message }
+                                        }
+                                    }) { Text("Auto-describe") }
+                                    if (p.is_default != true) {
+                                        TextButton(onClick = { deleteTarget = p.name }) { Text("Delete") }
                                     }
                                 }
                             }

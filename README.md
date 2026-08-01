@@ -2,17 +2,17 @@
 
 **Talaria** (Hermes' winged sandals) is a privacy-respecting native Android client for [self-hosted Hermes Agent](https://hermes-agent.nousresearch.com/docs/) by Nous Research.
 
-It brings the Hermes Web Dashboard (default `http://127.0.0.1:9119`) to mobile — chat, status, config, keys, sessions, cron, skills, MCP, channels, pairing, and more — with notifications, on-device voice dictation, offline cache, and home-screen widgets.
+It adapts the remote-capable parts of Hermes Desktop and the Web Dashboard (default `http://127.0.0.1:9119`) to mobile: chat, status, config, keys, sessions, cron, skills, MCP, channels, pairing, and more, with notifications, voice dictation, offline cache, and home-screen widgets.
 
 ## Features
 
 | Area | What you get |
 |------|----------------|
-| **Connections** | Multiple saved profiles, session token / basic / bearer / OIDC-browser auth, optional TLS pinning |
-| **Chat** | Live bridge to Hermes `/api/pty` (TUI over WebSocket), ANSI-stripped transcript, session resume |
+| **Connections** | Multiple saved servers, password-cookie / session-token / bearer / native OIDC PKCE auth, optional TLS pinning |
+| **Chat** | Live `/api/pty` bridge plus `/api/ws` and `/api/events`, clean reading mode, session resume, image attachments |
 | **Notifications** | Channels for replies, cron, gateway, pairing, errors, long tasks — actionable reply/open/dismiss |
 | **Voice** | On-device `SpeechRecognizer` (cloud STT opt-in only), continuous dictation + partials, TTS of replies |
-| **Manage** | Status, Sessions, Config, API Keys, Cron, Skills, MCP, Channels, Pairing, Webhooks, Profiles, Logs, Analytics, System |
+| **Manage** | Status, Sessions, Config, API Keys, Cron, Skills Hub, MCP catalog/OAuth, Channels, Pairing, Webhooks, Profiles, Files, Learning, Logs, Analytics, System |
 | **Privacy** | Zero telemetry by default, Keystore-backed secrets, local Room cache, no forced accounts |
 | **Polish** | Edge-to-edge Compose UI, share-to-chat, deep links (`talaria://…`), Glance widget, Quick Settings tile |
 
@@ -21,7 +21,7 @@ It brings the Hermes Web Dashboard (default `http://127.0.0.1:9119`) to mobile �
 ### Prerequisites
 
 - JDK **17 or 21** (Temurin recommended)
-- Android SDK platform **35** + build-tools **35.0.0**
+- Android SDK platform **36** + build-tools **35.0.0**
 - A reachable Hermes dashboard (`hermes dashboard`, often via Tailscale/SSH tunnel)
 
 ### Build & install (debug)
@@ -43,8 +43,9 @@ Or use the helper that pins a local JDK path when present:
 1. Open Talaria → enter your dashboard URL (e.g. `http://100.x.y.z:9119`).
 2. Choose auth mode:
    - **SESSION_TOKEN** — token printed/injected by the dashboard (loopback / token mode)
-   - **BASIC** — username/password when the dashboard is gated (`--host 0.0.0.0`)
-   - **BEARER** / **OIDC_BROWSER** — for advanced / portal flows
+   - **BASIC** — Hermes password-provider login; Talaria stores the resulting session cookie
+   - **BEARER** — a pre-issued bearer token
+   - **OIDC_BROWSER** — RFC 8252 loopback redirect with PKCE and refresh tokens
 3. Optional: management profile name (`?profile=`), TLS pin `sha256/…`
 4. **Save & connect**
 
@@ -57,13 +58,13 @@ app/src/main/java/com/nousresearch/talaria/
   feature/       connection, chat, activity, manage/*, you
   ui/            theme, navigation, components
   widget/        Glance widget + QS tile
-  worker/        WorkManager sync, FGS, boot receiver
+  worker/        WorkManager sync, notification actions, boot receiver
 ```
 
 ## Docs
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — layers, auth, chat transport, notifications
-- [ROADMAP.md](ROADMAP.md) — step-by-step path to full Web Dashboard parity
+- [ROADMAP.md](ROADMAP.md) — verified coverage and remaining mobile-relevant work
 - [SETUP.md](SETUP.md) — SDK, signing, Hermes server tips
 - [PRIVACY.md](PRIVACY.md) — data handling & telemetry stance
 - [CONTRIBUTING.md](CONTRIBUTING.md) — development workflow

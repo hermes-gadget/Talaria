@@ -23,7 +23,9 @@ import com.nousresearch.talaria.TalariaApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Quick Settings tile showing Hermes gateway up/down for the active profile. */
 class TalariaTileService : TileService() {
@@ -42,11 +44,18 @@ class TalariaTileService : TileService() {
         scope.launch {
             val label = runCatching {
                 val status = TalariaApp.instance.container.hermesRepository.refreshStatus().getOrThrow()
-                if (status.gateway?.running == true) "Hermes GW · up" else "Hermes GW · down"
+                if ((status.gateway?.running ?: status.gateway_running) == true) "Hermes GW · up" else "Hermes GW · down"
             }.getOrElse { "Hermes · offline" }
-            tile.label = label
-            tile.state = Tile.STATE_ACTIVE
-            tile.updateTile()
+            withContext(Dispatchers.Main.immediate) {
+                tile.label = label
+                tile.state = Tile.STATE_ACTIVE
+                tile.updateTile()
+            }
         }
+    }
+
+    override fun onDestroy() {
+        scope.cancel()
+        super.onDestroy()
     }
 }

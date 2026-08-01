@@ -35,7 +35,8 @@ class WsAuthHelper(
     private val connectionStore: SecureConnectionStore,
 ) {
     private val mutex = Mutex()
-    @Volatile private var cachedAuthRequired: Boolean? = null
+    /** Auth policy is connection-scoped; two saved profiles may target different gates. */
+    @Volatile private var cachedAuthRequired: Pair<String, Boolean>? = null
 
     suspend fun invalidate() {
         mutex.withLock { cachedAuthRequired = null }
@@ -49,29 +50,34 @@ class WsAuthHelper(
         mutex.withLock {
             val profile = connectionStore.activeProfile() ?: return@withLock ""
             val secrets = connectionStore.secretsFor(profile.id)
-            val authRequired = cachedAuthRequired ?: runCatching {
-                clientFactory.api().getStatus().auth_required == true
-            }.getOrDefault(
-                profile.authMode == AuthMode.BASIC || profile.authMode == AuthMode.OIDC_BROWSER,
-            ).also { cachedAuthRequired = it }
+            val authRequired = cachedAuthRequired
+                ?.takeIf { it.first == profile.id }
+                ?.second
+                ?: runCatching {
+                    clientFactory.api().getStatus().auth_required == true
+                }.getOrDefault(
+                    profile.authMode == AuthMode.BASIC || profile.authMode == AuthMode.OIDC_BROWSER,
+                ).also { cachedAuthRequired = profile.id to it }
 
             if (authRequired) {
                 val ticket = runCatching { clientFactory.api().wsTicket().ticket }.getOrNull()
                 if (!ticket.isNullOrBlank()) return@withLock "ticket=${ticket.trim()}"
             }
 
-            secrets.sessionToken?.takeIf { it.isNotBlank() }?.let {
-                return@withLock "token=${it.trim()}"
-            }
-
             // Loopback dashboards embed the process session token in the SPA shell.
             // REST often works without it when auth_required=false, but /api/pty and
-            // /api/ws reject with 403 `no_credential` unless `?token=` is present —
-            // which is exactly the "can't reconnect" failure mode after a soft close.
+            // /api/ws reject the previous process token after a dashboard restart.
+            // Always prefer the currently advertised token here: the encrypted value
+            // is only a fallback for a temporarily unavailable SPA shell.
             if (!authRequired) {
-                val minted = fetchLoopbackSessionToken(profile.baseUrl) ?: return@withLock ""
-                connectionStore.updateSessionToken(profile.id, minted)
-                return@withLock "token=$minted"
+                fetchLoopbackSessionToken(profile.baseUrl)?.let { current ->
+                    connectionStore.updateSessionToken(profile.id, current)
+                    return@withLock "token=$current"
+                }
+            }
+
+            secrets.sessionToken?.takeIf { it.isNotBlank() }?.let {
+                return@withLock "token=${it.trim()}"
             }
             ""
         }

@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.domain.model.SystemStats
+import com.nousresearch.talaria.domain.model.ActionStatus
 import com.nousresearch.talaria.ui.components.ErrorBox
 import com.nousresearch.talaria.ui.components.LoadingBox
 import com.nousresearch.talaria.ui.components.ScreenScaffold
@@ -95,12 +96,13 @@ fun SystemScreen() {
                         Section("Host") {
                             Text("OS: ${s.os ?: "—"}")
                             Text("Host: ${s.hostname ?: "—"}")
-                            Text("Python: ${s.python ?: "—"}")
+                            Text("Python: ${s.python_version ?: s.python ?: "—"}")
                             Text("Hermes: ${s.hermes_version ?: "—"}")
                             Text("CPU %: ${s.cpu_percent ?: "—"}")
                             s.memory?.let { Text("Memory: $it") }
                             s.disk?.let { Text("Disk: $it") }
                             s.uptime?.let { Text("Uptime: $it") }
+                                ?: s.uptime_seconds?.let { Text("Uptime: ${formatUptime(it)}") }
                         }
                     }
 
@@ -145,8 +147,8 @@ fun SystemScreen() {
                     Section("Doctor") {
                         OutlinedButton(onClick = {
                             scope.launch {
-                                repo.runDoctor()
-                                    .onSuccess { doctor = pretty(it) }
+                                repo.runDoctorToCompletion()
+                                    .onSuccess { doctor = formatAction(it) }
                                     .onFailure { doctor = it.message }
                             }
                         }) { Text("Run doctor") }
@@ -156,8 +158,8 @@ fun SystemScreen() {
                     Section("Security audit") {
                         OutlinedButton(onClick = {
                             scope.launch {
-                                repo.runSecurityAudit()
-                                    .onSuccess { audit = pretty(it) }
+                                repo.runSecurityAuditToCompletion()
+                                    .onSuccess { audit = formatAction(it) }
                                     .onFailure { audit = it.message }
                             }
                         }) { Text("Run audit") }
@@ -167,8 +169,8 @@ fun SystemScreen() {
                     Section("Backup") {
                         OutlinedButton(onClick = {
                             scope.launch {
-                                repo.runBackup()
-                                    .onSuccess { backup = pretty(it) }
+                                repo.runBackupToCompletion()
+                                    .onSuccess { backup = formatAction(it) }
                                     .onFailure { backup = it.message }
                             }
                         }) { Text("Run backup") }
@@ -204,6 +206,17 @@ fun SystemScreen() {
     }
 }
 
+private fun formatUptime(seconds: Long): String {
+    val days = seconds / 86_400
+    val hours = (seconds % 86_400) / 3_600
+    val minutes = (seconds % 3_600) / 60
+    return listOfNotNull(
+        days.takeIf { it > 0 }?.let { "${it}d" },
+        hours.takeIf { it > 0 }?.let { "${it}h" },
+        "${minutes}m",
+    ).joinToString(" ")
+}
+
 @Composable
 private fun Section(title: String, content: @Composable () -> Unit) {
     Card(
@@ -230,4 +243,12 @@ private fun Section(title: String, content: @Composable () -> Unit) {
 private fun pretty(el: JsonElement): String {
     val raw = el.toString()
     return if (raw.length > 2_000) raw.take(2_000) + "…" else raw
+}
+
+private fun formatAction(action: ActionStatus): String = buildString {
+    append(if (action.exit_code == 0) "Completed" else "Exited ${action.exit_code ?: "?"}")
+    if (action.lines.isNotEmpty()) {
+        append('\n')
+        append(action.lines.joinToString("\n").takeLast(4_000))
+    }
 }

@@ -15,6 +15,7 @@
  */
 package com.nousresearch.talaria.feature.manage.learning
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -25,10 +26,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -40,7 +45,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nousresearch.talaria.domain.model.LearningGraph
 import com.nousresearch.talaria.domain.model.LearningNode
-import com.nousresearch.talaria.feature.manage.SimpleManageViewModel
 import com.nousresearch.talaria.ui.components.ErrorBox
 import com.nousresearch.talaria.ui.components.LoadingBox
 import com.nousresearch.talaria.ui.components.ScreenScaffold
@@ -52,12 +56,62 @@ import com.nousresearch.talaria.ui.components.ScreenScaffold
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LearningScreen(
-    vm: SimpleManageViewModel = viewModel(
-        factory = SimpleManageViewModel.factory { getLearningGraph() },
-    ),
+    vm: LearningViewModel = viewModel(factory = LearningViewModel.factory()),
 ) {
     val ui by vm.ui.collectAsStateWithLifecycle()
-    val graph = ui.data as? LearningGraph
+    val graph = ui.graph
+
+    if (ui.selected != null && !ui.confirmDelete) {
+        ModalBottomSheet(onDismissRequest = vm::close) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(ui.detail?.label ?: ui.selected?.label.orEmpty(), style = MaterialTheme.typography.titleMedium)
+                if (ui.detail == null && ui.busy) {
+                    LoadingBox()
+                } else {
+                    OutlinedTextField(
+                        value = ui.draft,
+                        onValueChange = vm::updateDraft,
+                        label = { Text("Node content") },
+                        minLines = 12,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    ui.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        TextButton(onClick = vm::requestDelete, enabled = !ui.busy) {
+                            Text(if (ui.selected?.kind == "skill") "Archive" else "Delete")
+                        }
+                        Button(onClick = vm::save, enabled = !ui.busy && ui.detail != null) {
+                            Text(if (ui.busy) "Saving…" else "Save")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (ui.confirmDelete) {
+        AlertDialog(
+            onDismissRequest = vm::cancelDelete,
+            title = { Text(if (ui.selected?.kind == "skill") "Archive skill?" else "Delete memory?") },
+            text = {
+                Text(
+                    if (ui.selected?.kind == "skill") {
+                        "Hermes will archive this learned skill so it can be restored later."
+                    } else {
+                        "This permanently removes the selected learned memory."
+                    },
+                )
+            },
+            confirmButton = { TextButton(onClick = vm::confirmDelete) { Text("Confirm") } },
+            dismissButton = { TextButton(onClick = vm::cancelDelete) { Text("Cancel") } },
+        )
+    }
 
     ScreenScaffold(
         title = "Learning",
@@ -110,7 +164,7 @@ fun LearningScreen(
                         )
                     }
                 }
-                items(graph.nodes, key = { it.id }) { node -> NodeCard(node) }
+                items(graph.nodes, key = { it.id }) { node -> NodeCard(node) { vm.open(node) } }
             }
         }
     }
@@ -138,9 +192,9 @@ private fun StatsCard(graph: LearningGraph) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NodeCard(node: LearningNode) {
+private fun NodeCard(node: LearningNode, onClick: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
         shape = MaterialTheme.shapes.medium,
     ) {

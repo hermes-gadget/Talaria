@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -61,12 +62,32 @@ fun ApiKeysScreen() {
     var error by remember { mutableStateOf<String?>(null) }
     var tip by remember { mutableStateOf<String?>(null) }
     var showAdvanced by remember { mutableStateOf(false) }
+    var deleteTarget by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     fun reload() = scope.launch {
         repo.getEnv().onSuccess { vars = it }.onFailure { error = it.message }
     }
     LaunchedEffect(Unit) { reload() }
+
+    deleteTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Delete API key?") },
+            text = { Text("Remove $target from the active Hermes profile's environment?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteTarget = null
+                    scope.launch {
+                        repo.deleteEnv(target)
+                            .onSuccess { reload() }
+                            .onFailure { error = it.message }
+                    }
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } },
+        )
+    }
 
     // A typed key/value that hasn't been committed with Set would be lost on leave.
     UnsavedChangesGuard(
@@ -160,9 +181,7 @@ fun ApiKeysScreen() {
                                 key = k
                                 tip = "Enter a new value above, then Set. Or Delete to clear."
                             }) { Text("Edit") }
-                            TextButton(onClick = {
-                                scope.launch { repo.deleteEnv(k); reload() }
-                            }) { Text("Delete") }
+                            TextButton(onClick = { deleteTarget = k }) { Text("Delete") }
                         }
                     }
                 }

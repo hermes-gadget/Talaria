@@ -8,7 +8,7 @@ Talaria is designed for people who run Hermes Agent themselves and do not want a
 2. **No forced accounts.** You connect to *your* Hermes dashboard. Nous Portal login is only used if *your* dashboard is configured for OAuth and you choose that flow.
 3. **Local-first.** Session caches, activity history, and drafts stay in on-device Room storage.
 4. **Secrets in Keystore.** Connection tokens/passwords use EncryptedSharedPreferences (AES-256 via Android Keystore master key).
-5. **Network scope.** HTTP/WS traffic goes only to the base URL(s) you configure (plus whatever that host redirects to for OIDC, if you use it).
+5. **Network scope.** HTTP/WS traffic goes to the base URL(s) you configure. User-started OIDC and MCP OAuth also open the authorization URL advertised by that server.
 6. **Optional pinning.** Per-profile SHA-256 certificate pins harden MITM resistance on untrusted networks.
 7. **Voice stays local when possible.** Dictation prefers on-device recognition. Cloud speech engines require an explicit opt-in.
 
@@ -20,7 +20,7 @@ Talaria is designed for people who run Hermes Agent themselves and do not want a
 | Session tokens / passwords / bearer tokens | Encrypted prefs | Never logged at BASIC HttpLogging unless you enable debug logging |
 | Cached sessions / messages | Room | Cleared when you clear app data |
 | Notification / sync preferences | SharedPreferences | Non-secret |
-| Chat drafts | Room | Per connection |
+| Chat drafts | Room | Isolated by connection and Hermes management profile |
 
 ## Data Talaria does **not** collect
 
@@ -35,7 +35,7 @@ Notification content (agent reply previews, pairing codes, etc.) is generated lo
 
 ## Microphone
 
-Microphone permission is used only for dictation features you start. Continuous listening uses a visible foreground service notification.
+Microphone permission is used only for dictation you start while Talaria is in the foreground. Talaria does not keep a microphone foreground service running after you leave Chat.
 
 ## Backups
 

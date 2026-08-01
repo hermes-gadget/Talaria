@@ -23,6 +23,8 @@ import androidx.lifecycle.viewModelScope
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.core.data.repo.ConnectionRepository
 import com.nousresearch.talaria.core.network.WsAuthHelper
+import com.nousresearch.talaria.core.network.NativeOidcLogin
+import com.nousresearch.talaria.core.network.NativeOidcProvider
 import com.nousresearch.talaria.domain.model.AuthMode
 import com.nousresearch.talaria.domain.model.ConnectionProfile
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,6 +41,7 @@ data class ConnectUiState(
     val authMode: AuthMode = AuthMode.SESSION_TOKEN,
     val username: String = "",
     val password: String = "",
+    val passwordProvider: String = "",
     val sessionToken: String = "",
     val bearerToken: String = "",
     val managementProfile: String = "",
@@ -48,11 +51,16 @@ data class ConnectUiState(
     val error: String? = null,
     val statusLine: String? = null,
     val doctorReport: String? = null,
+    val oidcSigningIn: Boolean = false,
+    val oidcProviders: List<NativeOidcProvider> = emptyList(),
+    val oidcProvider: String = "",
 )
 
 class ConnectViewModel(
     private val repo: ConnectionRepository = TalariaApp.instance.container.connectionRepository,
+    private val nativeOidc: NativeOidcLogin = TalariaApp.instance.container.nativeOidcLogin,
 ) : ViewModel() {
+    private var draftProfileId: String? = null
     private val _ui = MutableStateFlow(ConnectUiState())
     val ui: StateFlow<ConnectUiState> = _ui.asStateFlow()
     val profiles: StateFlow<List<ConnectionProfile>> = repo.profiles
@@ -72,12 +80,15 @@ class ConnectViewModel(
                     baseUrl = s.baseUrl,
                     authMode = s.authMode,
                     username = s.username.ifBlank { null },
+                    authProvider = s.passwordProvider,
                     sessionToken = s.sessionToken.ifBlank { null },
                     password = s.password.ifBlank { null },
                     bearerToken = s.bearerToken.ifBlank { null },
                     managementProfile = s.managementProfile,
                     pinSha256 = s.pinSha256.ifBlank { null },
+                    existingId = draftProfileId,
                 )
+                draftProfileId = profile.id
                 repo.setActive(profile.id)
                 val result = repo.testConnection()
                 result.fold(
@@ -101,6 +112,23 @@ class ConnectViewModel(
     fun select(id: String) = repo.setActive(id)
     fun delete(id: String) = repo.delete(id)
 
+    /** Load public connection fields for editing; blank secret inputs preserve encrypted values. */
+    fun edit(profile: ConnectionProfile) {
+        draftProfileId = profile.id
+        repo.setActive(profile.id)
+        _ui.value = ConnectUiState(
+            name = profile.name,
+            baseUrl = profile.baseUrl,
+            authMode = profile.authMode,
+            username = profile.username.orEmpty(),
+            passwordProvider = profile.authProvider,
+            managementProfile = profile.managementProfile,
+            pinSha256 = profile.pinSha256.orEmpty(),
+            oidcProvider = profile.authProvider,
+            statusLine = "Editing ${profile.name} · blank secret fields keep their saved values",
+        )
+    }
+
     /** Persist the draft profile and enter the app without a live /api/status probe. */
     fun saveAndContinue(onSuccess: () -> Unit) {
         val s = _ui.value
@@ -112,12 +140,15 @@ class ConnectViewModel(
                     baseUrl = s.baseUrl,
                     authMode = s.authMode,
                     username = s.username.ifBlank { null },
+                    authProvider = s.passwordProvider,
                     sessionToken = s.sessionToken.ifBlank { null },
                     password = s.password.ifBlank { null },
                     bearerToken = s.bearerToken.ifBlank { null },
                     managementProfile = s.managementProfile,
                     pinSha256 = s.pinSha256.ifBlank { null },
+                    existingId = draftProfileId,
                 )
+                draftProfileId = profile.id
                 repo.setActive(profile.id)
                 _ui.value = _ui.value.copy(testing = false, statusLine = "Saved · ${profile.baseUrl}")
                 onSuccess()
@@ -139,12 +170,17 @@ class ConnectViewModel(
                     baseUrl = s.baseUrl,
                     authMode = s.authMode,
                     username = s.username.ifBlank { null },
+                    authProvider = s.passwordProvider,
                     sessionToken = s.sessionToken.ifBlank { null },
                     password = s.password.ifBlank { null },
                     bearerToken = s.bearerToken.ifBlank { null },
                     managementProfile = s.managementProfile,
                     pinSha256 = s.pinSha256.ifBlank { null },
-                ).also { repo.setActive(it.id) }
+                    existingId = draftProfileId,
+                ).also {
+                    draftProfileId = it.id
+                    repo.setActive(it.id)
+                }
 
                 lines += "URL: ${s.baseUrl.trimEnd('/')}"
                 if (s.baseUrl.contains("127.0.0.1") || s.baseUrl.contains("localhost")) {
@@ -229,9 +265,51 @@ class ConnectViewModel(
         }
     }
 
-    fun portalLoginUrl(): String {
-        val base = _ui.value.baseUrl.trimEnd('/')
-        return "$base/auth/login"
+    /** Run Hermes' RFC 8252 system-browser + loopback + PKCE native flow. */
+    fun startOidcLogin(openBrowser: (String) -> Unit, onSuccess: () -> Unit) {
+        val s = _ui.value
+        viewModelScope.launch {
+            _ui.value = s.copy(oidcSigningIn = true, error = null, statusLine = null)
+            try {
+                val profile = repo.save(
+                    name = s.name,
+                    baseUrl = s.baseUrl,
+                    authMode = AuthMode.OIDC_BROWSER,
+                    username = null,
+                    authProvider = s.oidcProvider,
+                    sessionToken = null,
+                    password = null,
+                    bearerToken = null,
+                    managementProfile = s.managementProfile,
+                    pinSha256 = s.pinSha256.ifBlank { null },
+                    existingId = draftProfileId,
+                )
+                draftProfileId = profile.id
+                repo.setActive(profile.id)
+
+                val providers = nativeOidc.providers()
+                _ui.value = _ui.value.copy(oidcProviders = providers)
+                val provider = s.oidcProvider.takeIf { selected -> providers.any { it.name == selected } }
+                    ?: providers.singleOrNull()?.name
+                    ?: if (providers.isEmpty()) {
+                        error("Hermes did not advertise an OAuth provider")
+                    } else {
+                        error("Choose an OAuth provider, then tap Sign in again")
+                    }
+                nativeOidc.signIn(profile.id, provider, openBrowser)
+                val status = repo.testConnection().getOrThrow()
+                _ui.value = _ui.value.copy(
+                    oidcSigningIn = false,
+                    statusLine = "Signed in · Hermes ${status.version ?: "unknown"}",
+                )
+                onSuccess()
+            } catch (t: Throwable) {
+                _ui.value = _ui.value.copy(
+                    oidcSigningIn = false,
+                    error = t.message ?: "Browser sign-in failed",
+                )
+            }
+        }
     }
 
     companion object {

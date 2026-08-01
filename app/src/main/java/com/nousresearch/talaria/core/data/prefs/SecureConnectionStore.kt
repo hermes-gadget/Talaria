@@ -23,6 +23,7 @@ import androidx.security.crypto.MasterKey
 import com.nousresearch.talaria.core.network.JsonConfig
 import com.nousresearch.talaria.domain.model.ConnectionProfile
 import com.nousresearch.talaria.domain.model.ConnectionSecrets
+import com.nousresearch.talaria.domain.model.normalizeManagementProfile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -91,10 +92,32 @@ class SecureConnectionStore(context: Context) {
         )
     }
 
+    /** Store native-app OAuth tokens in the encrypted connection record. */
+    fun updateOidcTokens(
+        id: String,
+        accessToken: String,
+        refreshToken: String,
+        expiresAt: Long,
+        provider: String,
+    ) {
+        if (accessToken.isBlank()) return
+        val profile = _profiles.value.find { it.id == id } ?: return
+        val prev = secretsFor(id)
+        upsert(
+            profile.copy(hasBearerToken = true),
+            prev.copy(
+                bearerToken = accessToken,
+                oidcRefreshToken = refreshToken.ifBlank { prev.oidcRefreshToken },
+                oidcExpiresAt = expiresAt,
+                oidcProvider = provider.ifBlank { prev.oidcProvider },
+            ),
+        )
+    }
+
     /** Updates the Hermes management profile (`?profile=`) for the active connection. */
     fun setManagementProfile(profileName: String) {
         val active = activeProfile() ?: return
-        upsert(active.copy(managementProfile = profileName.trim()))
+        upsert(active.copy(managementProfile = normalizeManagementProfile(profileName)))
     }
 
     fun delete(id: String) {

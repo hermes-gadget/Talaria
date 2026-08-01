@@ -35,6 +35,7 @@ import com.nousresearch.talaria.domain.model.FsEntry
 import com.nousresearch.talaria.domain.model.FsTextFile
 import com.nousresearch.talaria.domain.model.LearningGraph
 import com.nousresearch.talaria.domain.model.McpServer
+import com.nousresearch.talaria.domain.model.McpCatalogEntry
 import com.nousresearch.talaria.domain.model.MemoryState
 import com.nousresearch.talaria.domain.model.MessagingPlatform
 import com.nousresearch.talaria.domain.model.ModelInfo
@@ -50,6 +51,8 @@ import com.nousresearch.talaria.domain.model.SystemStats
 import com.nousresearch.talaria.domain.model.ToolsetInfo
 import com.nousresearch.talaria.domain.model.WebhookRoute
 import com.nousresearch.talaria.domain.model.WebhooksResponse
+import com.nousresearch.talaria.domain.model.scopeId
+import com.nousresearch.talaria.domain.model.effectiveManagementProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -58,6 +61,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -74,7 +78,7 @@ class HermesRepository(
     private val appContext: Context? = null,
 ) {
     private val json = JsonConfig.json
-    private fun connId() = connectionStore.activeProfile()?.id ?: "none"
+    private fun connId() = connectionStore.activeProfile()?.scopeId() ?: "none"
     private fun api() = clientFactory.api()
 
     // Read-through cache so flipping between Manage menus is instant. Only the
@@ -165,8 +169,10 @@ class HermesRepository(
                 total = element.size,
             )
             is JsonObject -> {
-                val arr = element["sessions"]?.jsonArray
-                val sessions = arr?.map { json.decodeFromJsonElement<SessionSummary>(it) } ?: emptyList()
+                val arr = element["sessions"]?.jsonArray ?: element["results"]?.jsonArray
+                val sessions = arr?.mapNotNull {
+                    runCatching { json.decodeFromJsonElement<SessionSummary>(it) }.getOrNull()
+                } ?: emptyList()
                 val total = element["total"]?.let {
                     runCatching { it.toString().trim('"').toInt() }.getOrNull()
                 } ?: sessions.size
@@ -184,7 +190,7 @@ class HermesRepository(
         runCatching {
             val msgs = api().getSessionMessages(sessionId).messages
             val cid = connId()
-            db.messages().clearSession(sessionId)
+            db.messages().clearSession(cid, sessionId)
             db.messages().upsertAll(
                 msgs.mapIndexed { index, m ->
                     CachedMessageEntity(
@@ -339,7 +345,82 @@ class HermesRepository(
         }
     }
 
+    suspend fun searchSkillHub(query: String) = withContext(Dispatchers.IO) {
+        runCatching { api().searchSkillHub(query.trim()).results }
+    }
+
+    suspend fun previewHubSkill(identifier: String) = withContext(Dispatchers.IO) {
+        runCatching { api().previewHubSkill(identifier) }
+    }
+
+    suspend fun scanHubSkill(identifier: String) = withContext(Dispatchers.IO) {
+        runCatching { api().scanHubSkill(identifier) }
+    }
+
+    suspend fun installHubSkill(identifier: String) = withContext(Dispatchers.IO) {
+        runCatching {
+            val action = awaitAction(api().installHubSkill(buildJsonObject { put("identifier", identifier) }))
+            invalidate("skills", "learning_graph")
+            action
+        }
+    }
+
+    suspend fun uninstallHubSkill(name: String) = withContext(Dispatchers.IO) {
+        runCatching {
+            val action = awaitAction(api().uninstallHubSkill(buildJsonObject { put("name", name) }))
+            invalidate("skills", "learning_graph")
+            action
+        }
+    }
+
     suspend fun getMcp(): Result<List<McpServer>> = cached("mcp") { api().getMcpServers().servers }
+
+    suspend fun startMcpOAuth(name: String) = withContext(Dispatchers.IO) {
+        runCatching { api().startMcpOAuth(name) }
+    }
+
+    suspend fun getMcpOAuthFlow(id: String) = withContext(Dispatchers.IO) {
+        runCatching { api().getMcpOAuthFlow(id) }
+    }
+
+    suspend fun getMcpCatalog(): Result<List<McpCatalogEntry>> =
+        cached("mcp_catalog") { api().getMcpCatalog().entries }
+
+    suspend fun installMcpCatalogEntry(
+        name: String,
+        env: Map<String, String>,
+    ): Result<com.nousresearch.talaria.domain.model.ActionStatus?> = withContext(Dispatchers.IO) {
+        runCatching {
+            val started = api().installMcpCatalogEntry(buildJsonObject {
+                put("name", name)
+                put("enable", true)
+                put("env", buildJsonObject {
+                    env.filterValues(String::isNotBlank).forEach { (key, value) -> put(key, value) }
+                })
+            })
+            val response = started as? JsonObject
+            val action = response?.get("action")?.jsonPrimitive?.contentOrNull
+            val status = if (action == null) {
+                null
+            } else {
+                var completed: com.nousresearch.talaria.domain.model.ActionStatus? = null
+                for (attempt in 0 until 300) {
+                    val current = api().getActionStatus(action)
+                    if (!current.running) {
+                        completed = current
+                        break
+                    }
+                    kotlinx.coroutines.delay(1_000)
+                }
+                completed ?: error("Hermes MCP install '$action' did not finish within five minutes")
+            }
+            check(status?.exit_code in listOf(null, 0)) {
+                status?.lines?.lastOrNull() ?: "Hermes MCP install failed"
+            }
+            invalidate("mcp", "mcp_catalog")
+            status
+        }
+    }
 
     suspend fun getChannels(): Result<List<MessagingPlatform>> =
         cached("channels") { api().getMessagingPlatforms().platforms }
@@ -348,11 +429,12 @@ class HermesRepository(
         runCatching { api().getPairing() }
     }
 
-    suspend fun approvePairing(platform: String, code: String) = withContext(Dispatchers.IO) {
+    suspend fun approvePairing(platform: String, requestId: String) = withContext(Dispatchers.IO) {
         runCatching {
             api().approvePairing(buildJsonObject {
                 put("platform", platform)
-                put("code", code)
+                put("request_id", requestId)
+                connectionStore.activeProfile()?.effectiveManagementProfile()?.let { put("profile", it) }
             })
         }
     }
@@ -362,6 +444,7 @@ class HermesRepository(
             api().revokePairing(buildJsonObject {
                 put("platform", platform)
                 put("user_id", userId)
+                connectionStore.activeProfile()?.effectiveManagementProfile()?.let { put("profile", it) }
             })
             Unit
         }
@@ -374,7 +457,15 @@ class HermesRepository(
         runCatching { api().enableWebhooks() }.also { invalidate("webhooks") }
     }
 
-    suspend fun getProfiles(): Result<List<ProfileInfo>> = cached("profiles") { api().getProfiles().profiles }
+    suspend fun getProfiles(force: Boolean = false): Result<List<ProfileInfo>> = withContext(Dispatchers.IO) {
+        if (force) {
+            runCatching { api().getProfiles().profiles }.onSuccess {
+                cache.put("${connId()}:profiles", it)
+            }
+        } else {
+            cached("profiles") { api().getProfiles().profiles }
+        }
+    }
 
     suspend fun getActiveProfileName(): Result<String?> = withContext(Dispatchers.IO) {
         runCatching { api().getActiveProfile().active }
@@ -382,8 +473,68 @@ class HermesRepository(
 
     suspend fun setActiveProfileName(name: String): Result<String?> = withContext(Dispatchers.IO) {
         runCatching {
-            api().setActiveProfile(buildJsonObject { put("active", name) }).active
+            api().setActiveProfile(buildJsonObject { put("name", name) }).active
         }.also { clearCache() }
+    }
+
+    suspend fun createProfile(name: String, description: String, cloneFrom: String? = null): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                api().createProfile(buildJsonObject {
+                    put("name", name.trim())
+                    description.trim().takeIf(String::isNotEmpty)?.let { put("description", it) }
+                    cloneFrom?.trim()?.takeIf(String::isNotEmpty)?.let { put("clone_from", it) }
+                })
+                Unit
+            }.also { invalidate("profiles") }
+        }
+
+    suspend fun renameProfile(name: String, newName: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            api().renameProfile(name, buildJsonObject { put("new_name", newName.trim()) })
+            Unit
+        }.also { invalidate("profiles") }
+    }
+
+    suspend fun deleteProfile(name: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching { api().deleteProfile(name); Unit }.also { invalidate("profiles") }
+    }
+
+    suspend fun getProfileSoul(name: String): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            api().getProfileSoul(name).jsonObject["content"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        }
+    }
+
+    suspend fun updateProfileSoul(name: String, content: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            api().updateProfileSoul(name, buildJsonObject { put("content", content) })
+            Unit
+        }
+    }
+
+    suspend fun updateProfileDescription(name: String, description: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                api().updateProfileDescription(
+                    name,
+                    buildJsonObject { put("description", description.trim()) },
+                )
+                Unit
+            }.also { invalidate("profiles") }
+        }
+
+    suspend fun describeProfileAutomatically(name: String): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val root = api().describeProfileAuto(
+                name,
+                buildJsonObject { put("overwrite", true) },
+            ).jsonObject
+            check(root["ok"]?.jsonPrimitive?.booleanOrNull == true) {
+                root["reason"]?.jsonPrimitive?.contentOrNull ?: "Hermes could not generate a description"
+            }
+            root["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        }.also { invalidate("profiles") }
     }
 
     suspend fun renameSession(id: String, title: String) = withContext(Dispatchers.IO) {
@@ -435,11 +586,30 @@ class HermesRepository(
         }
     }
 
-    suspend fun setModel(modelId: String): Result<Unit> = withContext(Dispatchers.IO) {
+    data class ModelAssignmentResult(
+        val confirmRequired: Boolean = false,
+        val confirmMessage: String? = null,
+    )
+
+    suspend fun setModel(
+        provider: String,
+        modelId: String,
+        confirmExpensive: Boolean = false,
+    ): Result<ModelAssignmentResult> = withContext(Dispatchers.IO) {
         runCatching {
-            api().setModel(buildJsonObject { put("model", modelId) })
-            invalidate("model_providers")
-            Unit
+            val response = api().setModel(buildJsonObject {
+                put("scope", "main")
+                put("provider", provider)
+                put("model", modelId)
+                put("confirm_expensive_model", confirmExpensive)
+            })
+            val obj = response as? JsonObject
+            val confirmation = ModelAssignmentResult(
+                confirmRequired = obj?.get("confirm_required")?.jsonPrimitive?.booleanOrNull == true,
+                confirmMessage = obj?.get("confirm_message")?.jsonPrimitive?.contentOrNull,
+            )
+            if (!confirmation.confirmRequired) invalidate("model_providers")
+            confirmation
         }
     }
 
@@ -517,11 +687,24 @@ class HermesRepository(
         runCatching { api().deleteWebhook(name); Unit }.also { invalidate("webhooks") }
     }
 
-    suspend fun addMcpServer(name: String, command: String): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun addMcpServer(
+        name: String,
+        command: String,
+        url: String = "",
+        args: List<String> = emptyList(),
+        env: Map<String, String> = emptyMap(),
+        auth: String = "none",
+        bearerToken: String = "",
+    ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             api().addMcpServer(buildJsonObject {
                 put("name", name)
-                put("command", command)
+                command.takeIf { it.isNotBlank() }?.let { put("command", it) }
+                url.takeIf { it.isNotBlank() }?.let { put("url", it) }
+                if (args.isNotEmpty()) put("args", JsonArray(args.map(::JsonPrimitive)))
+                if (env.isNotEmpty()) put("env", buildJsonObject { env.forEach { (k, v) -> put(k, v) } })
+                if (auth != "none") put("auth", auth)
+                bearerToken.takeIf { it.isNotBlank() }?.let { put("bearer_token", it) }
             })
             invalidate("mcp")
             Unit
@@ -544,7 +727,12 @@ class HermesRepository(
         runCatching { api().testMcp(name) }
     }
 
-    suspend fun updateChannel(id: String, enabled: Boolean?, env: JsonObject?): Result<Unit> =
+    suspend fun updateChannel(
+        id: String,
+        enabled: Boolean?,
+        env: JsonObject?,
+        clearEnv: List<String> = emptyList(),
+    ): Result<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {
                 api().updateMessagingPlatform(
@@ -552,6 +740,9 @@ class HermesRepository(
                     buildJsonObject {
                         if (enabled != null) put("enabled", enabled)
                         if (env != null) put("env", env)
+                        if (clearEnv.isNotEmpty()) {
+                            put("clear_env", JsonArray(clearEnv.map(::JsonPrimitive)))
+                        }
                     },
                 )
                 invalidate("channels")
@@ -572,8 +763,10 @@ class HermesRepository(
             api().updateCronJob(
                 id,
                 buildJsonObject {
-                    put("prompt", prompt)
-                    put("schedule", schedule)
+                    put("updates", buildJsonObject {
+                        put("prompt", prompt)
+                        put("schedule", schedule)
+                    })
                 },
             )
             invalidate("cron")
@@ -585,12 +778,24 @@ class HermesRepository(
         runCatching { api().runDoctor() }
     }
 
+    suspend fun runDoctorToCompletion() = withContext(Dispatchers.IO) {
+        runCatching { awaitAction(api().runDoctor()) }
+    }
+
     suspend fun runSecurityAudit(): Result<JsonElement> = withContext(Dispatchers.IO) {
         runCatching { api().runSecurityAudit() }
     }
 
+    suspend fun runSecurityAuditToCompletion() = withContext(Dispatchers.IO) {
+        runCatching { awaitAction(api().runSecurityAudit()) }
+    }
+
     suspend fun runBackup(): Result<JsonElement> = withContext(Dispatchers.IO) {
         runCatching { api().runBackup() }
+    }
+
+    suspend fun runBackupToCompletion() = withContext(Dispatchers.IO) {
+        runCatching { awaitAction(api().runBackup()) }
     }
 
     suspend fun checkUpdate(): Result<JsonElement> = withContext(Dispatchers.IO) {
@@ -607,9 +812,39 @@ class HermesRepository(
         JsonConfig.json.decodeFromJsonElement(MemoryState.serializer(), api().getMemory())
     }
 
+    suspend fun setMemoryProvider(name: String): Result<MemoryState> = withContext(Dispatchers.IO) {
+        runCatching {
+            api().setMemoryProvider(buildJsonObject { put("provider", name) })
+            invalidate("memory", "memory_state")
+            JsonConfig.json.decodeFromJsonElement(MemoryState.serializer(), api().getMemory())
+        }
+    }
+
+    suspend fun resetMemory(target: String): Result<MemoryState> = withContext(Dispatchers.IO) {
+        runCatching {
+            require(target in setOf("all", "memory", "user")) { "Invalid memory reset target" }
+            api().resetMemory(buildJsonObject { put("target", target) })
+            invalidate("memory", "memory_state")
+            JsonConfig.json.decodeFromJsonElement(MemoryState.serializer(), api().getMemory())
+        }
+    }
+
     suspend fun getCuratorState(): Result<CuratorState> = cached("curator_state") {
         JsonConfig.json.decodeFromJsonElement(CuratorState.serializer(), api().getCurator())
     }
+
+    suspend fun setCuratorPaused(paused: Boolean): Result<CuratorState> = withContext(Dispatchers.IO) {
+        runCatching {
+            api().setCuratorPaused(buildJsonObject { put("paused", paused) })
+            invalidate("curator", "curator_state")
+            JsonConfig.json.decodeFromJsonElement(CuratorState.serializer(), api().getCurator())
+        }
+    }
+
+    suspend fun runCuratorNow(): Result<com.nousresearch.talaria.domain.model.ActionStatus> =
+        withContext(Dispatchers.IO) {
+            runCatching { awaitAction(api().runCurator()) }
+        }
 
     /** Export session messages as markdown for share sheet. */
     suspend fun exportSessionMarkdown(sessionId: String): Result<String> = withContext(Dispatchers.IO) {
@@ -641,7 +876,9 @@ class HermesRepository(
 
     /** Directory listing, sorted dirs-first then name; cached briefly per path. */
     suspend fun fsList(path: String): Result<List<FsEntry>> = cached("fs_list:$path", ttlMs = 10_000L) {
-        api().fsList(path).entries.sortedWith(
+        val response = api().fsList(path)
+        check(response.error.isNullOrBlank()) { "Could not list $path: ${response.error}" }
+        response.entries.sortedWith(
             compareByDescending<FsEntry> { it.isDirectory }.thenBy { it.name.lowercase() },
         )
     }
@@ -650,35 +887,92 @@ class HermesRepository(
         runCatching { api().fsReadText(path) }
     }
 
+    /** Re-read before saving so a remote edit does not silently overwrite a newer file. */
+    suspend fun fsWriteText(path: String, content: String, expectedOriginal: String): Result<FsTextFile> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val current = api().fsReadText(path)
+                check(!current.binary && !current.truncated) { "This file cannot be safely edited as text" }
+                check(current.text == expectedOriginal) {
+                    "The file changed on the Hermes host. Reopen it before saving."
+                }
+                api().fsWriteText(buildJsonObject {
+                    put("path", path)
+                    put("content", content)
+                })
+                invalidate("fs_list:${path.substringBeforeLast('/', "/")}")
+                api().fsReadText(path)
+            }
+        }
+
     // --- Learning graph / Starmap (Desktop parity 15.4) ---
 
     suspend fun getLearningGraph(): Result<LearningGraph> = cached("learning_graph") { api().getLearningGraph() }
 
+    suspend fun getLearningNode(id: String) = withContext(Dispatchers.IO) {
+        runCatching { api().getLearningNode(id) }
+    }
+
+    suspend fun updateLearningNode(id: String, content: String): Result<LearningGraph> = withContext(Dispatchers.IO) {
+        runCatching {
+            api().updateLearningNode(buildJsonObject {
+                put("id", id)
+                put("content", content)
+            })
+            invalidate("learning_graph", "skills")
+            api().getLearningGraph()
+        }
+    }
+
+    suspend fun deleteLearningNode(id: String): Result<LearningGraph> = withContext(Dispatchers.IO) {
+        runCatching {
+            api().deleteLearningNode(buildJsonObject { put("id", id) })
+            invalidate("learning_graph", "skills")
+            api().getLearningGraph()
+        }
+    }
+
+    private suspend fun awaitAction(
+        started: JsonElement,
+    ): com.nousresearch.talaria.domain.model.ActionStatus {
+        val name = (started as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull
+            ?: error("Hermes did not return an action name")
+        repeat(120) {
+            val status = api().getActionStatus(name)
+            if (!status.running) return status
+            kotlinx.coroutines.delay(1_000)
+        }
+        error("Hermes action '$name' did not finish within two minutes")
+    }
+
     suspend fun gateway(action: String) = withContext(Dispatchers.IO) {
         runCatching {
-            when (action) {
+            val started = when (action) {
                 "start" -> api().gatewayStart()
                 "stop" -> api().gatewayStop()
                 else -> api().gatewayRestart()
             }
+            awaitAction(started)
         }.also { invalidate("system", "portal") }
     }
 
     suspend fun recordActivity(type: String, title: String, body: String) {
+        val cid = connId()
         db.activity().insert(
             ActivityEventEntity(
-                connectionId = connId(),
+                connectionId = cid,
                 type = type,
                 title = title,
                 body = body,
             ),
         )
+        db.activity().trim(cid, 500)
     }
 
     suspend fun pollForNotifications(): SyncSnapshot = withContext(Dispatchers.IO) {
         val status = api().getStatus()
         val pairing = runCatching { api().getPairing() }.getOrNull()
-        val cron = runCatching { api().getCronJobs() }.getOrNull().orEmpty()
+        val cron = runCatching { api().getCronJobs() }.getOrNull()
         SyncSnapshot(status, pairing, cron)
     }
 }
@@ -686,5 +980,5 @@ class HermesRepository(
 data class SyncSnapshot(
     val status: StatusResponse,
     val pairing: PairingResponse?,
-    val cron: List<CronJob>,
+    val cron: List<CronJob>?,
 )

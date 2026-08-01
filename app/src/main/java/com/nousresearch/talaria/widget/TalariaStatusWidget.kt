@@ -36,6 +36,7 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import com.nousresearch.talaria.TalariaApp
+import com.nousresearch.talaria.domain.model.scopeId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -43,19 +44,22 @@ class TalariaStatusWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val settings = TalariaApp.instance.container.settingsStore
         val snapshot = withContext(Dispatchers.IO) {
+            val scopeId = TalariaApp.instance.container.connectionStore.activeProfile()?.scopeId()
+                ?: return@withContext WidgetSnapshot("Talaria · connect Hermes", 0, stale = false)
             val live = runCatching {
                 val status = TalariaApp.instance.container.hermesRepository.refreshStatus().getOrThrow()
-                val gw = if (status.gateway?.running == true) "GW up" else "GW down"
+                val gw = if ((status.gateway?.running ?: status.gateway_running) == true) "GW up" else "GW down"
                 val line = "Hermes ${status.version ?: "?"} · $gw · sessions ${status.active_sessions ?: 0}"
                 // Refresh the offline cache while we have a fresh read.
-                settings.cachedStatusLine = line
-                settings.cachedStatusUpdatedAt = System.currentTimeMillis()
+                settings.setCachedStatusLine(scopeId, line)
+                settings.setCachedStatusUpdatedAt(scopeId, System.currentTimeMillis())
                 line
             }.getOrNull()
+            val pending = settings.pendingPairingCount(scopeId)
+            val cached = settings.cachedStatusLine(scopeId)
             when {
-                live != null -> WidgetSnapshot(live, settings.pendingPairingCount, stale = false)
-                settings.cachedStatusLine != null ->
-                    WidgetSnapshot(settings.cachedStatusLine!!, settings.pendingPairingCount, stale = true)
+                live != null -> WidgetSnapshot(live, pending, stale = false)
+                cached != null -> WidgetSnapshot(cached, pending, stale = true)
                 else -> WidgetSnapshot("Talaria · connect Hermes", 0, stale = false)
             }
         }

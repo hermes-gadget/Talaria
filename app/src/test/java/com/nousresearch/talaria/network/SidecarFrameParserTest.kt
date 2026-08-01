@@ -71,6 +71,37 @@ class SidecarFrameParserTest {
     }
 
     @Test
+    fun parsesNestedToolFrame() {
+        val frame = """{"jsonrpc":"2.0","method":"event","params":{"type":"tool.complete","session_id":"s1","payload":{"tool_id":"call_2","name":"terminal","summary":"done"}}}"""
+        val event = SidecarFrameParser.parse(frame)
+        assertTrue(event is HermesSideEvent.Tool)
+        event as HermesSideEvent.Tool
+        assertEquals("call_2", event.id)
+        assertEquals("terminal", event.name)
+        assertEquals("done", event.message)
+    }
+
+    @Test
+    fun parsesMessageCompleteWithUsage() {
+        val frame = """{"jsonrpc":"2.0","method":"event","params":{"type":"message.complete","session_id":"s1","payload":{"text":"final answer","status":"complete","usage":{"prompt_tokens":10,"completion_tokens":5,"cost_usd":0.02}}}}"""
+        val event = SidecarFrameParser.parse(frame)
+        assertTrue(event is HermesSideEvent.MessageComplete)
+        event as HermesSideEvent.MessageComplete
+        assertEquals("s1", event.sessionId)
+        assertEquals("final answer", event.text)
+        assertEquals(15L, event.totalTokens)
+        assertEquals(0.02, event.costUsd!!, 0.0)
+    }
+
+    @Test
+    fun parsesNestedApprovalDescription() {
+        val frame = """{"method":"event","params":{"type":"approval.request","payload":{"command":"rm file","description":"Delete the file?"}}}"""
+        val event = SidecarFrameParser.parse(frame)
+        assertTrue(event is HermesSideEvent.Prompt)
+        assertEquals("Delete the file?", (event as HermesSideEvent.Prompt).message)
+    }
+
+    @Test
     fun parsesUsageWithComputedTotal() {
         val frame = """{"type":"usage","usage":{"prompt_tokens":100,"completion_tokens":40}}"""
         val event = SidecarFrameParser.parse(frame)
@@ -82,11 +113,42 @@ class SidecarFrameParserTest {
     }
 
     @Test
+    fun parsesNestedUsageAndModelPayloads() {
+        val usage = SidecarFrameParser.parse(
+            """{"method":"event","params":{"type":"usage.update","payload":{"usage":{"input_tokens":7,"output_tokens":3}}}}""",
+        ) as HermesSideEvent.Usage
+        assertEquals(10L, usage.totalTokens)
+
+        val model = SidecarFrameParser.parse(
+            """{"method":"event","params":{"type":"model.changed","payload":{"model":"qwen3","connected":true}}}""",
+        ) as HermesSideEvent.Model
+        assertEquals("qwen3", model.name)
+        assertEquals(true, model.connected)
+    }
+
+    @Test
     fun parsesPromptFrame() {
-        val frame = """{"type":"approval.request","message":"Run rm -rf?"}"""
+        val frame = """{"type":"approval.request","session_id":"s1","payload":{"description":"Run command?","command":"rm file","choices":["once","deny"]}}"""
         val event = SidecarFrameParser.parse(frame)
         assertTrue(event is HermesSideEvent.Prompt)
-        assertEquals("Run rm -rf?", (event as HermesSideEvent.Prompt).message)
+        event as HermesSideEvent.Prompt
+        assertEquals("Run command?", event.message)
+        assertEquals(listOf("once", "deny"), event.choices)
+        assertEquals("s1", event.sessionId)
+    }
+
+    @Test
+    fun parsesSecretAndPromptExpiry() {
+        val secret = SidecarFrameParser.parse(
+            """{"method":"event","params":{"type":"secret.request","session_id":"s1","payload":{"request_id":"r1","env_var":"API_KEY","prompt":"Enter key"}}}""",
+        ) as HermesSideEvent.Prompt
+        assertEquals(com.nousresearch.talaria.core.network.PromptKind.SECRET, secret.kind)
+        assertEquals("r1", secret.requestId)
+
+        val expired = SidecarFrameParser.parse(
+            """{"method":"event","params":{"type":"secret.expire","session_id":"s1","payload":{"request_id":"r1"}}}""",
+        ) as HermesSideEvent.PromptExpired
+        assertEquals("r1", expired.requestId)
     }
 
     /** JSON-RPC result responses (id + result, no method/type) are not events. */

@@ -21,6 +21,7 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.nousresearch.talaria.TalariaApp
+import retrofit2.HttpException
 
 /** Approves a pending pairing request straight from a notification action. */
 class PairingApproveWorker(
@@ -31,6 +32,14 @@ class PairingApproveWorker(
         val platform = inputData.getString(KEY_PLATFORM) ?: return Result.failure()
         val code = inputData.getString(KEY_CODE) ?: return Result.failure()
         val container = TalariaApp.instance.container
+        val expectedConnectionId = inputData.getString(KEY_CONNECTION_ID) ?: return Result.failure()
+        val expectedProfile = inputData.getString(KEY_MANAGEMENT_PROFILE).orEmpty()
+        val active = container.connectionStore.activeProfile() ?: return Result.failure()
+        if (active.id != expectedConnectionId || active.managementProfile != expectedProfile) {
+            // Never approve a request against a different server/profile merely
+            // because the user switched connections after the notification arrived.
+            return Result.failure()
+        }
         return container.hermesRepository.approvePairing(platform, code).fold(
             onSuccess = {
                 container.hermesRepository.recordActivity(
@@ -40,12 +49,19 @@ class PairingApproveWorker(
                 )
                 Result.success()
             },
-            onFailure = { Result.retry() },
+            onFailure = { error ->
+                val retriable = (error as? HttpException)?.code()?.let { it == 408 || it == 429 || it >= 500 }
+                    ?: true
+                if (retriable && runAttemptCount < MAX_RETRIES - 1) Result.retry() else Result.failure()
+            },
         )
     }
 
     companion object {
         const val KEY_PLATFORM = "platform"
         const val KEY_CODE = "code"
+        const val KEY_CONNECTION_ID = "connection_id"
+        const val KEY_MANAGEMENT_PROFILE = "management_profile"
+        private const val MAX_RETRIES = 3
     }
 }
