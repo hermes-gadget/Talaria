@@ -61,6 +61,17 @@ For phones, prefer Tailscale/WireGuard or an SSH tunnel over exposing the dashbo
 
 Session token: in loopback mode the SPA receives `__HERMES_SESSION_TOKEN__`. Copy that token into Talaria’s SESSION_TOKEN field, or use basic auth against a gated bind.
 
+## Obtainium / GitHub release APKs
+
+Tagged releases (`v*`) build a **debug** APK (`com.nousresearch.talaria.debug`) in
+CI, sign it with the persistent upload keystore stored in repo secrets
+(`TALARIA_CI_KEYSTORE_*`), and attach it to the GitHub pre-release. `versionName`
+and `versionCode` come from the tag (`v0.2.1` → name `0.2.1`, code `201`).
+
+Local `./gradlew :app:assembleDebug` still uses your machine’s Android debug
+keystore — that APK will not update over a CI build (or vice versa) without an
+uninstall. Prefer Obtainium → GitHub releases for device installs.
+
 ## Signing release APKs
 
 1. Generate a keystore (once):

@@ -14,6 +14,26 @@ if (keystorePropertiesFile.exists()) {
     keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
 }
 
+fun propOrDefault(name: String, default: String): String =
+    (findProperty(name) as String?)?.takeIf { it.isNotBlank() } ?: default
+
+// Overridable via -Ptalaria.versionName / -Ptalaria.versionCode (CI sets these from the git tag).
+// Defaults sit above the v0.1/v0.2 Obtainium builds that both shipped versionCode=2.
+val talariaVersionName = propOrDefault("talaria.versionName", "0.2.1")
+val talariaVersionCode = propOrDefault("talaria.versionCode", "201").toInt()
+
+// Persistent CI upload keystore (Obtainium). Ephemeral runner debug keys caused
+// INSTALL_FAILED_UPDATE_INCOMPATIBLE ("App not installed as package conflicts…").
+val ciKeystorePath = System.getenv("TALARIA_CI_KEYSTORE")
+val ciKeystorePassword = System.getenv("TALARIA_CI_KEYSTORE_PASSWORD")
+val ciKeyAlias = System.getenv("TALARIA_CI_KEY_ALIAS") ?: "talaria"
+val ciKeyPassword = System.getenv("TALARIA_CI_KEY_PASSWORD")
+val useCiDebugSigning =
+    !ciKeystorePath.isNullOrBlank() &&
+        !ciKeystorePassword.isNullOrBlank() &&
+        !ciKeyPassword.isNullOrBlank() &&
+        file(ciKeystorePath).isFile
+
 android {
     namespace = "com.nousresearch.talaria"
     // AGP 8.9.x supports up to compileSdk 36; keep aligned with Material3 / activity 1.12.x
@@ -23,8 +43,8 @@ android {
         applicationId = "com.nousresearch.talaria"
         minSdk = 28
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.0.0"
+        versionCode = talariaVersionCode
+        versionName = talariaVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
 
@@ -33,6 +53,14 @@ android {
     }
 
     signingConfigs {
+        if (useCiDebugSigning) {
+            getByName("debug") {
+                storeFile = file(ciKeystorePath!!)
+                storePassword = ciKeystorePassword
+                keyAlias = ciKeyAlias
+                keyPassword = ciKeyPassword
+            }
+        }
         if (keystorePropertiesFile.exists()) {
             create("release") {
                 keyAlias = keystoreProperties["keyAlias"] as String
