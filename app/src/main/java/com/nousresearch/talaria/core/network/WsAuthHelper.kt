@@ -22,10 +22,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.Request
 
 /**
  * Builds WebSocket auth query params matching dashboard `buildWsUrl`:
- * - Loopback / token mode → `token=`
+ * - Loopback / token mode → `token=` (Hermes still requires
+ *   `__HERMES_SESSION_TOKEN__` even when `auth_required=false`)
  * - Gated dashboards → single-use `ticket=` from `POST /api/auth/ws-ticket`
  */
 class WsAuthHelper(
@@ -57,12 +59,44 @@ class WsAuthHelper(
                 val ticket = runCatching { clientFactory.api().wsTicket().ticket }.getOrNull()
                 if (!ticket.isNullOrBlank()) return@withLock "ticket=${ticket.trim()}"
             }
-            secrets.sessionToken?.takeIf { it.isNotBlank() }?.let { return@withLock "token=$it" }
+
+            secrets.sessionToken?.takeIf { it.isNotBlank() }?.let {
+                return@withLock "token=${it.trim()}"
+            }
+
+            // Loopback dashboards embed the process session token in the SPA shell.
+            // REST often works without it when auth_required=false, but /api/pty and
+            // /api/ws reject with 403 `no_credential` unless `?token=` is present —
+            // which is exactly the "can't reconnect" failure mode after a soft close.
+            if (!authRequired) {
+                val minted = fetchLoopbackSessionToken(profile.baseUrl) ?: return@withLock ""
+                connectionStore.updateSessionToken(profile.id, minted)
+                return@withLock "token=$minted"
+            }
             ""
         }
     }
 
+    private fun fetchLoopbackSessionToken(baseUrl: String): String? {
+        val base = baseUrl.trimEnd('/')
+        val req = Request.Builder()
+            .url("$base/")
+            .header("Accept", "text/html")
+            .get()
+            .build()
+        return runCatching {
+            clientFactory.okHttp().newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                val body = resp.body?.string().orEmpty()
+                SESSION_TOKEN_RE.find(body)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+            }
+        }.getOrNull()
+    }
+
     companion object {
+        private val SESSION_TOKEN_RE =
+            Regex("""__HERMES_SESSION_TOKEN__\s*=\s*["']([^"']+)["']""")
+
         fun explainCloseCode(code: Int): String? = when (code) {
             4401 -> "WebSocket auth failed (4401). Sign in again or refresh the session token."
             4403 -> "WebSocket rejected (4403). Check Host/peer guards — remote dashboards must bind non-loopback and match the URL host."

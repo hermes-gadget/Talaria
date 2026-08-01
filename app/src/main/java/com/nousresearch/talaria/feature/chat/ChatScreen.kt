@@ -16,7 +16,10 @@
 
 package com.nousresearch.talaria.feature.chat
 
-import com.nousresearch.talaria.domain.model.ChatLine
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -84,12 +87,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nousresearch.talaria.TalariaApp
+import com.nousresearch.talaria.domain.model.ChatLine
 import com.nousresearch.talaria.domain.model.ToolCallUi
 import com.nousresearch.talaria.ui.components.SimpleMarkdownText
 
@@ -108,8 +117,25 @@ fun ChatScreen(
     val density = LocalDensity.current
     var renameTarget by remember { mutableStateOf<ChatTab?>(null) }
 
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) vm.toggleListen()
+        else vm.reportError("Microphone permission denied")
+    }
+
     LaunchedEffect(resumeSessionId, hasConnection) {
         if (!hasConnection) onNeedConnection() else vm.ensureStarted(resumeSessionId)
+    }
+    // Reconnect dead PTYs whenever Chat returns to the foreground (home/recents
+    // leave the ViewModel alive with connected=false and no sockets).
+    LaunchedEffect(lifecycleOwner, hasConnection) {
+        if (!hasConnection) return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            vm.reconnectDisconnected()
+        }
     }
     LaunchedEffect(initialShare) {
         if (!initialShare.isNullOrBlank()) vm.updateDraft(initialShare)
@@ -149,7 +175,7 @@ fun ChatScreen(
             active.totalTokens?.let { append(" · ${it} tok") }
             active.costUsd?.let { append(" · $${"%.4f".format(it)}") }
         }
-        else -> "Disconnected"
+        else -> "Disconnected · tap to reconnect"
     }
 
     if (active?.prompt != null) {
@@ -297,6 +323,9 @@ fun ChatScreen(
                             },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.clickable(
+                                enabled = active != null && !active.connected && !active.connecting,
+                            ) { vm.reconnectDisconnected() },
                         )
                     }
                 },
@@ -377,7 +406,20 @@ fun ChatScreen(
                             maxLines = 4,
                         )
                         Spacer(Modifier.width(4.dp))
-                        IconButton(onClick = vm::toggleListen) {
+                        IconButton(
+                            onClick = {
+                                if (ui.listening) {
+                                    vm.toggleListen()
+                                    return@IconButton
+                                }
+                                val granted = ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.RECORD_AUDIO,
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (granted) vm.toggleListen()
+                                else micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            },
+                        ) {
                             Icon(
                                 if (ui.listening) Icons.Filled.MicOff else Icons.Filled.Mic,
                                 contentDescription = "Dictate",

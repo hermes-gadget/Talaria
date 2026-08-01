@@ -45,6 +45,8 @@ class HermesClientFactory(
             .writeTimeout(60, TimeUnit.SECONDS)
             .addInterceptor(AuthInterceptor(connectionStore))
             .addInterceptor(ProfileQueryInterceptor(connectionStore))
+            // Network interceptor: rewrite Host for emulator→host loopback (10.0.2.2).
+            .addNetworkInterceptor(EmulatorLoopbackInterceptor())
 
         if (settingsStore.httpLoggingEnabled) {
             builder.addInterceptor(

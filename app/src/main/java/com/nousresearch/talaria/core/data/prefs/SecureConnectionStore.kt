@@ -79,6 +79,18 @@ class SecureConnectionStore(context: Context) {
         _activeId.value = id
     }
 
+    /** Persist a freshly minted loopback `__HERMES_SESSION_TOKEN__` for [id]. */
+    fun updateSessionToken(id: String, token: String) {
+        val trimmed = token.trim()
+        if (trimmed.isEmpty()) return
+        val profile = _profiles.value.find { it.id == id } ?: return
+        val prev = secretsFor(id)
+        upsert(
+            profile.copy(hasSessionToken = true),
+            prev.copy(sessionToken = trimmed),
+        )
+    }
+
     /** Updates the Hermes management profile (`?profile=`) for the active connection. */
     fun setManagementProfile(profileName: String) {
         val active = activeProfile() ?: return

@@ -17,16 +17,23 @@
 
 package com.nousresearch.talaria.core.voice
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import androidx.core.content.ContextCompat
 import com.nousresearch.talaria.core.data.prefs.SettingsStore
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 sealed class SttEvent {
     data class Partial(val text: String) : SttEvent()
@@ -39,40 +46,129 @@ sealed class SttEvent {
 /**
  * On-device STT via Android SpeechRecognizer (preferred).
  * Cloud STT engines are only used when the user explicitly opts in via Settings.
+ *
+ * SpeechRecognizer must be created and driven on the main thread. Continuous
+ * restarts are deferred briefly so ERROR_CLIENT (5) from overlapping sessions
+ * does not immediately abort dictation.
  */
 class SpeechCoordinator(
     private val context: Context,
     private val settings: SettingsStore,
 ) {
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(context)
 
+    fun hasMicPermission(): Boolean =
+        ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
     fun listen(continuous: Boolean = true): Flow<SttEvent> = callbackFlow {
+        if (!hasMicPermission()) {
+            trySend(SttEvent.Error("Microphone permission required"))
+            close()
+            return@callbackFlow
+        }
         if (!isAvailable()) {
             trySend(SttEvent.Error("Speech recognition unavailable on this device"))
             close()
             return@callbackFlow
         }
-        val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+
+        val closed = AtomicBoolean(false)
+        val listening = AtomicBoolean(false)
+        val transientFails = AtomicInteger(0)
+        var recognizer: SpeechRecognizer? = null
+
+        fun intent(): Intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+            // Prefer on-device when available; cloud only with explicit opt-in.
+            if (!settings.cloudSttOptIn) {
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            }
+        }
+
+        fun scheduleListen(delayMs: Long = 0L) {
+            if (closed.get()) return
+            mainHandler.postDelayed({
+                if (closed.get()) return@postDelayed
+                val r = recognizer ?: return@postDelayed
+                if (!listening.compareAndSet(false, true)) return@postDelayed
+                try {
+                    r.startListening(intent())
+                } catch (_: Exception) {
+                    listening.set(false)
+                    if (continuous && !closed.get() && transientFails.incrementAndGet() <= MAX_TRANSIENT) {
+                        scheduleListen(RESTART_DELAY_MS)
+                    } else {
+                        trySend(SttEvent.Error("STT failed to start"))
+                        close()
+                    }
+                }
+            }, delayMs)
+        }
+
+        fun explain(error: Int): String = when (error) {
+            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech network timed out"
+            SpeechRecognizer.ERROR_NETWORK -> "Speech network error"
+            SpeechRecognizer.ERROR_AUDIO -> "Microphone audio error"
+            SpeechRecognizer.ERROR_SERVER ->
+                "Speech server error — enable cloud STT in You, or install an offline speech pack"
+            SpeechRecognizer.ERROR_CLIENT ->
+                "Speech client error — grant mic permission, or enable cloud STT if no offline pack is installed"
+            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected"
+            SpeechRecognizer.ERROR_NO_MATCH -> "No speech match"
+            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recognizer busy"
+            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission required"
+            else -> "STT error $error"
+        }
+
+        fun isTransient(error: Int): Boolean = when (error) {
+            SpeechRecognizer.ERROR_NO_MATCH,
+            SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
+            SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
+            SpeechRecognizer.ERROR_CLIENT,
+            -> true
+            else -> false
+        }
+
         val listener = object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) { trySend(SttEvent.Ready) }
+            override fun onReadyForSpeech(params: Bundle?) {
+                transientFails.set(0)
+                trySend(SttEvent.Ready)
+            }
             override fun onBeginningOfSpeech() = Unit
             override fun onRmsChanged(rmsdB: Float) = Unit
             override fun onBufferReceived(buffer: ByteArray?) = Unit
             override fun onEndOfSpeech() {
+                listening.set(false)
                 trySend(SttEvent.End)
-                if (continuous) recognizer.startListening(intent())
+                if (continuous) scheduleListen(RESTART_DELAY_MS)
             }
             override fun onError(error: Int) {
-                if (continuous && error == SpeechRecognizer.ERROR_NO_MATCH) {
-                    recognizer.startListening(intent())
-                    return
+                listening.set(false)
+                if (continuous && isTransient(error)) {
+                    // Normal continuous idle: no-match / speech-timeout just restart.
+                    // ERROR_CLIENT (5) / busy usually mean overlapping restarts or a
+                    // missing offline pack — retry a few times, then surface.
+                    val soft = error == SpeechRecognizer.ERROR_NO_MATCH ||
+                        error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+                    if (soft || transientFails.incrementAndGet() <= MAX_TRANSIENT) {
+                        scheduleListen(RESTART_DELAY_MS)
+                        return
+                    }
                 }
-                trySend(SttEvent.Error("STT error $error"))
+                trySend(SttEvent.Error(explain(error)))
+                close()
             }
             override fun onResults(results: Bundle?) {
+                listening.set(false)
+                transientFails.set(0)
                 val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
                 if (!text.isNullOrBlank()) trySend(SttEvent.Final(text))
-                if (continuous) recognizer.startListening(intent())
+                if (continuous) scheduleListen(RESTART_DELAY_MS)
             }
             override fun onPartialResults(partialResults: Bundle?) {
                 val text = partialResults
@@ -82,20 +178,38 @@ class SpeechCoordinator(
             }
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
         }
-        recognizer.setRecognitionListener(listener)
-        recognizer.startListening(intent())
-        awaitClose { recognizer.destroy() }
-    }
 
-    private fun intent(): Intent {
-        return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-            // Prefer on-device when available; cloud only with explicit opt-in.
-            if (!settings.cloudSttOptIn) {
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+        // Create + start on the main looper — required by SpeechRecognizer.
+        // Never block this collector waiting on main (viewModelScope is Main).
+        mainHandler.post {
+            if (closed.get()) return@post
+            try {
+                val r = SpeechRecognizer.createSpeechRecognizer(context)
+                recognizer = r
+                r.setRecognitionListener(listener)
+                scheduleListen()
+            } catch (t: Throwable) {
+                trySend(SttEvent.Error(t.message ?: "STT init failed"))
+                close()
             }
         }
+
+        awaitClose {
+            closed.set(true)
+            mainHandler.post {
+                listening.set(false)
+                runCatching {
+                    recognizer?.setRecognitionListener(null)
+                    recognizer?.cancel()
+                    recognizer?.destroy()
+                }
+                recognizer = null
+            }
+        }
+    }
+
+    companion object {
+        private const val RESTART_DELAY_MS = 350L
+        private const val MAX_TRANSIENT = 3
     }
 }

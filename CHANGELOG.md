@@ -16,6 +16,23 @@ All notable changes to Talaria are documented here.
 
 ## [Unreleased] — Parity-gap closure
 
+### Fixes
+
+- **STT error 5 (mic):** Chat now requests `RECORD_AUDIO` at tap time (manifest-only
+  was not enough). `SpeechRecognizer` is created on the main looper, continuous
+  restarts are delayed, and transient `ERROR_CLIENT` / busy are retried with a
+  clear message when offline speech isn't available.
+- **Chat stuck Disconnected after closing the app:** dead PTY tabs are reopened on
+  foreground (`repeatOnLifecycle`) and via tap-to-reconnect, resuming the prior
+  Hermes session id when known.
+- **Loopback WS 403 `no_credential`:** when `auth_required=false`, auto-fetch
+  `__HERMES_SESSION_TOKEN__` from the dashboard HTML and attach `?token=` (REST
+  worked without it; `/api/pty` / `/api/ws` did not).
+- **Emulator `10.0.2.2` Host rejection:** network interceptor rewrites `Host` to
+  `127.0.0.1` so Hermes loopback DNS-rebinding guards accept the upgrade.
+- **Sidecar JSON-RPC:** quote `method` in `sendRpc` — unquoted `model.info` was
+  parse-rejected on every connect (`gui.log`).
+
 ### Performance
 
 - **Polling no longer runs off-screen:** a new lifecycle-gated `PollEffect` replaces the
