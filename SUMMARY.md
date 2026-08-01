@@ -1,20 +1,18 @@
-# Manage-depth implementation
+# Artifacts and subagent monitor
 
-Branch: `feature/manage-depth`
+Branch: `feature/artifacts-subagents`
 
-Implemented the requested management-depth surfaces:
+Implemented:
 
-- Cron jobs now use an additive raw v0.19.1 API seam for object-shaped schedules, delivery-target selection, expandable per-job run history, and blueprint field instantiation.
-- Sessions now expose stats, multi-select bulk deletion, empty-session count/delete, SAF JSON import, and latest-descendant navigation from session detail. Destructive actions remain confirmation-gated.
-- Skills now have a validated SKILL.md content editor for name/description/body and a Skills Hub update action.
-- Added focused unit coverage for cron run parsing, blueprint instantiation, and session selection behavior.
+- A pure transcript artifact extractor for assistant/tool messages. It recognizes supported image, text, and archive paths in message text, markdown links/images, and nested tool payloads, deduplicates by session/path, and has unit coverage.
+- An Artifacts screen/ViewModel with recent-session scanning through the existing sessions/messages API, image/text/archive/all filter chips, client pagination, filesystem image/text previews, FileProvider share sheets, and originating-session actions.
+- A read-only expandable Subagent Monitor in the Chat header/rail. It combines existing tab working/tool/prompt state with live sidecar tool, prompt, and delegate/subagent frames, including argument summaries and elapsed timing.
+- The Manage Artifacts entry and additive `Routes.ARTIFACTS` constant.
 
-The legacy typed cron API remains unchanged for existing repository consumers; the new raw methods and management-depth models are additive. A missing pre-existing `FsDataUrl` import in `HermesApi.kt` was also restored so the module compiles.
+The central NavHost is intentionally untouched because `TalariaNavRoot.kt` is outside this worktree’s ownership. The integration owner should register `Routes.ARTIFACTS` to `ArtifactsScreen` and route its originating-session action to `Routes.chat(sessionId)`.
 
-Verification passed with the requested tasks:
+Verification requested by the task:
 
 ```text
 ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon
 ```
-
-The shared shell required `JAVA_HOME=/home/ben/.local/jdk17` and `ANDROID_HOME=/home/ben/android-sdk` to run Gradle. No services were restarted and no remote changes were made.
