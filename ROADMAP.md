@@ -783,8 +783,11 @@ are confirmed against a run that spawns subagents.
 **Shipped (2026-08):** a `CommandPalette` `ModalBottomSheet` opens from the search icon
 in the Manage top bar — a fuzzy-filtered list (title/subtitle/section) of every Manage
 destination; tapping a result navigates there and dismisses. Directly serves fast menu
-navigation. **Still open:** reach-from-anywhere trigger (edge swipe / app-icon shortcut),
-profile/session actions, and recents — follow-up.
+navigation. **Also shipped:** launcher long-press **app-icon shortcuts** (static
+`res/xml/shortcuts.xml` → New chat / Status / Activity / Manage) via implicit `talaria://`
+VIEW intents (build-variant-safe), routed in `TalariaNavRoot` with correct nav-bar highlight.
+**Still open:** in-app reach-from-anywhere trigger (edge swipe / FAB), profile/session
+actions, and recents — follow-up.
 
 **Done when:** Palette sheet from anywhere (edge swipe / FAB / long-press app icon): search + run — open screen, switch profile, jump to session, run system action; recent actions first.
 

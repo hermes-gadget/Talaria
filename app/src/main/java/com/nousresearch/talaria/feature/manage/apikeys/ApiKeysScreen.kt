@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.domain.model.EnvVarInfo
 import com.nousresearch.talaria.ui.components.ScreenScaffold
+import com.nousresearch.talaria.ui.components.UnsavedChangesGuard
 import kotlinx.coroutines.launch
 
 @Composable
@@ -66,6 +67,12 @@ fun ApiKeysScreen() {
         repo.getEnv().onSuccess { vars = it }.onFailure { error = it.message }
     }
     LaunchedEffect(Unit) { reload() }
+
+    // A typed key/value that hasn't been committed with Set would be lost on leave.
+    UnsavedChangesGuard(
+        hasUnsavedChanges = key.isNotBlank() || value.isNotBlank(),
+        message = "You've typed an API key that hasn't been saved with Set. Leaving now will discard it.",
+    )
 
     val grouped = remember(vars, showAdvanced) {
         vars.entries

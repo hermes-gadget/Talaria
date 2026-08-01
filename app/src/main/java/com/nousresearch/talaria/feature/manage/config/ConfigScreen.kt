@@ -52,6 +52,7 @@ import com.nousresearch.talaria.TalariaApp
 import com.nousresearch.talaria.core.network.JsonConfig
 import com.nousresearch.talaria.domain.model.ConfigSchemaResponse
 import com.nousresearch.talaria.ui.components.ScreenScaffold
+import com.nousresearch.talaria.ui.components.UnsavedChangesGuard
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
@@ -69,6 +70,8 @@ fun ConfigScreen() {
     val scope = rememberCoroutineScope()
 
     var text by remember { mutableStateOf("") }
+    // Baseline of the last loaded/saved config, to detect unsaved edits.
+    var savedText by remember { mutableStateOf("") }
     var defaultsText by remember { mutableStateOf<String?>(null) }
     var schema by remember { mutableStateOf<ConfigSchemaResponse?>(null) }
     var schemaFailed by remember { mutableStateOf(false) }
@@ -92,7 +95,10 @@ fun ConfigScreen() {
     fun load() {
         scope.launch {
             repo.getConfig()
-                .onSuccess { text = JsonConfig.json.encodeToString(it) }
+                .onSuccess {
+                    text = JsonConfig.json.encodeToString(it)
+                    savedText = text
+                }
                 .onFailure { message = it.message }
             repo.getConfigDefaults()
                 .onSuccess { defaultsText = JsonConfig.json.encodeToString(it) }
@@ -113,6 +119,9 @@ fun ConfigScreen() {
 
     LaunchedEffect(Unit) { load() }
 
+    val dirty = text != savedText
+    UnsavedChangesGuard(hasUnsavedChanges = dirty)
+
     val categories = remember(schema) {
         schema?.let { s ->
             val fromOrder = s.category_order.filter { it.isNotBlank() }
@@ -122,7 +131,11 @@ fun ConfigScreen() {
 
     val useForm = !schemaFailed && schema != null && categories.isNotEmpty()
 
-    ScreenScaffold("Config", if (useForm) "Schema-driven editor" else "Raw JSON editor", actions = {
+    val subtitle = buildString {
+        append(if (useForm) "Schema-driven editor" else "Raw JSON editor")
+        if (dirty) append(" · Unsaved changes")
+    }
+    ScreenScaffold("Config", subtitle, actions = {
         TextButton(onClick = { load() }) { Text("Reload") }
     }) {
         Column(
@@ -265,6 +278,7 @@ fun ConfigScreen() {
                         runCatching {
                             val obj = JsonConfig.json.parseToJsonElement(text).jsonObject
                             repo.putConfig(obj).getOrThrow()
+                            savedText = text
                             message = "Saved"
                         }.onFailure { message = it.message }
                     }

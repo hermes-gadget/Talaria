@@ -20,6 +20,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.nousresearch.talaria.TalariaApp
+import com.nousresearch.talaria.core.data.prefs.PersistedChatState
+import com.nousresearch.talaria.core.data.prefs.PersistedChatTab
 import com.nousresearch.talaria.core.data.repo.ChatRepository
 import com.nousresearch.talaria.core.data.repo.HermesRepository
 import com.nousresearch.talaria.core.network.HermesEventClient
@@ -135,6 +137,9 @@ class ChatViewModel(
     /** Hermes session ids already mapped to a tab, so concurrent tabs don't collide. */
     private val claimedSessions = mutableSetOf<String>()
     private var sessionCounter = 0
+    // Suppresses per-tab persistence while restorePersistedTabs() rebuilds the
+    // surface, so we don't write half-restored snapshots; we persist once at the end.
+    private var restoring = false
     private var sttJob: Job? = null
     private var lastCols = 80
     private var lastRows = 24
@@ -147,13 +152,66 @@ class ChatViewModel(
     /** Called by the screen: make sure at least one session exists (optionally resuming). */
     fun ensureStarted(resume: String? = null) {
         if (_ui.value.tabs.isEmpty()) {
-            newSession(resume = resume, draft = initialDraft)
+            if (!resume.isNullOrBlank()) {
+                newSession(resume = resume, draft = initialDraft)
+            } else {
+                // Cold start (a force-close / process kill wipes the in-memory tabs):
+                // restore every persisted thread with its title and resume its
+                // session, instead of opening a single blank new agent.
+                restorePersistedTabs()
+            }
         } else if (!resume.isNullOrBlank() && _ui.value.tabs.none { it.resumeSessionId == resume }) {
             newSession(resume = resume)
         }
         // Soft-background / process pause often drops the PTY while the ViewModel
         // (and its dead tabs) survive — reopen those sockets on the next start.
         reconnectDisconnected()
+    }
+
+    /** Rebuild the tab list saved for this profile; falls back to one fresh agent. */
+    private fun restorePersistedTabs() {
+        val pid = container.connectionStore.activeProfile()?.id
+        val saved = pid?.let { container.settingsStore.loadChatState(it) } ?: PersistedChatState()
+        if (saved.tabs.isEmpty()) {
+            newSession(draft = initialDraft)
+            return
+        }
+        restoring = true
+        saved.tabs.forEachIndexed { index, t ->
+            newSession(
+                resume = t.sessionId,
+                titleOverride = t.title,
+                // Only the first restored tab inherits the saved composer draft.
+                draft = if (index == 0) initialDraft else "",
+            )
+        }
+        // Restore focus to the tab the user was last on.
+        val activeId = _ui.value.tabs.firstOrNull {
+            it.resumeSessionId != null && it.resumeSessionId == saved.activeSessionId
+        }?.id
+        if (activeId != null) _ui.update { it.copy(activeTabId = activeId) }
+        restoring = false
+        persistChatState()
+    }
+
+    /**
+     * Snapshot the whole Chat surface (open tabs, their titles, the focused tab)
+     * so a cold start can rebuild it. Called after any tab add/remove/rename/switch
+     * and when a tab claims its Hermes session id.
+     */
+    private fun persistChatState() {
+        if (restoring) return
+        val pid = container.connectionStore.activeProfile()?.id ?: return
+        val tabs = _ui.value.tabs.map { t ->
+            PersistedChatTab(sessionId = t.liveSessionId ?: t.resumeSessionId, title = t.title)
+        }
+        container.settingsStore.saveChatState(
+            pid,
+            PersistedChatState(
+                tabs = tabs,
+                activeSessionId = _ui.value.active?.let { it.liveSessionId ?: it.resumeSessionId },
+            ),
+        )
     }
 
     /**
@@ -290,10 +348,12 @@ class ChatViewModel(
         }
         if (!resume.isNullOrBlank()) loadReading(id, resume)
         startReadingPoll(id)
+        persistChatState()
     }
 
     fun switchTab(tabId: String) {
         _ui.update { it.copy(activeTabId = tabId) }
+        persistChatState()
     }
 
     fun closeTab(tabId: String) {
@@ -312,7 +372,7 @@ class ChatViewModel(
             )
         }
         // Never leave the user on an empty Chats tab.
-        if (_ui.value.tabs.isEmpty()) newSession()
+        if (_ui.value.tabs.isEmpty()) newSession() else persistChatState()
     }
 
     fun resumeSession(id: String) {
@@ -494,6 +554,8 @@ class ChatViewModel(
         val trimmed = title.trim()
         if (trimmed.isEmpty()) return
         updateTab(tabId) { it.copy(title = trimmed) }
+        // Persist so the renamed title survives a cold start.
+        persistChatState()
     }
 
     private fun handlePtyEvent(tabId: String, event: PtyEvent) {
@@ -521,6 +583,9 @@ class ChatViewModel(
                 if (id != null) {
                     if (id != _ui.value.tabs.firstOrNull { it.id == tabId }?.liveSessionId) {
                         updateTab(tabId) { it.copy(liveSessionId = id) }
+                        // A tab just claimed its session — snapshot so a cold start
+                        // resumes this thread (and every sibling) with its title.
+                        persistChatState()
                     }
                     loadReading(tabId, id)
                 }
