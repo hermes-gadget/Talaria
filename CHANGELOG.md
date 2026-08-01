@@ -30,6 +30,11 @@ All notable changes to Talaria are documented here.
 - **Chat stuck Disconnected after closing the app:** dead PTY tabs are reopened on
   foreground (`repeatOnLifecycle`) and via tap-to-reconnect, resuming the prior
   Hermes session id when known.
+- **Unsaved edits could be lost silently:** Config and API Keys now guard the back
+  gesture — if you've edited the config draft (or typed an API key without tapping Set),
+  leaving prompts **Discard unsaved changes? / Keep editing**, and Config's header shows
+  a "· Unsaved changes" marker while a draft differs from what's saved
+  (`ui/components/UnsavedChangesGuard`).
 - **Chat forgot everything after a full force-close:** a process kill wiped the
   in-memory tabs, so a cold start opened a blank new agent even though it reconnected.
   The **whole Chat surface** — every open thread, each tab's (renamed) title, and which
