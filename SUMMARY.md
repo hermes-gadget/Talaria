@@ -1,21 +1,19 @@
-# Parity Wave 1 — Agent Summaries
+# Files preview implementation
 
-## Starmap (feature/starmap)
-- Feature-local graph adapter so the Learning screen retains node timestamps and `{source,target}` edges from Hermes v0.19.1 without changing shared/core files.
-- Deterministic seeded radial placement, node sizing/colors, labels, edge culling, Canvas pan/zoom/tap interaction, timeline slider/chips, node detail metadata.
-- Preserved stats, clusters, node list, and existing get/update/delete flows.
-- Verification: `./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon` passed (two redundant-null-check warnings in LearningLayout.kt).
+Branch: `feature/files-preview`
 
-## Markdown upgrade (feature/markdown-upgrade)
-- Desktop-parity chat markdown in `SimpleMarkdown.kt`: memoized dependency-free parser for fenced syntax-colored code, GFM tables, links (Intent.ACTION_VIEW + optional handler), blockquotes, strikethrough, nested lists, horizontal rules; selectable monospace code surfaces.
-- `ChangedFilesCard.kt`: completed file-edit tool paths aggregated with unified-diff +/- counts, rendered in the chat message-items LazyColumn region.
-- Verification passed.
+Implemented the Files pane media-preview and sharing parity work:
 
-## Artifacts browser + subagent monitor (feature/artifacts-subagents)
-- (see SUMMARY in branch commit; artifacts extraction, preview via fs bridge, Manage entry, subagent monitor panel)
+- image previews for PNG/JPG/JPEG/GIF/WebP/BMP and image MIME types, with base64 data-URL parsing and pinch/pan zoom;
+- binary-file metadata with read-only presentation and FileProvider `ACTION_SEND` sharing for text, image, and binary files;
+- overwrite confirmation plus existing optimistic-concurrency checks for text edits;
+- pull-to-refresh and lifecycle-aware refresh when the Files destination resumes;
+- unit coverage for data-URL parsing and preview-type mapping.
 
-## Files pane previews + sharing (feature/files-preview)
-- (see branch SUMMARY; data-URL parsing, image decode + pinch zoom, binary metadata, FileProvider share, overwrite confirm, pull-to-refresh)
+Verification passed with:
 
-## Manage depth (feature/manage-depth)
-- (see branch SUMMARY; cron runs/delivery/blueprints, session admin bulk-delete/empty/import/stats/descendant, skill authoring)
+```text
+./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon
+```
+
+The shell required the installed JDK at `/home/ben/.local/jdk17` and Android SDK at `/home/ben/android-sdk`.
