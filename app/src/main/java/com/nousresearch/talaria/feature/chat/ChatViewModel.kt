@@ -151,6 +151,84 @@ class ChatViewModel(
         } else if (!resume.isNullOrBlank() && _ui.value.tabs.none { it.resumeSessionId == resume }) {
             newSession(resume = resume)
         }
+        // Soft-background / process pause often drops the PTY while the ViewModel
+        // (and its dead tabs) survive — reopen those sockets on the next start.
+        reconnectDisconnected()
+    }
+
+    /**
+     * Re-open PTY + sidecar for any tab that is neither connected nor mid-connect.
+     * Prefer resuming the Hermes session id we already claimed so the agent
+     * continues instead of spawning an orphaned new TUI.
+     */
+    fun reconnectDisconnected() {
+        _ui.value.tabs
+            .filter { !it.connected && !it.connecting }
+            .forEach { reconnectTab(it.id) }
+    }
+
+    fun reconnectTab(tabId: String) {
+        val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return
+        if (tab.connected || tab.connecting) return
+
+        val old = runtimes.remove(tabId)
+        old?.collectJob?.cancel()
+        old?.sideJob?.cancel()
+        old?.readingJob?.cancel()
+        old?.session?.close()
+        old?.eventClient?.dispose()
+
+        val resume = tab.liveSessionId ?: tab.resumeSessionId
+        val channel = UUID.randomUUID().toString()
+        val eventClient = HermesEventClient(
+            container.clientFactory,
+            container.connectionStore,
+            container.wsAuthHelper,
+        )
+        val (pty, flow) = chatRepository.openPty(resume, channel, lastCols, lastRows)
+        val rt = SessionRuntime(session = pty, eventClient = eventClient)
+        // Keep baseline from the prior runtime when present so we don't reclaim
+        // unrelated sessions that appeared while we were disconnected.
+        if (old != null) {
+            rt.baselineSessions = old.baselineSessions
+            rt.baselineReady = old.baselineReady
+            rt.readingSessionId = old.readingSessionId
+        }
+        runtimes[tabId] = rt
+
+        updateTab(tabId) {
+            it.copy(
+                channelId = channel,
+                connecting = true,
+                connected = false,
+                error = null,
+                working = false,
+            )
+        }
+
+        eventClient.start(channel)
+        rt.sideJob = viewModelScope.launch {
+            eventClient.events.collect { handleSideEvent(tabId, it) }
+        }
+        rt.collectJob = viewModelScope.launch {
+            try {
+                flow.collect { event -> handlePtyEvent(tabId, event) }
+            } catch (t: Throwable) {
+                updateTab(tabId) {
+                    it.copy(error = t.message ?: "Chat connection failed", connecting = false, connected = false)
+                }
+            }
+        }
+        if (old == null || !rt.baselineReady) {
+            viewModelScope.launch {
+                val list = hermesRepository.refreshSessions().getOrNull().orEmpty()
+                rt.baselineSessions = list.map { it.id }.toSet()
+                rt.baselineReady = true
+                _ui.update { it.copy(sessions = list.take(40)) }
+            }
+        }
+        if (!resume.isNullOrBlank()) loadReading(tabId, resume)
+        startReadingPoll(tabId)
     }
 
     /** Open a brand-new concurrent agent in its own tab and focus it. */
@@ -366,10 +444,23 @@ class ChatViewModel(
         updateTab(tabId) { it.copy(prompt = null) }
     }
 
+    fun reportError(message: String) {
+        val tabId = _ui.value.active?.id ?: return
+        updateTab(tabId) { it.copy(error = message) }
+    }
+
     fun toggleListen() {
         if (_ui.value.listening) {
             sttJob?.cancel()
             _ui.update { it.copy(listening = false, partialDictation = "") }
+            return
+        }
+        if (!speech.hasMicPermission()) {
+            reportError("Microphone permission required")
+            return
+        }
+        if (!speech.isAvailable()) {
+            reportError("Speech recognition unavailable on this device")
             return
         }
         _ui.update { it.copy(listening = true) }
@@ -383,8 +474,8 @@ class ChatViewModel(
                         _ui.update { it.copy(partialDictation = "") }
                     }
                     is SttEvent.Error -> {
-                        _ui.update { it.copy(listening = false) }
-                        _ui.value.active?.id?.let { id -> updateTab(id) { t -> t.copy(error = event.message) } }
+                        _ui.update { it.copy(listening = false, partialDictation = "") }
+                        reportError(event.message)
                     }
                     else -> Unit
                 }

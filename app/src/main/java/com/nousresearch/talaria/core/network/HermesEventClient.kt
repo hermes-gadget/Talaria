@@ -109,15 +109,10 @@ class HermesEventClient(
     fun sendRpc(method: String, params: JsonObject = JsonObject(emptyMap()), onResult: ((JsonElement?) -> Unit)? = null) {
         val id = rpcId.getAndIncrement()
         if (onResult != null) pendingRpc[id] = onResult
-        val body = buildString {
-            append("""{"jsonrpc":"2.0","id":""")
-            append(id)
-            append(""","method":""")
-            append(method.replace("\"", "\\\""))
-            append(""","params":""")
-            append(params.toString())
-            append("}")
-        }
+        // Quote the method name — unquoted `method:model.info` is rejected by Hermes
+        // (`Expecting value` parse errors on every connect; see gui.log).
+        val safeMethod = method.replace("\\", "\\\\").replace("\"", "\\\"")
+        val body = """{"jsonrpc":"2.0","id":$id,"method":"$safeMethod","params":$params}"""
         rpcSocket?.send(body) ?: onResult?.invoke(null)
     }
 
