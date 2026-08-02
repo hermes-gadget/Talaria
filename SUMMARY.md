@@ -41,23 +41,36 @@ Branch: `feature/widget-pip`
 
 Verification: `JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon` — passed.
 
-## Notification parity
+## Multi-profile streaming
 
-Implemented on branch `feature/notifications`:
+Branch: `feature/multi-profile`
 
-- Added persisted quiet-hours enable/start/end settings with overnight and all-day window evaluation.
-- Agent notifications now use silent, low-priority delivery while quiet hours are active.
-- Added four stable per-agent Android channel slots plus an `Other agents` fallback, with a toggle to retain the legacy shared channels.
-- Added `NotificationSettingsScreen` and `NotificationSettingsViewModel`, including the active-window indicator, channel assignments, time pickers, and test-notification action.
-- Added one Notification settings row from You and wired `Routes.SETTINGS`.
-- Added unit coverage for quiet-hours boundaries and channel mapping.
+### Implemented
 
-### Notification verification
+- Added `MultiProfileModels.kt` with profile-tagged sessions, numeric/ISO recency ordering, All/profile filtering, and per-profile stream lifecycle state.
+- Added the singleton `ProfileRegistry`. It refreshes `/api/profiles` and an explicit `/api/sessions?profile=...` request for every profile, preserves local channel transitions, and exposes active-session/streaming state through a `StateFlow`.
+- Added additive `HermesApi` methods in the marked Multi-profile section at the end of the interface.
+- Extended `ChatViewModel` with `mergedSessions`, profile filter options/selection, loading state, and profile streaming state. Existing screen-facing `sessions` remains the legacy active-profile projection until a profile-aware rail is wired.
+- Chat tabs now retain their originating Hermes management profile. Background transcript polling uses explicit profile-scoped REST calls, and profile-scoped drafts/tabs remain isolated.
+- Management-profile changes no longer call the ChatViewModel's full connection teardown. Existing PTY and per-tab sidecar clients remain alive; `HermesEventClient` snapshots the originating profile so reconnects do not move a background channel to the foreground profile.
 
-Command:
+### Live API contract
 
-```text
-JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon
-```
+Using `X-Hermes-Session-Token: local` against the local Hermes v0.19.1 dashboard:
 
-`compileDebugKotlin` passed. The unit-test task ran 154 tests; one unrelated pre-existing `ArtifactExtractionTest` failed with `StackOverflowError` in recursive JSON primitive parsing.
+- `GET /api/profiles` returned `{ "profiles": [...] }`; the live instance currently advertises `default`, model `deepseek-v4-flash`, provider `opencode-go`, and `gateway_running: true`.
+- `GET /api/sessions?profile=default` returned `{ "sessions": [...], "total": ..., "limit": 20, "offset": 0 }`. Session rows include `profile`, `is_default_profile`, numeric `started_at`/`last_active`, and `is_active`; `live` may be `null`.
+
+### Follow-up UI work
+
+No `@Composable` or string files were changed. The existing Chat rail still reads `ui.sessions`; the new `ui.mergedSessions` projection is profile-tagged and sorted, with `ui.sessionProfileOptions` plus nullable `ui.selectedSessionProfile` for an All/profile chip row. A follow-up UI pass should render that projection with `MultiProfileSession.key` and route resume/title actions with the selected session's profile.
+
+The known teardown outside the owned screen surface is `ProfileSwitcherBar` stopping the singleton foreground observer client. Chat tab clients are separate instances and are no longer stopped by profile switching. If a background PTY has already failed while another profile is foreground, reconnect is deferred until that profile is foreground because the existing `PtyWebSocketSession` takes its connection profile from the active store; the active, ongoing channel is preserved.
+
+### Verification
+
+Passed the requested single verification:
+
+`JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon`
+
+Gradle reported `BUILD SUCCESSFUL`.

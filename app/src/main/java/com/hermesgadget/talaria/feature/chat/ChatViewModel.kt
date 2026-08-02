@@ -29,6 +29,7 @@ import com.hermesgadget.talaria.core.data.repo.ChatRepository
 import com.hermesgadget.talaria.core.data.repo.HermesRepository
 import com.hermesgadget.talaria.core.network.HermesEventClient
 import com.hermesgadget.talaria.core.network.HermesSideEvent
+import com.hermesgadget.talaria.core.network.ProfileRegistry
 import com.hermesgadget.talaria.core.network.PromptKind
 import com.hermesgadget.talaria.core.network.PtyEvent
 import com.hermesgadget.talaria.core.network.PtyWebSocketSession
@@ -38,7 +39,13 @@ import com.hermesgadget.talaria.core.voice.SpeechCoordinator
 import com.hermesgadget.talaria.core.voice.SttEvent
 import com.hermesgadget.talaria.core.voice.TtsSpeaker
 import com.hermesgadget.talaria.domain.model.ChatLine
+import com.hermesgadget.talaria.domain.model.HERMES_DEFAULT_PROFILE
 import com.hermesgadget.talaria.domain.model.ModelOption
+import com.hermesgadget.talaria.domain.model.MultiProfileSession
+import com.hermesgadget.talaria.domain.model.MultiProfileSessionMerger
+import com.hermesgadget.talaria.domain.model.ProfileRegistryState
+import com.hermesgadget.talaria.domain.model.ProfileStreamingState
+import com.hermesgadget.talaria.domain.model.SessionMessage
 import com.hermesgadget.talaria.domain.model.SessionSummary
 import com.hermesgadget.talaria.domain.model.SlashArgumentMode
 import com.hermesgadget.talaria.domain.model.SlashCommand
@@ -58,6 +65,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.util.Base64
@@ -93,6 +101,8 @@ data class ChatTab(
     val id: String,
     val title: String,
     val channelId: String,
+    /** Hermes management profile captured when this runtime was opened. */
+    val profileName: String = HERMES_DEFAULT_PROFILE,
     val resumeSessionId: String? = null,
     val liveSessionId: String? = null,
     val connected: Boolean = false,
@@ -135,6 +145,14 @@ data class ChatUiState(
     val listening: Boolean = false,
     val partialDictation: String = "",
     val sessions: List<SessionSummary> = emptyList(),
+    /** Profile-tagged, recency-ordered sessions for the future merged rail. */
+    val mergedSessions: List<MultiProfileSession> = emptyList(),
+    /** Profile names available to an All/<profile> filter row. */
+    val sessionProfileOptions: List<String> = emptyList(),
+    /** Null means All profiles; a non-null value selects one profile. */
+    val selectedSessionProfile: String? = null,
+    val sessionListLoading: Boolean = false,
+    val profileStreamingStates: Map<String, ProfileStreamingState> = emptyMap(),
     val modelOptions: List<ModelOption> = emptyList(),
     val showSessionRail: Boolean = false,
     val showModelPicker: Boolean = false,
@@ -203,6 +221,8 @@ class ChatViewModel(
     private var slashCatalog: List<SlashCommand> = SlashCommands.defaults
     private var slashRequestGeneration: Long = 0
     private var boundConnectionScope: String? = null
+    private var boundConnectionId: String? = null
+    private var boundManagementProfile: String? = null
     private var loadingConnectionScope = false
     private val inputHistoryStore = ChatInputHistoryStore(TalariaApp.instance)
     private val inputHistories = mutableMapOf<String, InputHistoryNavigator>()
@@ -211,21 +231,20 @@ class ChatViewModel(
 
     /** Called by the screen: make sure at least one session exists (optionally resuming). */
     fun ensureStarted(resume: String? = null) {
-        val scopeId = container.connectionStore.activeProfile()?.scopeId() ?: return
-        if (boundConnectionScope != scopeId) {
+        val activeProfile = container.connectionStore.activeProfile() ?: return
+        val scopeId = activeProfile.scopeId()
+        val connectionChanged = boundConnectionId != null && boundConnectionId != activeProfile.id
+        if (boundConnectionScope == null || connectionChanged) {
             resetForConnectionScope(scopeId)
-            loadingConnectionScope = true
-            scopeLoadJob = viewModelScope.launch {
-                val restored = chatRepository.loadDraft()
-                if (boundConnectionScope != scopeId) return@launch
-                initialDraft = restored
-                loadingConnectionScope = false
-                if (!resume.isNullOrBlank()) {
-                    newSession(resume = resume, draft = restored)
-                } else {
-                    restorePersistedTabs()
-                }
-            }
+            loadProfileState(scopeId, resume)
+            return
+        }
+        // A management-profile switch changes the Room/cache scope but must not
+        // close PTY or sidecar runtimes belonging to the previous profile.
+        if (boundConnectionScope != scopeId ||
+            boundManagementProfile != activeProfile.effectiveManagementProfile()
+        ) {
+            bindManagementProfile(scopeId, activeProfile.effectiveManagementProfile(), resume)
             return
         }
         if (loadingConnectionScope) return
@@ -244,6 +263,41 @@ class ChatViewModel(
         // Soft-background / process pause often drops the PTY while the ViewModel
         // (and its dead tabs) survive — reopen those sockets on the next start.
         reconnectDisconnected()
+    }
+
+    private fun loadProfileState(scopeId: String, resume: String?) {
+        loadingConnectionScope = true
+        scopeLoadJob = viewModelScope.launch {
+            val restored = chatRepository.loadDraft()
+            if (boundConnectionScope != scopeId) return@launch
+            initialDraft = restored
+            loadingConnectionScope = false
+            if (!resume.isNullOrBlank()) {
+                newSession(resume = resume, draft = restored)
+            } else {
+                restorePersistedTabs()
+            }
+            refreshSessions()
+        }
+    }
+
+    private fun bindManagementProfile(scopeId: String, profileName: String, resume: String?) {
+        scopeLoadJob?.cancel()
+        boundConnectionScope = scopeId
+        boundManagementProfile = profileName
+        loadingConnectionScope = true
+        scopeLoadJob = viewModelScope.launch {
+            val restored = chatRepository.loadDraft()
+            if (boundConnectionScope != scopeId) return@launch
+            initialDraft = restored
+            loadingConnectionScope = false
+            if (!resume.isNullOrBlank()) {
+                newSession(resume = resume, draft = restored)
+            } else {
+                restorePersistedTabs()
+            }
+            refreshSessions()
+        }
     }
 
     /** Tear down every socket and transient byte buffer before binding another Hermes home. */
@@ -268,18 +322,26 @@ class ChatViewModel(
         initialDraft = ""
         _ui.value = ChatUiState()
         boundConnectionScope = scopeId
+        val active = container.connectionStore.activeProfile()
+        boundConnectionId = active?.id
+        boundManagementProfile = active?.effectiveManagementProfile()
+        ProfileRegistry.reset()
     }
 
     /** Rebuild the tab list saved for this profile; falls back to one fresh agent. */
     private fun restorePersistedTabs() {
-        val pid = container.connectionStore.activeProfile()?.scopeId()
+        val activeProfile = container.connectionStore.activeProfile()
+        val profileName = activeProfile?.effectiveManagementProfile() ?: HERMES_DEFAULT_PROFILE
+        val pid = activeProfile?.scopeId()
         val saved = pid?.let { container.settingsStore.loadChatState(it) } ?: PersistedChatState()
+        val existing = _ui.value.tabs.filter { it.profileName == profileName }
         if (saved.tabs.isEmpty()) {
-            newSession(draft = initialDraft)
+            if (existing.isEmpty()) newSession(draft = initialDraft)
             return
         }
         restoring = true
         saved.tabs.forEachIndexed { index, t ->
+            if (t.sessionId.isNullOrBlank() || existing.any { it.resumeSessionId == t.sessionId }) return@forEachIndexed
             newSession(
                 resume = t.sessionId,
                 titleOverride = t.title,
@@ -289,7 +351,8 @@ class ChatViewModel(
         }
         // Restore focus to the tab the user was last on.
         val activeId = _ui.value.tabs.firstOrNull {
-            it.resumeSessionId != null && it.resumeSessionId == saved.activeSessionId
+            it.profileName == profileName &&
+                it.resumeSessionId != null && it.resumeSessionId == saved.activeSessionId
         }?.id
         if (activeId != null) _ui.update { it.copy(activeTabId = activeId) }
         restoring = false
@@ -301,19 +364,25 @@ class ChatViewModel(
      * so a cold start can rebuild it. Called after any tab add/remove/rename/switch
      * and when a tab claims its Hermes session id.
      */
-    private fun persistChatState() {
+    private fun persistChatState(profileOverride: String? = null) {
         if (restoring) return
-        val pid = container.connectionStore.activeProfile()?.scopeId() ?: return
+        val activeConnection = container.connectionStore.activeProfile() ?: return
+        val profileName = profileOverride
+            ?: _ui.value.active?.profileName
+            ?: activeConnection.effectiveManagementProfile()
+        val pid = activeConnection.copy(managementProfile = profileName).scopeId()
         // Runtime websocket ids are transient; durable ids keep resumed and branched
         // tabs reopen on the same REST/PTY session after process recreation.
-        val tabs = _ui.value.tabs.map { t ->
+        val tabs = _ui.value.tabs.filter { it.profileName == profileName }.map { t ->
             PersistedChatTab(sessionId = t.resumeSessionId ?: t.liveSessionId, title = t.title)
         }
         container.settingsStore.saveChatState(
             pid,
             PersistedChatState(
                 tabs = tabs,
-                activeSessionId = _ui.value.active?.let { it.resumeSessionId ?: it.liveSessionId },
+                activeSessionId = _ui.value.active
+                    ?.takeIf { it.profileName == profileName }
+                    ?.let { it.resumeSessionId ?: it.liveSessionId },
             ),
         )
     }
@@ -324,8 +393,14 @@ class ChatViewModel(
      * continues instead of spawning an orphaned new TUI.
      */
     fun reconnectDisconnected() {
+        val activeProfileName = container.connectionStore.activeProfile()
+            ?.effectiveManagementProfile()
+            ?: HERMES_DEFAULT_PROFILE
         _ui.value.tabs
-            .filter { !it.connected && !it.connecting }
+            // PtyWebSocketSession reads the active connection profile when it
+            // opens. Keep reconnects on the foreground profile; background
+            // runtimes already have their sockets and are left untouched.
+            .filter { it.profileName == activeProfileName && !it.connected && !it.connecting }
             .forEach { reconnectTab(it.id) }
     }
 
@@ -351,6 +426,7 @@ class ChatViewModel(
             container.clientFactory,
             container.connectionStore,
             container.wsAuthHelper,
+            profileName = tab.profileName,
         )
         val (pty, flow) = chatRepository.openPty(resume, channel, lastCols, lastRows)
         val rt = SessionRuntime(session = pty, eventClient = eventClient)
@@ -376,6 +452,7 @@ class ChatViewModel(
                 },
             )
         }
+        resume?.let { ProfileRegistry.markConnecting(tab.profileName, it) }
 
         eventClient.start(channel)
         rt.sideJob = viewModelScope.launch {
@@ -392,7 +469,7 @@ class ChatViewModel(
         }
         if (old == null || !rt.baselineReady) {
             viewModelScope.launch {
-                val list = hermesRepository.refreshSessions().getOrNull().orEmpty()
+                val list = sessionsForProfile(tab.profileName)
                 rt.baselineSessions = list.map { it.id }.toSet()
                 rt.baselineReady = true
                 _ui.update { it.copy(sessions = list.take(40)) }
@@ -412,7 +489,9 @@ class ChatViewModel(
             container.clientFactory,
             container.connectionStore,
             container.wsAuthHelper,
+            profileName = profileNameForActiveConnection(),
         )
+        val profileName = profileNameForActiveConnection()
         val (pty, flow) = chatRepository.openPty(resume, channel, lastCols, lastRows)
         val rt = SessionRuntime(session = pty, eventClient = eventClient)
         runtimes[id] = rt
@@ -423,6 +502,7 @@ class ChatViewModel(
                     id = id,
                     title = title,
                     channelId = channel,
+                    profileName = profileName,
                     resumeSessionId = resume,
                     liveSessionId = resume,
                     connecting = true,
@@ -431,6 +511,7 @@ class ChatViewModel(
                 activeTabId = id,
             )
         }
+        resume?.let { ProfileRegistry.markConnecting(profileName, it) }
         resume?.let { claimedSessions.add(it) }
 
         viewModelScope.launch {
@@ -478,7 +559,12 @@ class ChatViewModel(
         rt?.readingJob?.cancel()
         rt?.session?.close()
         rt?.eventClient?.dispose()
-        _ui.value.tabs.firstOrNull { it.id == tabId }?.liveSessionId?.let { claimedSessions.remove(it) }
+        _ui.value.tabs.firstOrNull { it.id == tabId }?.let { tab ->
+            tab.liveSessionId?.let { claimedSessions.remove(it) }
+            (tab.liveSessionId ?: tab.resumeSessionId)?.let {
+                ProfileRegistry.markDisconnected(tab.profileName, it)
+            }
+        }
         _ui.update { state ->
             val remaining = state.tabs.filterNot { it.id == tabId }
             state.copy(
@@ -498,12 +584,50 @@ class ChatViewModel(
 
     fun refreshSessions() {
         viewModelScope.launch {
-            hermesRepository.refreshSessions().onSuccess { list ->
-                _ui.update { it.copy(sessions = list.take(40)) }
+            _ui.update { it.copy(sessionListLoading = true) }
+            ProfileRegistry.refresh(container.clientFactory.api()).onSuccess { registry ->
+                applyProfileRegistry(registry)
+            }.onFailure { failure ->
+                _ui.update { it.copy(sessionListLoading = false) }
             }
             refreshSessionBranchOrigins()
         }
     }
+
+    /** Select null for All profiles, or one of [ChatUiState.sessionProfileOptions]. */
+    fun selectSessionProfile(profileName: String?) {
+        val selected = profileName?.trim()?.takeIf { it.isNotEmpty() }
+        _ui.update { it.copy(selectedSessionProfile = selected) }
+        applyProfileRegistry(ProfileRegistry.state.value)
+    }
+
+    private fun applyProfileRegistry(registry: ProfileRegistryState) {
+        val selected = _ui.value.selectedSessionProfile
+            ?.takeIf { it in registry.profileNames }
+        val merged = MultiProfileSessionMerger.merge(registry.sessionsByProfile, selected)
+        val activeProfile = profileNameForActiveConnection()
+        // `sessions` remains the legacy active-profile projection for the
+        // existing rail. The tagged `mergedSessions` projection is the safe
+        // handoff for the profile-aware rail/filter UI.
+        _ui.update {
+            it.copy(
+                sessions = registry.sessionsByProfile[activeProfile].orEmpty().take(40),
+                mergedSessions = merged,
+                sessionProfileOptions = registry.profileNames,
+                selectedSessionProfile = selected,
+                sessionListLoading = registry.loading,
+                profileStreamingStates = registry.streamingStates,
+            )
+        }
+    }
+
+    private fun profileNameForActiveConnection(): String =
+        container.connectionStore.activeProfile()?.effectiveManagementProfile()
+            ?: HERMES_DEFAULT_PROFILE
+
+    private fun profileNameForTab(tabId: String): String =
+        _ui.value.tabs.firstOrNull { it.id == tabId }?.profileName
+            ?: profileNameForActiveConnection()
 
     /**
      * SessionSummary predates branch lineage, so keep the optional parent field
@@ -1395,24 +1519,36 @@ class ChatViewModel(
         updateTab(tabId) { it.copy(title = trimmed) }
         _ui.value.tabs.firstOrNull { it.id == tabId }?.let {
             AgentTaskNotificationService.updateWatching(TalariaApp.instance, it.toAgentWatch())
+            persistChatState(it.profileName)
         }
-        // Persist so the renamed title survives a cold start.
-        persistChatState()
     }
 
     private fun handlePtyEvent(tabId: String, event: PtyEvent) {
+        val profileName = profileNameForTab(tabId)
+        val tab = _ui.value.tabs.firstOrNull { it.id == tabId }
         when (event) {
-            is PtyEvent.Connected -> updateTab(tabId) { it.copy(connecting = false, connected = true) }
+            is PtyEvent.Connected -> {
+                tab?.let { it.liveSessionId ?: it.resumeSessionId }
+                    ?.let { ProfileRegistry.markActive(profileName, it) }
+                updateTab(tabId) { it.copy(connecting = false, connected = true) }
+                applyProfileRegistry(ProfileRegistry.state.value)
+            }
             is PtyEvent.Output -> appendAssistant(tabId, event.text)
             is PtyEvent.Closed -> {
                 AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
                 finalizeAssistant(tabId)
+                tab?.let { it.liveSessionId ?: it.resumeSessionId }
+                    ?.let { ProfileRegistry.markDisconnected(profileName, it) }
                 updateTab(tabId) { it.copy(connected = false, connecting = false, working = false) }
+                applyProfileRegistry(ProfileRegistry.state.value)
             }
             is PtyEvent.Failure -> {
                 AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
+                tab?.let { it.liveSessionId ?: it.resumeSessionId }
+                    ?.let { ProfileRegistry.markDisconnected(profileName, it) }
                 updateTab(tabId) { it.copy(error = event.message, connecting = false, connected = false, working = false) }
                 container.notifier.notifyError("Chat disconnected", event.message)
+                applyProfileRegistry(ProfileRegistry.state.value)
             }
         }
     }
@@ -1430,7 +1566,7 @@ class ChatViewModel(
                         bindSession(tabId, id)
                         // A tab just claimed its session — snapshot so a cold start
                         // resumes this thread (and every sibling) with its title.
-                        persistChatState()
+                        persistChatState(tab?.profileName ?: profileNameForTab(tabId))
                     }
                     loadReading(tabId, id)
                 }
@@ -1450,12 +1586,12 @@ class ChatViewModel(
         tab.liveSessionId?.let { return it }
         val rt = runtimes[tabId] ?: return null
         if (!tab.hasSent || !rt.baselineReady) return null
-        val list = hermesRepository.refreshSessions().getOrNull().orEmpty()
+        val list = sessionsForProfile(tab.profileName)
         // This tab's session is one that appeared AFTER it opened and isn't owned
         // by another tab — so several concurrent agents each map to their own.
         val candidate = list
             .filter { it.id !in claimedSessions && it.id !in rt.baselineSessions }
-            .maxByOrNull { it.last_active ?: it.started_at ?: "" }
+            .maxByOrNull { MultiProfileSession(tab.profileName, it).recency }
             ?: return null
         claimedSessions.add(candidate.id)
         return candidate.id
@@ -1463,7 +1599,7 @@ class ChatViewModel(
 
     private fun loadReading(tabId: String, sessionId: String) {
         viewModelScope.launch {
-            hermesRepository.loadMessages(sessionId).onSuccess { msgs ->
+            loadMessagesForProfile(tabId, sessionId).onSuccess { msgs ->
                 val lines = msgs.mapIndexed { idx, m ->
                     ChatLine(id = "$sessionId-$idx", role = m.role ?: "assistant", text = m.content.orEmpty())
                 }.filter { it.text.isNotBlank() }
@@ -1497,6 +1633,48 @@ class ChatViewModel(
                 }
                 if (shouldDrainQueue) drainQueuedPrompt(tabId)
             }
+        }
+    }
+
+    private suspend fun sessionsForProfile(profileName: String): List<SessionSummary> {
+        if (profileName == profileNameForActiveConnection()) {
+            return hermesRepository.refreshSessions().getOrNull().orEmpty()
+        }
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                parseSessionsForProfile(
+                    container.clientFactory.api().getSessionsForProfile(profile = profileName),
+                )
+            }.getOrElse { emptyList() }
+        }
+    }
+
+    private suspend fun loadMessagesForProfile(tabId: String, sessionId: String): Result<List<SessionMessage>> {
+        val tab = _ui.value.tabs.firstOrNull { it.id == tabId }
+        val profileName = tab?.profileName ?: profileNameForActiveConnection()
+        if (profileName == profileNameForActiveConnection()) {
+            return hermesRepository.loadMessages(sessionId)
+        }
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                container.clientFactory.api()
+                    .getSessionMessages(sessionId, profile = profileName)
+                    .messages
+            }
+        }
+    }
+
+    private fun parseSessionsForProfile(raw: kotlinx.serialization.json.JsonElement): List<SessionSummary> {
+        val array = when (raw) {
+            is kotlinx.serialization.json.JsonArray -> raw
+            is kotlinx.serialization.json.JsonObject ->
+                raw["sessions"] as? kotlinx.serialization.json.JsonArray
+                    ?: raw["results"] as? kotlinx.serialization.json.JsonArray
+            else -> null
+        }
+        return array.orEmpty().mapNotNull {
+            runCatching { com.hermesgadget.talaria.core.network.JsonConfig.json.decodeFromJsonElement<SessionSummary>(it) }
+                .getOrNull()
         }
     }
 
@@ -1539,6 +1717,7 @@ class ChatViewModel(
         when (event) {
             is HermesSideEvent.MessageStart -> {
                 bindSession(tabId, event.sessionId)
+                event.sessionId?.let { ProfileRegistry.markStreaming(profileNameForTab(tabId), it) }
                 runtimes[tabId]?.sidecarEventsSeen = true
                 runtimes[tabId]?.sidecarAssistantBuffer = StringBuilder()
                 updateTab(tabId) {
@@ -1547,6 +1726,7 @@ class ChatViewModel(
             }
             is HermesSideEvent.MessageDelta -> {
                 bindSession(tabId, event.sessionId)
+                event.sessionId?.let { ProfileRegistry.markStreaming(profileNameForTab(tabId), it) }
                 runtimes[tabId]?.sidecarEventsSeen = true
                 if (event.text.isNotEmpty()) {
                     val rt = runtimes[tabId] ?: return
@@ -1558,6 +1738,7 @@ class ChatViewModel(
             }
             is HermesSideEvent.MessageInterim -> {
                 bindSession(tabId, event.sessionId)
+                event.sessionId?.let { ProfileRegistry.markStreaming(profileNameForTab(tabId), it) }
                 // Interim commentary can contain model thought/reasoning. It is
                 // intentionally neither displayed nor added to the final buffer.
                 updateTab(tabId) { it.copy(working = true) }
@@ -1566,6 +1747,7 @@ class ChatViewModel(
             is HermesSideEvent.BackgroundComplete -> Unit
             is HermesSideEvent.Status -> {
                 bindSession(tabId, event.sessionId)
+                event.sessionId?.let { ProfileRegistry.markStreaming(profileNameForTab(tabId), it) }
                 // Process/goal status is transient activity, not a chat message.
                 if (event.text.isNotBlank()) updateTab(tabId) { it.copy(working = true) }
             }
@@ -1586,6 +1768,7 @@ class ChatViewModel(
             }
             is HermesSideEvent.Prompt -> {
                 bindSession(tabId, event.sessionId)
+                event.sessionId?.let { ProfileRegistry.markStreaming(profileNameForTab(tabId), it) }
                 updateTab(tabId) {
                     it.copy(
                         prompt = ChatPromptUi(
@@ -1638,6 +1821,7 @@ class ChatViewModel(
             }
             is HermesSideEvent.SessionInfo -> {
                 bindSession(tabId, event.sessionId)
+                event.sessionId?.let { ProfileRegistry.markActive(profileNameForTab(tabId), it) }
                 updateTab(tabId) {
                     it.copy(
                         modelLabel = event.model ?: it.modelLabel,
@@ -1665,6 +1849,7 @@ class ChatViewModel(
     /** The gateway's message.complete event is the authoritative turn boundary. */
     private fun completeSidecarMessage(tabId: String, event: HermesSideEvent.MessageComplete) {
         bindSession(tabId, event.sessionId)
+        event.sessionId?.let { ProfileRegistry.markIdle(profileNameForTab(tabId), it) }
         val rt = runtimes[tabId] ?: return
         rt.sidecarEventsSeen = true
         val full = event.text.trim().ifEmpty { rt.sidecarAssistantBuffer.toString().trim() }
@@ -1690,6 +1875,7 @@ class ChatViewModel(
         AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
         drainQueuedPrompt(tabId)
         if (full.isNotEmpty()) tts.speak(full)
+        applyProfileRegistry(ProfileRegistry.state.value)
     }
 
     /** Prefer the session id carried by live gateway events over polling heuristics. */
@@ -1701,9 +1887,10 @@ class ChatViewModel(
         tab.liveSessionId?.let { claimedSessions.remove(it) }
         claimedSessions.add(sessionId)
         updateTab(tabId) { it.copy(liveSessionId = sessionId) }
+        ProfileRegistry.markActive(tab.profileName, sessionId)
         migrateInputHistory(oldHistoryKey, sessionId)
         runtimes[tabId]?.readingSessionId = sessionId
-        persistChatState()
+        persistChatState(tab.profileName)
         _ui.value.tabs.firstOrNull { it.id == tabId }?.let {
             AgentTaskNotificationService.updateWatching(TalariaApp.instance, it.toAgentWatch())
         }
@@ -1720,7 +1907,7 @@ class ChatViewModel(
             ),
             event = event,
             connectionId = profile?.id,
-            managementProfile = profile?.effectiveManagementProfile(),
+            managementProfile = tab.profileName,
         )
     }
 
@@ -1732,7 +1919,7 @@ class ChatViewModel(
             channelId = channelId,
             sessionId = liveSessionId ?: resumeSessionId,
             connectionId = profile?.id,
-            managementProfile = profile?.effectiveManagementProfile(),
+            managementProfile = profileName,
         )
     }
 
@@ -1740,6 +1927,11 @@ class ChatViewModel(
         sttJob?.cancel()
         slashCompletionJob?.cancel()
         scopeLoadJob?.cancel()
+        _ui.value.tabs.forEach { tab ->
+            (tab.liveSessionId ?: tab.resumeSessionId)?.let {
+                ProfileRegistry.markDisconnected(tab.profileName, it)
+            }
+        }
         runtimes.values.forEach {
             it.collectJob?.cancel()
             it.sideJob?.cancel()

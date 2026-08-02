@@ -17,6 +17,7 @@
 package com.hermesgadget.talaria.core.network
 
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
+import com.hermesgadget.talaria.domain.model.ConnectionProfile
 import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,6 +59,8 @@ class HermesEventClient(
     private val clientFactory: HermesClientFactory,
     private val connectionStore: SecureConnectionStore,
     private val wsAuth: WsAuthHelper,
+    /** Optional fixed Hermes management profile for background runtimes. */
+    private val profileName: String? = null,
 ) {
     private val json = JsonConfig.json
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -67,6 +70,9 @@ class HermesEventClient(
     private var eventsSocket: WebSocket? = null
     private var rpcSocket: WebSocket? = null
     private var job: Job? = null
+    /** Snapshot the profile at start so reconnects do not follow the foreground switch. */
+    @Volatile
+    private var transportProfile: ConnectionProfile? = null
 
     /** Set false by [start] and true by [stop] so late close callbacks never reconnect. */
     @Volatile
@@ -94,10 +100,14 @@ class HermesEventClient(
         channelId = channel
         stopped = false
         job = scope.launch {
-            if (connectionStore.activeProfile() == null) {
+            val active = connectionStore.activeProfile()
+            if (active == null) {
                 _events.emit(HermesSideEvent.TransportError("auth", "No active connection profile"))
                 return@launch
             }
+            transportProfile = active.copy(
+                managementProfile = profileName ?: active.managementProfile,
+            )
             val auth = runCatching { wsAuth.authQueryParam() }.getOrElse {
                 _events.emit(HermesSideEvent.TransportError("auth", it.message ?: "authentication failed"))
                 return@launch
@@ -120,6 +130,7 @@ class HermesEventClient(
         eventsSocket = null
         rpcSocket = null
         channelId = null
+        transportProfile = null
         pendingRpc.values.forEach {
             it.timeout.cancel()
             it.callback(null)
@@ -280,7 +291,7 @@ class HermesEventClient(
     }
 
     private fun openEvents(channel: String, auth: String) {
-        val profile = connectionStore.activeProfile() ?: return
+        val profile = transportProfile ?: connectionStore.activeProfile() ?: return
         val url = HermesWebSocketUrlBuilder.build(
             baseUrl = profile.baseUrl,
             endpoint = "api/events",
@@ -312,7 +323,7 @@ class HermesEventClient(
     }
 
     private fun openRpc(auth: String) {
-        val profile = connectionStore.activeProfile() ?: return
+        val profile = transportProfile ?: connectionStore.activeProfile() ?: return
         val url = HermesWebSocketUrlBuilder.build(
             baseUrl = profile.baseUrl,
             endpoint = "api/ws",
