@@ -37,6 +37,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -109,6 +111,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -157,6 +160,8 @@ fun ChatScreen(
     var renameTarget by remember { mutableStateOf<ChatTab?>(null) }
     var monitorOpen by remember { mutableStateOf(false) }
     var sessionRailTab by remember { mutableStateOf(SessionTab.Chats) }
+    val config = LocalConfiguration.current
+    val isExpanded = config.screenWidthDp >= 600
 
     val context = LocalContext.current
     val microphonePermissionDenied = stringResource(R.string.chat_microphone_permission_denied)
@@ -464,7 +469,7 @@ fun ChatScreen(
         null -> Unit
     }
 
-    if (ui.showSessionRail) {
+    if (ui.showSessionRail && !isExpanded) {
         ModalBottomSheet(
             onDismissRequest = { vm.toggleSessionRail(false) },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -594,7 +599,24 @@ fun ChatScreen(
         }
     }
 
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val openSessionIds = ui.tabs.mapNotNull { it.resumeSessionId ?: it.liveSessionId }.toSet()
+        Row(Modifier.fillMaxSize()) {
+            if (isExpanded) {
+                SessionRailPane(
+                    sessions = ui.sessions,
+                    sessionBranchOrigins = ui.sessionBranchOrigins,
+                    openSessionIds = openSessionIds,
+                    sessionRailTab = sessionRailTab,
+                    onTabSelect = { sessionRailTab = it },
+                    onNewSession = { vm.newSession() },
+                    onRefreshSessions = { vm.refreshSessions() },
+                    onOpenAllSessions = onOpenSessions,
+                    onResumeSession = { vm.resumeSession(it) },
+                )
+            }
     Scaffold(
+        modifier = Modifier.weight(1f).fillMaxHeight(),
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0),
         topBar = {
@@ -655,11 +677,13 @@ fun ChatScreen(
                             contentDescription = stringResource(R.string.chat_find_in_session),
                         )
                     }
-                    IconButton(onClick = { vm.toggleSessionRail() }) {
-                        Icon(
-                            Icons.Filled.History,
-                            contentDescription = stringResource(R.string.chat_sessions),
-                        )
+                    if (!isExpanded) {
+                        IconButton(onClick = { vm.toggleSessionRail() }) {
+                            Icon(
+                                Icons.Filled.History,
+                                contentDescription = stringResource(R.string.chat_sessions),
+                            )
+                        }
                     }
                     IconButton(onClick = { vm.toggleSteerPopover() }) {
                         Icon(
@@ -1282,6 +1306,8 @@ fun ChatScreen(
             }
         }
     }
+        } // End Row
+    } // End BoxWithConstraints
 }
 
 /**
