@@ -1,4 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Strings owned by the tools feature wave. English only; locale files are translated by the i18n pass. -->
+    <string name="tools_status_more_actions">More actions</string>
+    <string name="tools_status_refresh">Refresh</string>
+    <string name="tools_status_overview">Overview</string>
+    <string name="tools_status_gateway">Gateway</string>
+    <string name="tools_status_recent_sessions">Recent sessions</string>
+    <string name="tools_status_unknown_value">Unknown</string>
+    <string name="tools_status_computer_use">Computer use</string>
+    <string name="tools_status_computer_use_loading">Loading computer-use readiness…</string>
+    <string name="tools_status_computer_use_readiness">Readiness: %1$s</string>
+    <string name="tools_status_computer_use_ready">Ready</string>
+    <string name="tools_status_computer_use_not_ready">Not ready</string>
+    <string name="tools_status_computer_use_unknown">Readiness unknown</string>
+    <string name="tools_status_computer_use_platform">Platform: %1$s</string>
+    <string name="tools_status_computer_use_driver">Driver: %1$s</string>
+    <string name="tools_status_computer_use_unsupported">Computer use is not supported on this host.</string>
+    <string name="tools_status_computer_use_driver_missing">The cua-driver is not installed.</string>
+    <string name="tools_status_computer_use_doctor">Driver doctor</string>
+    <string name="tools_status_computer_use_grant">Grant macOS permissions</string>
+    <string name="tools_status_computer_use_granting">Requesting permissions…</string>
+    <string name="tools_status_computer_use_grant_started">Permission request started. Approve the CuaDriver prompts on the host, then refresh.</string>
+    <string name="tools_status_computer_use_grant_unavailable">Permission grants are only available on macOS. On Windows and Linux, readiness comes from the cross-platform driver health checks.</string>
+    <string name="tools_status_computer_use_grant_failed">Could not request computer-use permissions.</string>
+    <string name="tools_status_computer_use_unavailable">Computer-use readiness is unavailable.</string>
+    <string name="tools_terminal_backend_title">Terminal backend</string>
+    <string name="tools_terminal_backend_loading">Loading terminal backends…</string>
+    <string name="tools_terminal_backend_active">Active: %1$s</string>
+    <string name="tools_terminal_backend_status">Status: %1$s</string>
+    <string name="tools_terminal_backend_selecting">Selecting…</string>
+    <string name="tools_terminal_backend_retry">Retry</string>
+    <string name="tools_terminal_backend_error">Could not load terminal backends.</string>
+    <string name="tools_terminal_backend_unknown">Unknown</string>
 </resources>

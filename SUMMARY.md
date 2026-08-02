@@ -62,3 +62,20 @@ JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testD
 ```
 
 No third-party dependencies were added. No services were restarted, and nothing was pushed.
+
+## Talaria tools implementation summary
+
+Implemented ROADMAP items 6 and 19 within the permitted feature/resource scope.
+
+- Status now loads the profile-aware computer-use status, presents cross-platform readiness and driver doctor checks, and offers the macOS permission-grant action. HTTP 400 grant responses are shown with a non-macOS explanation.
+- Status was decluttered with `CollapsibleSection` groups, an overflow refresh action, and gateway/recent-session maintenance sections collapsed by default.
+- Terminal now loads the typed terminal backend response, shows the active backend plus each backend's status/detail, and selects a backend through the v0.6 API.
+- New UI copy is in `app/src/main/res/values/strings_tools.xml` with `tools_` resource names.
+
+Verification (run once as requested):
+
+```text
+./gradlew :app:compileDebugKotlin --no-daemon --max-workers=1 -Dorg.gradle.jvmargs=-Xmx768m -q
+```
+
+The compile was attempted with the requested Android/Java environment and failed because the shared VM ran out of memory: `java.lang.OutOfMemoryError: GC overhead limit exceeded` while executing `:app:compileDebugKotlin`.

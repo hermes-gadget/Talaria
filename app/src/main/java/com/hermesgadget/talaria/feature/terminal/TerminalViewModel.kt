@@ -25,6 +25,7 @@ import com.hermesgadget.talaria.core.network.HermesEventClient
 import com.hermesgadget.talaria.core.network.HermesSideEvent
 import com.hermesgadget.talaria.core.network.PtyEvent
 import com.hermesgadget.talaria.core.network.PtyWebSocketSession
+import com.hermesgadget.talaria.domain.model.TerminalBackendsResponse
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,7 +34,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.util.UUID
+import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
 
 sealed interface TerminalConnectionState {
     data class Disconnected(
@@ -51,6 +55,10 @@ data class TerminalUiState(
     val output: String = "",
     val input: String = "",
     val sidecarError: String? = null,
+    val backends: TerminalBackendsResponse? = null,
+    val backendsLoading: Boolean = false,
+    val backendSelecting: String? = null,
+    val backendError: String? = null,
 )
 
 /**
@@ -94,6 +102,75 @@ class TerminalViewModel(
     /** Called from the screen's STARTED lifecycle block after app/tab resume. */
     fun reconnectOnResume() {
         if (!explicitlyDisconnected) ensureStarted()
+    }
+
+    fun loadBackends() {
+        if (_ui.value.backendsLoading) return
+        val profile = container.connectionStore.activeProfile()?.effectiveManagementProfile() ?: return
+        viewModelScope.launch {
+            _ui.update { it.copy(backendsLoading = true, backendError = null) }
+            runCatching {
+                container.clientFactory.api().getTerminalBackends(profile)
+            }.fold(
+                onSuccess = { response ->
+                    _ui.update {
+                        it.copy(
+                            backends = response,
+                            backendsLoading = false,
+                            backendSelecting = null,
+                            backendError = null,
+                        )
+                    }
+                },
+                onFailure = { failure ->
+                    _ui.update {
+                        it.copy(
+                            backendsLoading = false,
+                            backendError = failure.message,
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    fun selectBackend(backend: String) {
+        val requested = backend.trim()
+        val profile = container.connectionStore.activeProfile()?.effectiveManagementProfile() ?: return
+        if (requested.isEmpty() || _ui.value.backendSelecting != null) return
+        viewModelScope.launch {
+            _ui.update { it.copy(backendSelecting = requested, backendError = null) }
+            runCatching {
+                container.clientFactory.api().selectTerminalBackend(
+                    body = buildJsonObject { put("backend", requested) },
+                    profile = profile,
+                )
+            }.fold(
+                onSuccess = {
+                    _ui.update { state ->
+                        state.copy(
+                            backends = state.backends?.copy(
+                                active = requested,
+                                backends = state.backends.backends.map { row ->
+                                    row.copy(active = row.name == requested)
+                                },
+                            ),
+                            backendSelecting = null,
+                            backendError = null,
+                        )
+                    }
+                    loadBackends()
+                },
+                onFailure = { failure ->
+                    _ui.update {
+                        it.copy(
+                            backendSelecting = null,
+                            backendError = failure.message,
+                        )
+                    }
+                },
+            )
+        }
     }
 
     fun reconnect() {
