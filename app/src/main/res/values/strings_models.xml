@@ -1,4 +1,66 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Strings owned by the models feature wave. English only; locale files are translated by the i18n pass. -->
+    <string name="models_title">Models</string>
+    <string name="models_subtitle_current">current · %1$s</string>
+    <string name="models_subtitle_default">providers &amp; models</string>
+    <string name="models_refresh">Refresh</string>
+    <string name="models_retry">Retry</string>
+    <string name="models_confirm_title">Confirm model</string>
+    <string name="models_use_model">Use model</string>
+    <string name="models_cancel">Cancel</string>
+
+    <string name="models_providers_section">Providers &amp; models</string>
+    <string name="models_provider_count">%1$d models</string>
+    <string name="models_not_authenticated">not authenticated</string>
+    <string name="models_current">current</string>
+    <string name="models_not_set">not set</string>
+
+    <string name="models_moa_section">Mixture of Agents</string>
+    <string name="models_moa_loading">Loading MoA configuration…</string>
+    <string name="models_moa_unavailable">Mixture-of-Agents configuration is unavailable.</string>
+    <string name="models_moa_description">References produce perspectives; the aggregator is the model that answers and calls tools. Changes apply to new sessions.</string>
+    <string name="models_moa_default_label">Default preset: %1$s</string>
+    <string name="models_moa_set_default">Set as default</string>
+    <string name="models_moa_delete_preset">Delete preset</string>
+    <string name="models_moa_new_preset">New preset name</string>
+    <string name="models_moa_add_preset">Add preset</string>
+    <string name="models_moa_reference_models">Reference models</string>
+    <string name="models_moa_reference_slot">Reference %1$d</string>
+    <string name="models_moa_add_reference">Add reference model</string>
+    <string name="models_moa_aggregator">Aggregator</string>
+    <string name="models_moa_aggregator_slot">Aggregator model</string>
+    <string name="models_moa_provider">Provider</string>
+    <string name="models_moa_model">Model</string>
+    <string name="models_moa_enabled">Enabled</string>
+    <string name="models_moa_remove">Remove</string>
+    <string name="models_moa_invalid_slots">Each MoA slot needs both a provider and a model, with at least one reference.</string>
+    <string name="models_moa_recursive_error">The Mixture-of-Agents provider cannot be used inside its own preset.</string>
+    <string name="models_moa_save">Save MoA configuration</string>
+    <string name="models_moa_saving">Saving…</string>
+    <string name="models_moa_saved">MoA configuration saved.</string>
+    <string name="models_moa_reset">Reset changes</string>
+
+    <string name="models_auxiliary_section">Auxiliary models</string>
+    <string name="models_auxiliary_loading">Loading auxiliary assignments…</string>
+    <string name="models_auxiliary_unavailable">Auxiliary model assignments are unavailable.</string>
+    <string name="models_auxiliary_description">Auxiliary tasks handle side jobs such as vision, web extraction, compression, skills, and approvals.</string>
+    <string name="models_auxiliary_main">Main model: %1$s</string>
+    <string name="models_auxiliary_no_tasks">No auxiliary assignments were returned.</string>
+    <string name="models_auxiliary_unknown_task">Unnamed task</string>
+    <string name="models_auxiliary_auto">auto (use main model)</string>
+    <string name="models_auxiliary_provider_default">%1$s (provider default)</string>
+    <string name="models_auxiliary_assignment">%1$s · %2$s</string>
+    <string name="models_auxiliary_base_url">Endpoint: %1$s</string>
+
+    <string name="models_recommended_section">Onboarding helper</string>
+    <string name="models_recommended_description">Ask Hermes for its cost-aware recommended default before choosing a provider model. This is the same helper used during provider onboarding.</string>
+    <string name="models_recommended_no_providers">No providers are available.</string>
+    <string name="models_recommended_get">Get recommendation</string>
+    <string name="models_recommended_loading">Loading recommendation…</string>
+    <string name="models_recommended_model">Recommended: %1$s</string>
+    <string name="models_recommended_free_tier">Free-tier recommendation</string>
+    <string name="models_recommended_paid_tier">Paid-tier recommendation</string>
+    <string name="models_recommended_no_model">No recommendation was returned.</string>
+    <string name="models_recommended_use">Use recommendation</string>
 </resources>

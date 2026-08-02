@@ -20,12 +20,126 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.repo.HermesRepository
+import com.hermesgadget.talaria.core.network.HermesApi
 import com.hermesgadget.talaria.domain.model.ModelProvider
+import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.put
+
+data class AuxiliaryTaskAssignmentUi(
+    val task: String,
+    val provider: String,
+    val model: String,
+    val baseUrl: String,
+)
+
+data class AuxiliaryModelsUi(
+    val tasks: List<AuxiliaryTaskAssignmentUi> = emptyList(),
+    val mainProvider: String = "",
+    val mainModel: String = "",
+)
+
+data class RecommendedDefaultModelUi(
+    val provider: String,
+    val model: String,
+    val freeTier: Boolean? = null,
+)
+
+/** A MoA slot keeps its raw object so newer server fields survive a mobile edit. */
+data class MoaSlotDraft(
+    val provider: String = "",
+    val model: String = "",
+    val enabled: Boolean = true,
+    val raw: JsonObject = JsonObject(emptyMap()),
+) {
+    fun toJson(): JsonObject = raw.withValues(
+        "provider" to JsonPrimitive(provider.trim()),
+        "model" to JsonPrimitive(model.trim()),
+        "enabled" to JsonPrimitive(enabled),
+    )
+}
+
+data class MoaPresetDraft(
+    val referenceModels: List<MoaSlotDraft> = emptyList(),
+    val aggregator: MoaSlotDraft = MoaSlotDraft(),
+    val raw: JsonObject = JsonObject(emptyMap()),
+) {
+    fun toJson(): JsonObject = raw.withValues(
+        "reference_models" to JsonArray(referenceModels.map { it.toJson() }),
+        "aggregator" to aggregator.toJson(),
+    )
+}
+
+/**
+ * Editable MoA configuration. The raw root and preset objects deliberately
+ * retain fields that this small-screen editor does not expose yet.
+ */
+data class MoaConfigDraft(
+    val defaultPreset: String,
+    val activePreset: String,
+    val presets: Map<String, MoaPresetDraft>,
+    val raw: JsonObject = JsonObject(emptyMap()),
+) {
+    fun updatePreset(name: String, update: (MoaPresetDraft) -> MoaPresetDraft): MoaConfigDraft {
+        val current = presets[name] ?: return this
+        return copy(presets = presets + (name to update(current)))
+    }
+
+    fun removePreset(name: String): MoaConfigDraft {
+        if (presets.size <= 1 || name !in presets) return this
+        val remaining = presets.filterKeys { it != name }
+        val nextName = remaining.keys.firstOrNull() ?: return this
+        return copy(
+            defaultPreset = if (defaultPreset == name) nextName else defaultPreset,
+            activePreset = if (activePreset == name) "" else activePreset,
+            presets = remaining,
+        )
+    }
+
+    fun toJson(): JsonObject {
+        val serializedPresets = JsonObject(
+            presets.mapValues { (_, preset) -> preset.toJson() },
+        )
+        var result = raw.withValues(
+            "default_preset" to JsonPrimitive(defaultPreset),
+            "active_preset" to JsonPrimitive(activePreset),
+            "presets" to serializedPresets,
+        )
+
+        // Keep the compatibility/flattened view in sync with the selected
+        // default preset. Older Hermes consumers still read these fields.
+        val default = presets[defaultPreset] ?: presets.values.firstOrNull()
+        if (default != null) {
+            val flattened = default.toJson()
+            val keys = listOf(
+                "reference_models",
+                "aggregator",
+                "reference_temperature",
+                "aggregator_temperature",
+                "reference_timeout",
+                "degraded_reference_policy",
+                "max_tokens",
+                "reference_max_tokens",
+                "fanout",
+                "enabled",
+            )
+            result = result.withValues(
+                *keys.map { key -> key to flattened[key] }.toTypedArray(),
+            )
+        }
+        return result
+    }
+}
 
 data class ModelsUiState(
     val loading: Boolean = true,
@@ -38,11 +152,26 @@ data class ModelsUiState(
     val pendingProvider: String? = null,
     val pendingModel: String? = null,
     val confirmMessage: String? = null,
+    val auxiliary: AuxiliaryModelsUi? = null,
+    val auxiliaryLoading: Boolean = true,
+    val auxiliaryError: String? = null,
+    val moa: MoaConfigDraft? = null,
+    val moaLoading: Boolean = true,
+    val moaError: String? = null,
+    val moaSaving: Boolean = false,
+    val moaSaved: Boolean = false,
+    val recommendedDefaults: Map<String, RecommendedDefaultModelUi> = emptyMap(),
+    val recommendedLoading: Set<String> = emptySet(),
+    val recommendedErrors: Map<String, String> = emptyMap(),
 )
 
-/** Model management (roadmap 15.12): provider catalog + set active model via the model API. */
+/** Model management: provider catalog, MoA settings, auxiliary assignments, and onboarding defaults. */
 class ModelsViewModel(
     private val repo: HermesRepository = TalariaApp.instance.container.hermesRepository,
+    private val api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
+    private val profileProvider: () -> String? = {
+        TalariaApp.instance.container.connectionStore.activeProfile()?.effectiveManagementProfile()
+    },
 ) : ViewModel() {
     private val _ui = MutableStateFlow(ModelsUiState())
     val ui: StateFlow<ModelsUiState> = _ui.asStateFlow()
@@ -50,14 +179,109 @@ class ModelsViewModel(
     init { refresh() }
 
     fun refresh() {
-        _ui.update { it.copy(loading = true, error = null) }
+        _ui.update {
+            it.copy(
+                loading = true,
+                error = null,
+                auxiliaryLoading = true,
+                auxiliaryError = null,
+                moaLoading = true,
+                moaError = null,
+                moaSaved = false,
+                recommendedDefaults = emptyMap(),
+                recommendedLoading = emptySet(),
+                recommendedErrors = emptyMap(),
+            )
+        }
         viewModelScope.launch {
-            repo.getModelInfo().onSuccess { info ->
-                _ui.update { it.copy(currentModel = info.model, currentProvider = info.provider) }
+            val profile = profile()
+            launch {
+                repo.getModelInfo().onSuccess { info ->
+                    _ui.update { it.copy(currentModel = info.model, currentProvider = info.provider) }
+                }
             }
-            repo.getModelProviders().fold(
-                onSuccess = { list -> _ui.update { it.copy(loading = false, providers = list) } },
-                onFailure = { e -> _ui.update { it.copy(loading = false, error = e.message) } },
+            launch {
+                repo.getModelProviders().fold(
+                    onSuccess = { list -> _ui.update { it.copy(loading = false, providers = list) } },
+                    onFailure = { e -> _ui.update { it.copy(loading = false, error = e.message) } },
+                )
+            }
+            launch { loadAuxiliaryModels(profile) }
+            launch { loadMoaConfig(profile) }
+        }
+    }
+
+    fun getAuxiliaryModels() {
+        _ui.update { it.copy(auxiliaryLoading = true, auxiliaryError = null) }
+        viewModelScope.launch { loadAuxiliaryModels(profile()) }
+    }
+
+    fun getMoaConfig() {
+        _ui.update { it.copy(moaLoading = true, moaError = null, moaSaved = false) }
+        viewModelScope.launch { loadMoaConfig(profile()) }
+    }
+
+    fun putMoaConfig(config: MoaConfigDraft) {
+        _ui.update { it.copy(moaSaving = true, moaError = null, moaSaved = false) }
+        viewModelScope.launch {
+            runCatching { api.putMoaConfig(config.toJson(), profile()) }.fold(
+                onSuccess = { response ->
+                    _ui.update {
+                        it.copy(
+                            moa = parseMoaConfig(response) ?: config,
+                            moaSaving = false,
+                            moaSaved = true,
+                            moaError = null,
+                        )
+                    }
+                },
+                onFailure = { e ->
+                    _ui.update {
+                        it.copy(
+                            moaSaving = false,
+                            moaSaved = false,
+                            moaError = e.message,
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    /** Load the server-curated default used by provider onboarding. */
+    fun getRecommendedDefaultModel(provider: String) {
+        val slug = provider.trim()
+        if (slug.isBlank()) return
+        _ui.update {
+            it.copy(
+                recommendedLoading = it.recommendedLoading + slug,
+                recommendedErrors = it.recommendedErrors - slug,
+            )
+        }
+        viewModelScope.launch {
+            runCatching { api.getRecommendedDefaultModel(slug) }.fold(
+                onSuccess = { response ->
+                    val recommendation = parseRecommendedDefault(response)
+                    _ui.update {
+                        it.copy(
+                            recommendedLoading = it.recommendedLoading - slug,
+                            recommendedDefaults = recommendation?.let { value ->
+                                it.recommendedDefaults + (slug to value)
+                            } ?: it.recommendedDefaults,
+                            recommendedErrors = it.recommendedErrors - slug,
+                        )
+                    }
+                },
+                onFailure = { e ->
+                    _ui.update {
+                        it.copy(
+                            recommendedLoading = it.recommendedLoading - slug,
+                            recommendedErrors = e.message?.let { message ->
+                                it.recommendedErrors + (slug to message)
+                            } ?: it.recommendedErrors,
+                        )
+                    }
+                },
             )
         }
     }
@@ -107,6 +331,44 @@ class ModelsViewModel(
 
     fun clearMessage() = _ui.update { it.copy(message = null) }
 
+    private fun profile(): String? = profileProvider()?.takeIf { it.isNotBlank() }
+
+    private suspend fun loadAuxiliaryModels(profile: String?) {
+        runCatching { api.getAuxiliaryModels(profile) }.fold(
+            onSuccess = { response ->
+                _ui.update {
+                    it.copy(
+                        auxiliary = parseAuxiliaryModels(response),
+                        auxiliaryLoading = false,
+                        auxiliaryError = null,
+                    )
+                }
+            },
+            onFailure = { e ->
+                _ui.update {
+                    it.copy(auxiliaryLoading = false, auxiliaryError = e.message)
+                }
+            },
+        )
+    }
+
+    private suspend fun loadMoaConfig(profile: String?) {
+        runCatching { api.getMoaConfig(profile) }.fold(
+            onSuccess = { response ->
+                _ui.update {
+                    it.copy(
+                        moa = parseMoaConfig(response),
+                        moaLoading = false,
+                        moaError = null,
+                    )
+                }
+            },
+            onFailure = { e ->
+                _ui.update { it.copy(moaLoading = false, moaError = e.message) }
+            },
+        )
+    }
+
     companion object {
         fun factory() = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -114,3 +376,84 @@ class ModelsViewModel(
         }
     }
 }
+
+private fun parseAuxiliaryModels(element: JsonElement): AuxiliaryModelsUi? {
+    val root = element as? JsonObject ?: return null
+    val tasks = (root["tasks"] as? JsonArray).orEmpty().mapNotNull { item ->
+        val task = item as? JsonObject ?: return@mapNotNull null
+        AuxiliaryTaskAssignmentUi(
+            task = task.stringValue("task"),
+            provider = task.stringValue("provider"),
+            model = task.stringValue("model"),
+            baseUrl = task.stringValue("base_url"),
+        )
+    }
+    val main = root["main"] as? JsonObject
+    return AuxiliaryModelsUi(
+        tasks = tasks,
+        mainProvider = main?.stringValue("provider").orEmpty(),
+        mainModel = main?.stringValue("model").orEmpty(),
+    )
+}
+
+private fun parseRecommendedDefault(element: JsonElement): RecommendedDefaultModelUi? {
+    val root = element as? JsonObject ?: return null
+    return RecommendedDefaultModelUi(
+        provider = root.stringValue("provider"),
+        model = root.stringValue("model"),
+        freeTier = (root["free_tier"] as? JsonPrimitive)?.booleanOrNull,
+    )
+}
+
+private fun parseMoaConfig(element: JsonElement): MoaConfigDraft? {
+    val root = element as? JsonObject ?: return null
+    val cleanRoot = root.withValues("ok" to null)
+    val presets = linkedMapOf<String, MoaPresetDraft>()
+    (root["presets"] as? JsonObject)?.forEach { (name, value) ->
+        val preset = value as? JsonObject ?: return@forEach
+        if (name.isNotBlank()) presets[name] = parseMoaPreset(preset)
+    }
+    if (presets.isEmpty()) presets["default"] = parseMoaPreset(root)
+    val defaultPreset = root.stringValue("default_preset").takeIf { it in presets }
+        ?: presets.keys.first()
+    val activePreset = root.stringValue("active_preset").takeIf { it in presets }.orEmpty()
+    return MoaConfigDraft(
+        defaultPreset = defaultPreset,
+        activePreset = activePreset,
+        presets = presets,
+        raw = cleanRoot,
+    )
+}
+
+private fun parseMoaPreset(root: JsonObject): MoaPresetDraft {
+    val references = when (val rawReferences = root["reference_models"]) {
+        is JsonArray -> rawReferences.mapNotNull { (it as? JsonObject)?.let(::parseMoaSlot) }
+        is JsonObject -> listOf(parseMoaSlot(rawReferences))
+        else -> emptyList()
+    }
+    return MoaPresetDraft(
+        referenceModels = references,
+        aggregator = parseMoaSlot(root["aggregator"] as? JsonObject),
+        raw = root,
+    )
+}
+
+private fun parseMoaSlot(root: JsonObject?): MoaSlotDraft {
+    val enabled = (root?.get("enabled") as? JsonPrimitive)?.booleanOrNull ?: true
+    return MoaSlotDraft(
+        provider = root?.stringValue("provider").orEmpty(),
+        model = root?.stringValue("model").orEmpty(),
+        enabled = enabled,
+        raw = root ?: JsonObject(emptyMap()),
+    )
+}
+
+private fun JsonObject.stringValue(key: String): String =
+    (this[key] as? JsonPrimitive)?.contentOrNull.orEmpty()
+
+private fun JsonObject.withValues(vararg values: Pair<String, JsonElement?>): JsonObject =
+    JsonObject(toMutableMap().apply {
+        values.forEach { (key, value) ->
+            if (value == null) remove(key) else put(key, value)
+        }
+    })

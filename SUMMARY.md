@@ -62,3 +62,19 @@ JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testD
 ```
 
 No third-party dependencies were added. No services were restarted, and nothing was pushed.
+
+## Models roadmap item 8
+
+Implemented the Models screen’s v0.6 model-management additions:
+
+- Added collapsed progressive-disclosure sections for MoA presets, auxiliary assignments, and onboarding recommendations.
+- Added a named-preset MoA slots editor using `getMoaConfig()` and `putMoaConfig(...)`, including reference/aggregator slots, enable toggles, preset creation/removal, validation, and preservation of server fields the editor does not expose.
+- Added auxiliary task assignment display from `getAuxiliaryModels()`.
+- Added a provider-by-provider onboarding helper using `getRecommendedDefaultModel(provider)`, with an action to use the returned model.
+- Added all feature strings to `strings_models.xml` with the `models_` prefix.
+
+### Verification
+
+The required low-memory compile command was run once with `--no-daemon --max-workers=1` and failed after 3m57s with `java.lang.OutOfMemoryError: GC overhead limit exceeded` and Gradle's “Not enough memory to run compilation” message. No Kotlin diagnostics were emitted; no additional compile retries were made because the shared VM remained memory-constrained.
+
+Changed feature paths are limited to `feature/manage/models/**` and `res/values/strings_models.xml`.
