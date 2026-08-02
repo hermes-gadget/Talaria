@@ -32,7 +32,16 @@ enum class ChatSessionActionKind {
     REWIND,
     COMPACT,
     RENAME,
+    EDIT,
 }
+
+data class ChatMessageTarget(
+    val tabId: String,
+    val sessionId: String,
+    val messageCount: Int,
+    val role: String,
+    val text: String,
+)
 
 /** Confirmation/editor dialogs owned by the chat ViewModel rather than local screen state. */
 sealed interface ChatSessionDialog {
@@ -53,6 +62,10 @@ sealed interface ChatSessionDialog {
         val tabId: String?,
         val initialTitle: String,
     ) : ChatSessionDialog
+
+    data class MessageActions(val target: ChatMessageTarget) : ChatSessionDialog
+
+    data class EditMessage(val target: ChatMessageTarget) : ChatSessionDialog
 }
 
 sealed interface ChatSessionActionState {
@@ -113,6 +126,22 @@ internal object ChatSessionControlsReducer {
         initialTitle: String,
     ): ChatSessionControlsState = state.copy(
         dialog = ChatSessionDialog.EditTitle(sessionId, tabId, initialTitle),
+        action = ChatSessionActionState.Idle,
+    )
+
+    fun requestMessageActions(
+        state: ChatSessionControlsState,
+        target: ChatMessageTarget,
+    ): ChatSessionControlsState = state.copy(
+        dialog = ChatSessionDialog.MessageActions(target),
+        action = ChatSessionActionState.Idle,
+    )
+
+    fun requestMessageEdit(
+        state: ChatSessionControlsState,
+        target: ChatMessageTarget,
+    ): ChatSessionControlsState = state.copy(
+        dialog = ChatSessionDialog.EditMessage(target),
         action = ChatSessionActionState.Idle,
     )
 
@@ -186,3 +215,7 @@ internal fun parseSessionActionMessages(root: JsonObject, sessionId: String): Li
 /** Maps a visible reading-transcript row back to the backend history prefix length. */
 internal fun branchMessageCount(line: ChatLine, displayedIndex: Int): Int =
     (line.id.substringAfterLast('-').toIntOrNull()?.plus(1) ?: displayedIndex + 1).coerceAtLeast(1)
+
+/** Editing a prompt retains the history prefix before that prompt in the child chat. */
+internal fun editedMessageBranchCount(target: ChatMessageTarget): Int =
+    (target.messageCount - 1).coerceAtLeast(0)

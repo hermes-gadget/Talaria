@@ -68,6 +68,7 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureInPictureAlt
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Tune
@@ -208,10 +209,11 @@ fun ChatScreen(
     // Raw PTY/TUI output is available as an explicit diagnostic view only while idle.
     val transcriptMode = effectiveTranscriptMode(ui.transcriptMode, active?.working == true)
     val displayLines = visibleTranscriptLines(active, transcriptMode)
+    val searchedLines = filterTranscriptLines(displayLines, ui.transcriptQuery)
     // Follow the transcript only when the last line actually changed; instant
     // scroll (no animation) keeps up with stream-rate updates without jank.
-    LaunchedEffect(displayLines.lastOrNull()?.let { it.id to it.text }, ui.activeTabId) {
-        if (displayLines.isNotEmpty()) listState.scrollToItem(displayLines.lastIndex)
+    LaunchedEffect(searchedLines.lastOrNull()?.let { it.id to it.text }, ui.activeTabId, ui.transcriptQuery) {
+        if (searchedLines.isNotEmpty()) listState.scrollToItem(searchedLines.lastIndex)
     }
 
     val status = when {
@@ -393,6 +395,68 @@ fun ChatScreen(
                 },
             )
         }
+        is ChatSessionDialog.MessageActions -> AlertDialog(
+            onDismissRequest = vm::dismissSessionDialog,
+            title = { Text(stringResource(R.string.chat_message_actions_title)) },
+            text = {
+                Column {
+                    Text(
+                        stringResource(
+                            R.string.chat_message_actions_body,
+                            dialog.target.text.take(240),
+                        ),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    if (dialog.target.role == "user") {
+                        TextButton(
+                            onClick = vm::beginMessageEdit,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(stringResource(R.string.chat_edit_message))
+                        }
+                    }
+                    TextButton(
+                        onClick = vm::beginMessageBranch,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.chat_branch_new_chat))
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = vm::dismissSessionDialog) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+            confirmButton = {},
+        )
+        is ChatSessionDialog.EditMessage -> {
+            var edited by remember(dialog.target.text) { mutableStateOf(dialog.target.text) }
+            AlertDialog(
+                onDismissRequest = vm::dismissSessionDialog,
+                title = { Text(stringResource(R.string.chat_edit_message_title)) },
+                text = {
+                    OutlinedTextField(
+                        value = edited,
+                        onValueChange = { edited = it },
+                        label = { Text(stringResource(R.string.chat_edit_message_label)) },
+                        minLines = 4,
+                        maxLines = 8,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { vm.confirmMessageEdit(edited) }) {
+                        Text(stringResource(R.string.common_save))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = vm::dismissSessionDialog) {
+                        Text(stringResource(R.string.common_cancel))
+                    }
+                },
+            )
+        }
         null -> Unit
     }
 
@@ -552,6 +616,15 @@ fun ChatScreen(
                                 ),
                             )
                         }
+                    }
+                    IconButton(
+                        onClick = { vm.toggleTranscriptSearch() },
+                        enabled = active != null,
+                    ) {
+                        Icon(
+                            Icons.Filled.Search,
+                            contentDescription = stringResource(R.string.chat_find_in_session),
+                        )
                     }
                     IconButton(onClick = { vm.toggleSessionRail() }) {
                         Icon(
@@ -782,12 +855,64 @@ fun ChatScreen(
                             }
                         }
                     }
+                    if (ui.composerSuggestions.isNotEmpty()) {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 180.dp),
+                        ) {
+                            item {
+                                Text(
+                                    stringResource(R.string.chat_composer_suggestions),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                )
+                            }
+                            items(
+                                ui.composerSuggestions,
+                                key = { "${it.kind}-${it.label}" },
+                            ) { suggestion ->
+                                ListItem(
+                                    headlineContent = { Text(suggestion.label) },
+                                    modifier = Modifier.clickable {
+                                        vm.pickComposerCompletion(suggestion)
+                                    },
+                                )
+                            }
+                        }
+                    }
                     if (ui.partialDictation.isNotBlank()) {
                         Text(
                             "…${ui.partialDictation}",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.secondary,
                         )
+                    }
+                    if (ui.composerReferences.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .padding(bottom = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            ui.composerReferences.forEach { reference ->
+                                Surface(
+                                    shape = MaterialTheme.shapes.small,
+                                    color = MaterialTheme.colorScheme.secondaryContainer,
+                                ) {
+                                    Text(
+                                        reference.value,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                                    )
+                                }
+                            }
+                        }
                     }
                     if (active?.imageAttachments?.isNotEmpty() == true) {
                         Row(
@@ -966,6 +1091,37 @@ fun ChatScreen(
                 onRename = { renameTarget = it },
                 onAdd = { vm.newSession() },
             )
+            if (ui.showTranscriptSearch) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedTextField(
+                        value = ui.transcriptQuery,
+                        onValueChange = vm::updateTranscriptQuery,
+                        singleLine = true,
+                        label = { Text(stringResource(R.string.chat_find_in_session)) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        stringResource(
+                            R.string.chat_search_matches,
+                            transcriptMatchCount(displayLines, ui.transcriptQuery),
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 6.dp),
+                    )
+                    IconButton(onClick = { vm.toggleTranscriptSearch(false) }) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = stringResource(R.string.chat_close_search),
+                        )
+                    }
+                }
+            }
             if (monitorOpen) {
                 SubagentMonitor(
                     active = active,
@@ -993,6 +1149,7 @@ fun ChatScreen(
                             ChatSessionActionKind.REWIND -> stringResource(R.string.chat_action_rewind)
                             ChatSessionActionKind.COMPACT -> stringResource(R.string.chat_action_compact)
                             ChatSessionActionKind.RENAME -> stringResource(R.string.chat_action_rename)
+                            ChatSessionActionKind.EDIT -> stringResource(R.string.chat_action_edit)
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1023,10 +1180,12 @@ fun ChatScreen(
                 contentPadding = PaddingValues(vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (displayLines.isEmpty()) {
+                if (searchedLines.isEmpty()) {
                     item {
                         Text(
-                            if (transcriptMode == TranscriptMode.READING) {
+                            if (ui.transcriptQuery.isNotBlank()) {
+                                stringResource(R.string.chat_search_no_results)
+                            } else if (transcriptMode == TranscriptMode.READING) {
                                 stringResource(R.string.chat_empty_reading)
                             } else {
                                 stringResource(R.string.chat_empty_terminal)
@@ -1037,8 +1196,9 @@ fun ChatScreen(
                         )
                     }
                 }
-                itemsIndexed(displayLines, key = { _, line -> line.id }) { displayedIndex, line ->
+                itemsIndexed(searchedLines, key = { _, line -> line.id }) { displayedIndex, line ->
                     val mine = line.role == "user"
+                    val originalIndex = displayLines.indexOfFirst { it.id == line.id }
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1047,12 +1207,12 @@ fun ChatScreen(
                                 enabled = transcriptMode == TranscriptMode.READING,
                                 onClick = {},
                                 onLongClick = {
-                                    vm.requestRewind(
-                                        messageCount = branchMessageCount(line, displayedIndex),
-                                        preview = line.text,
+                                    vm.requestMessageActions(
+                                        line = line,
+                                        displayedIndex = originalIndex.takeIf { it >= 0 } ?: displayedIndex,
                                     )
                                 },
-                                onLongClickLabel = stringResource(R.string.chat_rewind_message),
+                                onLongClickLabel = stringResource(R.string.chat_message_actions),
                             ),
                         color = when (line.role) {
                             "user" -> MaterialTheme.colorScheme.primaryContainer
@@ -1063,7 +1223,11 @@ fun ChatScreen(
                         shape = MaterialTheme.shapes.medium,
                     ) {
                         if (transcriptMode == TranscriptMode.READING || line.role == "assistant") {
-                            SimpleMarkdownText(line.text, modifier = Modifier.padding(12.dp))
+                            SimpleMarkdownText(
+                                markdown = line.text,
+                                modifier = Modifier.padding(12.dp),
+                                highlightQuery = ui.transcriptQuery,
+                            )
                         } else {
                             // Terminal mode: selectable so users can copy PTY output.
                             SelectionContainer {

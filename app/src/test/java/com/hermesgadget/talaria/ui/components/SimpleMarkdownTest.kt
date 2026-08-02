@@ -44,6 +44,28 @@ class SimpleMarkdownTest {
     }
 
     @Test
+    fun highlightsJavascriptAliasesAndBlockCommentsOffline() {
+        val code = parseMarkdown(
+            """
+            ```js
+            const answer = 42 /* useful */
+            """.trimIndent(),
+        ).blocks.single() as MarkdownCodeBlock
+
+        assertTrue(code.tokens.any { it.text == "const" && it.kind == MarkdownCodeTokenKind.KEYWORD })
+        assertTrue(code.tokens.any { it.text == "42" && it.kind == MarkdownCodeTokenKind.NUMBER })
+        assertTrue(code.tokens.any { it.text == "/* useful */" && it.kind == MarkdownCodeTokenKind.COMMENT })
+    }
+
+    @Test
+    fun searchHighlightRangesAreCaseInsensitiveAndNonOverlapping() {
+        assertEquals(
+            listOf(0..4, 8..12),
+            markdownHighlightRanges("Build a build", "BUILD"),
+        )
+    }
+
+    @Test
     fun parsesGfmTableWithRows() {
         val document = parseMarkdown(
             """

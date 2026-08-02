@@ -1,4 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Strings owned by the chat feature wave. English only; locale files are translated by the i18n pass. -->
+    <string name="chat_find_in_session">Find in session</string>
+    <string name="chat_search_matches">%1$d matches</string>
+    <string name="chat_close_search">Close transcript search</string>
+    <string name="chat_search_no_results">No messages match this search.</string>
+    <string name="chat_composer_suggestions">Suggestions</string>
+    <string name="chat_known_agent_hermes">Hermes</string>
+    <string name="chat_known_participant_you">you</string>
+    <string name="chat_message_actions">Message actions</string>
+    <string name="chat_message_actions_title">Message actions</string>
+    <string name="chat_message_actions_body">Choose what to do with &quot;%1$s&quot;.</string>
+    <string name="chat_edit_message">Edit message</string>
+    <string name="chat_branch_new_chat">Branch in new chat</string>
+    <string name="chat_edit_message_title">Edit message</string>
+    <string name="chat_edit_message_label">Message</string>
+    <string name="chat_message_edit_empty">Message cannot be blank</string>
+    <string name="chat_action_edit">Opening edited message…</string>
+    <string name="chat_branch_stop_turn">Stop the current turn before branching</string>
+    <string name="chat_branch_connection_error">The chat connection is no longer active</string>
+    <string name="chat_branch_failed">Could not branch this session</string>
+    <string name="chat_branch_id_missing">Hermes did not return the new branch session id</string>
+    <string name="chat_edited_branch_title">Edited branch</string>
+    <string name="chat_edit_branch_success">Opened edited message in a new chat</string>
+    <string name="chat_edit_branch_failed">Could not open an edited message branch</string>
 </resources>
