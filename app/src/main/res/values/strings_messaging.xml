@@ -1,4 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Strings owned by the messaging feature wave. English only; locale files are translated by the i18n pass. -->
+    <string name="messaging_onboarding_title">Pair a messaging account</string>
+    <string name="messaging_onboarding_subtitle">Start a guided setup, scan the code or open the link, then apply the account.</string>
+    <string name="messaging_channels_title">Configured channels</string>
+    <string name="messaging_pair_telegram">Pair Telegram</string>
+    <string name="messaging_pair_whatsapp">Pair WhatsApp</string>
+    <string name="messaging_telegram_instructions">Create a Telegram bot, open the setup link on any device, and return here when the bot is ready.</string>
+    <string name="messaging_whatsapp_instructions">Start a temporary WhatsApp pairing session, scan its QR code in WhatsApp, and apply the connected account.</string>
+    <string name="messaging_telegram_bot_name">Bot name (optional)</string>
+    <string name="messaging_telegram_bot_name_hint">Used as the suggested name in Telegram setup.</string>
+    <string name="messaging_telegram_waiting">Waiting for Telegram setup…</string>
+    <string name="messaging_telegram_allowed_users">Allowed Telegram user IDs</string>
+    <string name="messaging_telegram_allowed_users_hint">Enter numeric Telegram IDs separated by commas.</string>
+    <string name="messaging_whatsapp_waiting">Waiting for WhatsApp QR scan…</string>
+    <string name="messaging_whatsapp_mode">WhatsApp mode</string>
+    <string name="messaging_whatsapp_mode_bot">Bot</string>
+    <string name="messaging_whatsapp_mode_self_chat">Self-chat</string>
+    <string name="messaging_whatsapp_allowed_users">Allowed WhatsApp users</string>
+    <string name="messaging_whatsapp_allowed_users_hint">Optional phone numbers separated by commas.</string>
+    <string name="messaging_start_pairing">Start pairing</string>
+    <string name="messaging_starting">Starting pairing…</string>
+    <string name="messaging_ready">Ready to apply</string>
+    <string name="messaging_applying">Applying setup…</string>
+    <string name="messaging_applied">Applied</string>
+    <string name="messaging_cancelling">Cancelling…</string>
+    <string name="messaging_cancel">Cancel setup</string>
+    <string name="messaging_apply_enable">Apply and enable</string>
+    <string name="messaging_status">Status: %1$s</string>
+    <string name="messaging_pairing_id">Pairing ID: %1$s</string>
+    <string name="messaging_expires_at">Expires: %1$s</string>
+    <string name="messaging_deep_link">Telegram deep link</string>
+    <string name="messaging_qr_payload">QR payload</string>
+    <string name="messaging_qr_payload_hint">Scan this payload with the matching messaging app, or select and copy it.</string>
+    <string name="messaging_open_link">Open deep link</string>
+    <string name="messaging_suggested_username">Suggested bot: %1$s</string>
+    <string name="messaging_bot_username">Bot username: %1$s</string>
+    <string name="messaging_owner_user_id">Telegram owner ID: %1$s</string>
+    <string name="messaging_whatsapp_account_name">WhatsApp account: %1$s</string>
+    <string name="messaging_whatsapp_account_phone">WhatsApp phone: %1$s</string>
+    <string name="messaging_telegram_applied">Telegram is enabled. Start another setup to change the account.</string>
+    <string name="messaging_whatsapp_applied">WhatsApp is enabled. Start another setup to change the account.</string>
+    <string name="messaging_onboarding_failed">Onboarding failed</string>
+    <string name="messaging_unexpected_status">Unexpected onboarding status: %1$s</string>
+    <string name="messaging_request_failed">The setup request did not complete. Try again.</string>
 </resources>

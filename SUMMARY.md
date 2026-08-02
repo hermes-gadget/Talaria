@@ -62,3 +62,15 @@ JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testD
 ```
 
 No third-party dependencies were added. No services were restarted, and nothing was pushed.
+
+## Guided messaging onboarding
+
+- Added a `ChannelsViewModel` that starts, polls, applies, and cancels the existing Telegram and WhatsApp onboarding API flows, including profile-aware request bodies and surfaced failure states.
+- Added progressive-disclosure onboarding cards to `ChannelsScreen`: Telegram deep-link/QR payload display with launch action and allowed-user apply flow; WhatsApp mode, allowed-user, QR payload, status, and account details with apply/cancel actions.
+- Added all new English onboarding copy under the `messaging_` namespace in `strings_messaging.xml`.
+
+### Verification
+
+- `git diff --check` passed.
+- The prescribed command was run once with `--no-daemon --max-workers=1`; it reached Kotlin compilation but failed on a JSON builder type mismatch in `ChannelsViewModel.kt:201`. That mismatch was corrected afterward, and no second compile was launched per the one-run memory constraint.
+- Only `feature/manage/channels/**`, `res/values/strings_messaging.xml`, and this summary were changed.
