@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -41,6 +42,12 @@ import kotlinx.serialization.json.put
 interface SkillsGateway {
     suspend fun skills(): Result<List<SkillInfo>>
     suspend fun toolsets(): Result<List<ToolsetInfo>>
+    suspend fun getToolsetConfig(name: String): Result<JsonElement>
+    suspend fun putToolsetEnv(name: String, body: JsonObject): Result<JsonElement>
+    suspend fun putToolsetModel(name: String, body: JsonObject): Result<JsonElement>
+    suspend fun getToolsetModels(name: String): Result<JsonElement>
+    suspend fun putToolsetProvider(name: String, body: JsonObject): Result<JsonElement>
+    suspend fun runToolsetPostSetup(name: String, body: JsonObject): Result<JsonElement>
     suspend fun toggleSkill(name: String, enabled: Boolean): Result<Unit>
     suspend fun setToolset(name: String, enabled: Boolean): Result<Unit>
     suspend fun searchHub(query: String): Result<List<HubSkill>>
@@ -64,6 +71,24 @@ class HermesSkillsGateway(
 
     override suspend fun skills(): Result<List<SkillInfo>> = repo.getSkills()
     override suspend fun toolsets(): Result<List<ToolsetInfo>> = repo.getToolsets()
+    override suspend fun getToolsetConfig(name: String): Result<JsonElement> = runCatching {
+        api.getToolsetConfig(name, profile())
+    }
+    override suspend fun putToolsetEnv(name: String, body: JsonObject): Result<JsonElement> = runCatching {
+        api.putToolsetEnv(name, body, profile())
+    }
+    override suspend fun putToolsetModel(name: String, body: JsonObject): Result<JsonElement> = runCatching {
+        api.putToolsetModel(name, body, profile())
+    }
+    override suspend fun getToolsetModels(name: String): Result<JsonElement> = runCatching {
+        api.getToolsetModels(name, profile())
+    }
+    override suspend fun putToolsetProvider(name: String, body: JsonObject): Result<JsonElement> = runCatching {
+        api.putToolsetProvider(name, body, profile())
+    }
+    override suspend fun runToolsetPostSetup(name: String, body: JsonObject): Result<JsonElement> = runCatching {
+        api.runToolsetPostSetup(name, body, profile())
+    }
     override suspend fun toggleSkill(name: String, enabled: Boolean): Result<Unit> = repo.toggleSkill(name, enabled)
     override suspend fun setToolset(name: String, enabled: Boolean): Result<Unit> = repo.setToolsetEnabled(name, enabled)
     override suspend fun searchHub(query: String): Result<List<HubSkill>> = repo.searchSkillHub(query)
@@ -127,7 +152,61 @@ data class SkillsContent(
     val busy: Boolean = false,
     val message: String? = null,
     val editor: SkillEditorState = SkillEditorState.Closed,
+    val toolsetConfig: ToolsetConfigState = ToolsetConfigState.Closed,
 )
+
+data class ToolsetEnvField(
+    val key: String,
+    val prompt: String? = null,
+    val url: String? = null,
+    val defaultValue: String? = null,
+    val isSet: Boolean = false,
+)
+
+data class ToolsetProviderConfig(
+    val name: String,
+    val badge: String? = null,
+    val tag: String? = null,
+    val envFields: List<ToolsetEnvField> = emptyList(),
+    val postSetup: String? = null,
+    val requiresNousAuth: Boolean = false,
+    val isActive: Boolean = false,
+    val status: String? = null,
+)
+
+data class ToolsetConfigData(
+    val name: String,
+    val hasCategory: Boolean,
+    val providers: List<ToolsetProviderConfig> = emptyList(),
+    val activeProvider: String? = null,
+)
+
+data class ToolsetModelOption(
+    val id: String,
+    val display: String,
+    val speed: String? = null,
+    val strengths: String? = null,
+    val price: String? = null,
+)
+
+data class ToolsetModels(
+    val name: String,
+    val hasModels: Boolean,
+    val provider: String? = null,
+    val current: String? = null,
+    val default: String? = null,
+    val options: List<ToolsetModelOption> = emptyList(),
+)
+
+sealed interface ToolsetConfigState {
+    data object Closed : ToolsetConfigState
+    data class Loading(val name: String) : ToolsetConfigState
+    data class Ready(
+        val config: ToolsetConfigData,
+        val models: ToolsetModels,
+    ) : ToolsetConfigState
+    data class Error(val name: String, val message: String) : ToolsetConfigState
+}
 
 sealed interface SkillsUiState {
     data object Loading : SkillsUiState
@@ -162,6 +241,69 @@ class SkillsViewModel(
 
     fun setToolset(name: String, enabled: Boolean) {
         mutate("Could not update toolset") { gateway.setToolset(name, enabled) }
+    }
+
+    fun getToolsetConfig(name: String) {
+        updateContent {
+            it.copy(
+                busy = true,
+                message = null,
+                toolsetConfig = ToolsetConfigState.Loading(name),
+            )
+        }
+        loadToolsetConfig(name)
+    }
+
+    fun closeToolsetConfig() = updateContent { it.copy(toolsetConfig = ToolsetConfigState.Closed) }
+
+    fun putToolsetProvider(name: String, provider: String) {
+        runToolsetAction(name, "Could not update toolset") {
+            gateway.putToolsetProvider(
+                name,
+                buildJsonObject { put("provider", provider) },
+            )
+        }
+    }
+
+    fun putToolsetEnv(name: String, values: Map<String, String>) {
+        val env = buildJsonObject {
+            values.forEach { (key, value) -> put(key, value) }
+        }
+        runToolsetAction(name, "Could not update toolset") {
+            gateway.putToolsetEnv(
+                name,
+                buildJsonObject { put("env", env) },
+            )
+        }
+    }
+
+    fun putToolsetModel(name: String, model: String, provider: String? = null) {
+        runToolsetAction(name, "Could not update toolset") {
+            gateway.putToolsetModel(
+                name,
+                buildJsonObject {
+                    put("model", model)
+                    provider?.takeIf { it.isNotBlank() }?.let { put("provider", it) }
+                },
+            )
+        }
+    }
+
+    fun runToolsetPostSetup(name: String, key: String) {
+        setBusy(true)
+        viewModelScope.launch {
+            gateway.runToolsetPostSetup(
+                name,
+                buildJsonObject { put("key", key) },
+            ).fold(
+                onSuccess = { updateContent { it.copy(busy = false) } },
+                onFailure = { error ->
+                    updateContent {
+                        it.copy(busy = false, message = error.message ?: "Could not update toolset")
+                    }
+                },
+            )
+        }
     }
 
     fun searchHub(query: String) {
@@ -253,6 +395,61 @@ class SkillsViewModel(
             action().fold(
                 onSuccess = { result -> updateContent { it.copy(busy = false, message = result) }; refreshSkillsOnly() },
                 onFailure = { error -> updateContent { it.copy(busy = false, message = error.message ?: "Skill Hub action failed") } },
+            )
+        }
+    }
+
+    private fun runToolsetAction(
+        name: String,
+        errorFallback: String,
+        action: suspend () -> Result<JsonElement>,
+    ) {
+        setBusy(true)
+        viewModelScope.launch {
+            action().fold(
+                onSuccess = { loadToolsetConfig(name) },
+                onFailure = { error ->
+                    updateContent {
+                        it.copy(busy = false, message = error.message ?: errorFallback)
+                    }
+                },
+            )
+        }
+    }
+
+    private fun loadToolsetConfig(name: String) {
+        viewModelScope.launch {
+            runCatching {
+                val config = parseToolsetConfig(gateway.getToolsetConfig(name).getOrThrow())
+                    .let { parsed -> if (parsed.name.isBlank()) parsed.copy(name = name) else parsed }
+                val models = gateway.getToolsetModels(name)
+                    .getOrNull()
+                    ?.let(::parseToolsetModels)
+                    ?.let { parsed -> if (parsed.name.isBlank()) parsed.copy(name = name) else parsed }
+                    ?: ToolsetModels(name = name, hasModels = false)
+                config to models
+            }.fold(
+                onSuccess = { (config, models) ->
+                    updateContent {
+                        it.copy(
+                            busy = false,
+                            message = null,
+                            toolsetConfig = ToolsetConfigState.Ready(config, models),
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    updateContent {
+                        it.copy(
+                            busy = false,
+                            message = error.message,
+                            toolsetConfig = ToolsetConfigState.Error(
+                                name,
+                                error.message ?: "Could not load skills",
+                            ),
+                        )
+                    }
+                },
             )
         }
     }
@@ -372,5 +569,86 @@ private fun parseHubUpdateResponse(root: JsonElement): HubUpdateResponse {
     )
 }
 
+internal fun parseToolsetConfig(root: JsonElement): ToolsetConfigData {
+    val obj = root as? JsonObject ?: error("Could not load skills")
+    val providers = (obj["providers"] as? JsonArray).orEmpty().mapNotNull { element ->
+        val provider = element as? JsonObject ?: return@mapNotNull null
+        val name = provider["name"].asString()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        val envFields = (provider["env_vars"] ?: provider["envVars"])
+            .asJsonArray()
+            .mapNotNull { fieldElement ->
+                val field = fieldElement as? JsonObject ?: return@mapNotNull null
+                val key = field["key"].asString()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                ToolsetEnvField(
+                    key = key,
+                    prompt = field["prompt"].asString(),
+                    url = field["url"].asString(),
+                    defaultValue = field["default"].asString(),
+                    isSet = field["is_set"].asBoolean() ?: field["isSet"].asBoolean() ?: false,
+                )
+            }
+        ToolsetProviderConfig(
+            name = name,
+            badge = provider["badge"].asString(),
+            tag = provider["tag"].asString(),
+            envFields = envFields,
+            postSetup = provider["post_setup"].asString() ?: provider["postSetup"].asString(),
+            requiresNousAuth = provider["requires_nous_auth"].asBoolean()
+                ?: provider["requiresNousAuth"].asBoolean()
+                ?: false,
+            isActive = provider["is_active"].asBoolean()
+                ?: provider["isActive"].asBoolean()
+                ?: false,
+            status = provider["status"].asString(),
+        )
+    }
+    return ToolsetConfigData(
+        name = obj["name"].asString().orEmpty(),
+        hasCategory = obj["has_category"].asBoolean()
+            ?: obj["hasCategory"].asBoolean()
+            ?: providers.isNotEmpty(),
+        providers = providers,
+        activeProvider = obj["active_provider"].asString() ?: obj["activeProvider"].asString(),
+    )
+}
+
+internal fun parseToolsetModels(root: JsonElement): ToolsetModels {
+    val obj = root as? JsonObject ?: error("Could not load skills")
+    val options = (obj["models"] as? JsonArray).orEmpty().mapNotNull { element ->
+        when (element) {
+            is JsonObject -> {
+                val id = element["id"].asString()
+                    ?: element["model"].asString()
+                    ?: return@mapNotNull null
+                ToolsetModelOption(
+                    id = id,
+                    display = element["display"].asString()
+                        ?: element["name"].asString()
+                        ?: id,
+                    speed = element["speed"].asString(),
+                    strengths = element["strengths"].asString(),
+                    price = element["price"].asString(),
+                )
+            }
+            is JsonPrimitive -> element.contentOrNull?.takeIf { it.isNotBlank() }?.let {
+                ToolsetModelOption(id = it, display = it)
+            }
+            else -> null
+        }
+    }
+    return ToolsetModels(
+        name = obj["name"].asString().orEmpty(),
+        hasModels = obj["has_models"].asBoolean()
+            ?: obj["hasModels"].asBoolean()
+            ?: options.isNotEmpty(),
+        provider = obj["provider"].asString(),
+        current = obj["current"].asString(),
+        default = obj["default"].asString(),
+        options = options,
+    )
+}
+
 private fun JsonElement?.asString(): String? = (this as? JsonPrimitive)?.contentOrNull
 private fun JsonElement?.asBoolean(): Boolean? = (this as? JsonPrimitive)?.booleanOrNull
+
+private fun JsonElement?.asJsonArray(): JsonArray = this as? JsonArray ?: JsonArray(emptyList())

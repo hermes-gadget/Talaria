@@ -62,3 +62,21 @@ JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testD
 ```
 
 No third-party dependencies were added. No services were restarted, and nothing was pushed.
+
+## Toolset deep config
+
+Implemented ROADMAP items 7 and 19 in the Skills feature:
+
+- Added profile-scoped toolset config, environment, provider, model catalog/model selection, and post-setup gateway actions.
+- Parsed dynamic provider/env/model JSON into generic UI fields, with provider groups and model options rendered without provider-specific hardcoding.
+- Added post-setup confirmation before running host-side installation hooks.
+- Decluttered Skills with collapsible filters/toolset groups/provider panels/model panel and overflow actions for screen, skill, and toolset operations.
+- Added all new English UI copy to `res/values/strings_toolset.xml` with the `toolset_` prefix.
+
+Changed files for this task are limited to the Skills feature, `strings_toolset.xml`, and this summary.
+
+### Toolset verification
+
+Command: `./gradlew --no-daemon :app:compileDebugKotlin --max-workers=1 -Dorg.gradle.jvmargs=-Xmx768m -q`
+
+Result: failed in `:app:compileDebugKotlin` after approximately four minutes because the Kotlin compiler reported `java.lang.OutOfMemoryError: GC overhead limit exceeded` while reading a cached AndroidX annotation class on the shared VM. No retry was made, as requested.
