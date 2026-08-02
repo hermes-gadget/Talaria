@@ -25,14 +25,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -52,15 +53,18 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesgadget.talaria.TalariaApp
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.core.network.JsonConfig
 import com.hermesgadget.talaria.core.util.formatHermesTimestamp
 import com.hermesgadget.talaria.domain.model.SessionStats
 import com.hermesgadget.talaria.domain.model.SessionSummary
+import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import com.hermesgadget.talaria.ui.theme.LocalSpacing
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.ui.res.stringResource
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -86,17 +90,19 @@ fun SessionsScreen(
     var confirmBulkDelete by remember { mutableStateOf(false) }
     var confirmEmptyDelete by remember { mutableStateOf(false) }
     var deleteSession by remember { mutableStateOf<SessionSummary?>(null) }
+    var compactSession by remember { mutableStateOf<SessionSummary?>(null) }
+    var actionsExpanded by remember { mutableStateOf(false) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
 
     val knownSources = listOf(
-        "" to "All sources",
-        "cli" to "cli",
-        "api" to "api",
-        "telegram" to "telegram",
-        "discord" to "discord",
-        "slack" to "slack",
-        "cron" to "cron",
-        "webhook" to "webhook",
+        "" to stringResource(R.string.sessions_source_all),
+        "cli" to stringResource(R.string.sessions_source_cli),
+        "api" to stringResource(R.string.sessions_source_api),
+        "telegram" to stringResource(R.string.sessions_source_telegram),
+        "discord" to stringResource(R.string.sessions_source_discord),
+        "slack" to stringResource(R.string.sessions_source_slack),
+        "cron" to stringResource(R.string.sessions_source_cron),
+        "webhook" to stringResource(R.string.sessions_source_webhook),
     )
 
     fun reload() {
@@ -225,74 +231,147 @@ fun SessionsScreen(
         )
     }
 
+    compactSession?.let { session ->
+        AlertDialog(
+            onDismissRequest = { compactSession = null },
+            title = { Text(stringResource(R.string.sessions_compact_title)) },
+            text = { Text(stringResource(R.string.sessions_compact_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    compactSession = null
+                    adminVm.compactSession(session.id) { reload() }
+                }) { Text(stringResource(R.string.sessions_compact)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { compactSession = null }) {
+                    Text(stringResource(R.string.sessions_cancel))
+                }
+            },
+        )
+    }
+
     val adminContent = (adminUi as? SessionAdminUiState.Content)?.value
+    val visibleSessions = SessionFilters.prioritizePinned(sessions, adminContent?.pinnedIds.orEmpty())
     ScreenScaffold(
-        "Sessions",
-        "Browse · search · administer",
+        stringResource(R.string.sessions_title),
+        stringResource(R.string.sessions_subtitle),
         actions = {
-            TextButton(onClick = { importFileLauncher.launch(arrayOf("application/json", "text/*", "*/*")) }) {
-                Text("Import")
+            Box {
+                IconButton(onClick = { actionsExpanded = true }) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = stringResource(R.string.sessions_more_actions),
+                    )
+                }
+                DropdownMenu(
+                    expanded = actionsExpanded,
+                    onDismissRequest = { actionsExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.sessions_import)) },
+                        onClick = {
+                            actionsExpanded = false
+                            importFileLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.sessions_refresh)) },
+                        onClick = {
+                            actionsExpanded = false
+                            adminVm.refresh()
+                            reload()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.sessions_prune)) },
+                        onClick = {
+                            actionsExpanded = false
+                            confirmPrune = true
+                        },
+                    )
+                }
             }
-            TextButton(onClick = { adminVm.refresh(); reload() }) { Text("Refresh") }
-            TextButton(onClick = { confirmPrune = true }) { Text("Prune") }
         },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(spacing.itemGap)) {
-            adminContent?.stats?.let { StatsCards(it) }
-            AdminActions(
-                admin = adminContent,
-                visibleIds = sessions.map { it.id },
-                onSelectAll = { adminVm.selectAll(sessions.map { it.id }) },
-                onClearSelection = adminVm::clearSelection,
-                onBulkDelete = { confirmBulkDelete = true },
-                onDeleteEmpty = { confirmEmptyDelete = true },
-            )
             (adminUi as? SessionAdminUiState.Failure)?.let {
                 Text(it.message, color = MaterialTheme.colorScheme.error)
             }
             adminContent?.message?.let { Text(it, color = MaterialTheme.colorScheme.secondary) }
             importMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            // Single compact filter row: tab chips + source dropdown chip.
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(spacing.sm),
-            ) {
-                SessionTab.entries.forEach { t ->
-                    FilterChip(selected = tab == t, onClick = { tab = t }, label = { Text(t.name) })
-                }
-                Box {
-                    FilterChip(
-                        selected = sourceFilter.isNotBlank(),
-                        onClick = { sourceExpanded = true },
-                        label = { Text(knownSources.find { it.first == sourceFilter }?.second ?: "All sources") },
-                        trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
-                    )
-                    DropdownMenu(expanded = sourceExpanded, onDismissRequest = { sourceExpanded = false }) {
-                        knownSources.forEach { (value, label) ->
-                            DropdownMenuItem(
-                                text = { Text(label) },
-                                onClick = { sourceFilter = value; sourceExpanded = false },
-                            )
+            CollapsibleSection(stringResource(R.string.sessions_overview), collapsible = true) {
+                adminContent?.stats?.let { StatsCards(it) }
+            }
+            CollapsibleSection(stringResource(R.string.sessions_administration), collapsible = true) {
+                AdminActions(
+                    admin = adminContent,
+                    visibleIds = visibleSessions.map { it.id },
+                    onSelectAll = { adminVm.selectAll(visibleSessions.map { it.id }) },
+                    onClearSelection = adminVm::clearSelection,
+                    onBulkDelete = { confirmBulkDelete = true },
+                    onDeleteEmpty = { confirmEmptyDelete = true },
+                )
+            }
+            CollapsibleSection(stringResource(R.string.sessions_filters)) {
+                // Single compact filter row: tab chips + source dropdown chip.
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+                ) {
+                    SessionTab.entries.forEach { t ->
+                        FilterChip(
+                            selected = tab == t,
+                            onClick = { tab = t },
+                            label = { Text(sessionTabLabel(t)) },
+                        )
+                    }
+                    Box {
+                        FilterChip(
+                            selected = sourceFilter.isNotBlank(),
+                            onClick = { sourceExpanded = true },
+                            label = {
+                                Text(knownSources.find { it.first == sourceFilter }?.second
+                                    ?: stringResource(R.string.sessions_source_all))
+                            },
+                            trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
+                        )
+                        DropdownMenu(expanded = sourceExpanded, onDismissRequest = { sourceExpanded = false }) {
+                            knownSources.forEach { (value, label) ->
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    onClick = { sourceFilter = value; sourceExpanded = false },
+                                )
+                            }
                         }
                     }
                 }
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text(stringResource(R.string.sessions_search)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                val totalCount = total
+                val totalLabel = if (totalCount == null) {
+                    ""
+                } else {
+                    stringResource(R.string.sessions_total, totalCount)
+                }
+                Text(
+                    stringResource(
+                        R.string.sessions_showing,
+                        visibleSessions.size,
+                        totalLabel,
+                        sessionTabLabel(tab).lowercase(),
+                    ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                label = { Text("Search sessions (FTS)") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            Text(
-                "Showing ${sessions.size}" + (total?.let { " · total $it" } ?: "") +
-                    " · ${tab.name.lowercase()}",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
             message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             LazyColumn(modifier = Modifier.weight(1f, fill = true)) {
-                items(sessions, key = { it.id }) { session ->
+                items(visibleSessions, key = { it.id }) { session ->
                     val selected = adminContent?.selectedIds?.contains(session.id) == true
                     Surface(
                         Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -310,7 +389,20 @@ fun SessionsScreen(
                                     .clickable { onOpen(session.id) }
                                     .padding(4.dp),
                             ) {
-                                Text(session.title ?: session.preview ?: session.id, style = MaterialTheme.typography.titleMedium)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        session.title ?: session.preview ?: session.id,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    if (session.id in adminContent?.pinnedIds.orEmpty()) {
+                                        Text(
+                                            stringResource(R.string.sessions_pinned),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                }
                                 Text(
                                     listOfNotNull(
                                         session.source,
@@ -324,12 +416,16 @@ fun SessionsScreen(
                                 session.preview?.takeIf { it.isNotBlank() }?.let {
                                     Text(it.take(120), style = MaterialTheme.typography.bodySmall)
                                 }
-                                Row {
-                                    TextButton(onClick = { onResume(session.id) }) { Text("Resume") }
-                                    TextButton(onClick = { onOpen(session.id) }) { Text("Open") }
-                                    TextButton(onClick = { deleteSession = session }) { Text("Delete") }
-                                }
                             }
+                            SessionOverflowMenu(
+                                pinned = session.id in adminContent?.pinnedIds.orEmpty(),
+                                enabled = adminContent?.busy == false,
+                                onResume = { onResume(session.id) },
+                                onOpen = { onOpen(session.id) },
+                                onTogglePin = { adminVm.togglePinned(session.id) },
+                                onCompact = { compactSession = session },
+                                onDelete = { deleteSession = session },
+                            )
                         }
                     }
                 }
@@ -339,16 +435,73 @@ fun SessionsScreen(
 }
 
 @Composable
+private fun SessionOverflowMenu(
+    pinned: Boolean,
+    enabled: Boolean,
+    onResume: () -> Unit,
+    onOpen: () -> Unit,
+    onTogglePin: () -> Unit,
+    onCompact: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(
+            onClick = { expanded = true },
+            enabled = enabled,
+        ) {
+            Icon(
+                Icons.Filled.MoreVert,
+                contentDescription = stringResource(R.string.sessions_more_actions),
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.sessions_resume)) },
+                onClick = { expanded = false; onResume() },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.sessions_open)) },
+                onClick = { expanded = false; onOpen() },
+            )
+            DropdownMenuItem(
+                text = {
+                    Text(stringResource(if (pinned) R.string.sessions_unpin else R.string.sessions_pin))
+                },
+                onClick = { expanded = false; onTogglePin() },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.sessions_compact)) },
+                onClick = { expanded = false; onCompact() },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.sessions_delete)) },
+                onClick = { expanded = false; onDelete() },
+            )
+        }
+    }
+}
+
+@Composable
+private fun sessionTabLabel(tab: SessionTab): String = stringResource(
+    when (tab) {
+        SessionTab.Chats -> R.string.sessions_tab_chats
+        SessionTab.Automation -> R.string.sessions_tab_automation
+        SessionTab.All -> R.string.sessions_tab_all
+    },
+)
+
+@Composable
 private fun StatsCards(stats: SessionStats) {
     Row(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         listOf(
-            "Total" to stats.total,
-            "Active store" to stats.activeStore,
-            "Archived" to stats.archived,
-            "Messages" to stats.messages,
+            stringResource(R.string.sessions_stat_total) to stats.total,
+            stringResource(R.string.sessions_stat_active_store) to stats.activeStore,
+            stringResource(R.string.sessions_stat_archived) to stats.archived,
+            stringResource(R.string.sessions_stat_messages) to stats.messages,
         ).forEach { (label, value) ->
             Surface(
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -385,13 +538,17 @@ private fun AdminActions(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        TextButton(onClick = onSelectAll, enabled = visibleIds.isNotEmpty() && !admin.busy) { Text("Select all") }
-        TextButton(onClick = onClearSelection, enabled = selectedCount > 0 && !admin.busy) { Text("Clear") }
+        TextButton(onClick = onSelectAll, enabled = visibleIds.isNotEmpty() && !admin.busy) {
+            Text(stringResource(R.string.sessions_select_all))
+        }
+        TextButton(onClick = onClearSelection, enabled = selectedCount > 0 && !admin.busy) {
+            Text(stringResource(R.string.sessions_clear))
+        }
         TextButton(onClick = onBulkDelete, enabled = selectedCount > 0 && !admin.busy) {
-            Text("Delete selected ($selectedCount)")
+            Text(stringResource(R.string.sessions_delete_selected, selectedCount))
         }
         TextButton(onClick = onDeleteEmpty, enabled = (admin.emptyCount ?: 0) > 0 && !admin.busy) {
-            Text("Delete empty (${admin.emptyCount ?: 0})")
+            Text(stringResource(R.string.sessions_delete_empty, admin.emptyCount ?: 0))
         }
     }
 }

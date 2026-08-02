@@ -15,6 +15,8 @@
  */
 package com.hermesgadget.talaria.feature.manage.sessions
 
+import com.hermesgadget.talaria.domain.model.SessionSummary
+
 /** Session list tabs — mirrors the web dashboard Chats / Automation / All. */
 enum class SessionTab { Chats, Automation, All }
 
@@ -35,4 +37,8 @@ object SessionFilters {
             SessionTab.Chats -> AUTOMATION_SOURCES.none { src.contains(it) }
         }
     }
+
+    /** Keeps the server's ordering while surfacing locally pinned sessions first. */
+    fun prioritizePinned(sessions: List<SessionSummary>, pinnedIds: Set<String>): List<SessionSummary> =
+        sessions.sortedWith(compareByDescending { it.id in pinnedIds })
 }

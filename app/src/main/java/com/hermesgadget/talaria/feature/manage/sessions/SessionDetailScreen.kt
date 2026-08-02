@@ -21,13 +21,20 @@ import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -44,11 +51,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.util.formatHermesTimestamp
 import com.hermesgadget.talaria.domain.model.SessionMessage
@@ -79,7 +88,17 @@ fun SessionDetailScreen(sessionId: String, onDeleted: (() -> Unit)? = null) {
     var renameOpen by remember { mutableStateOf(false) }
     var renameTitle by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
+    var confirmCompact by remember { mutableStateOf(false) }
+    var compacting by remember { mutableStateOf(false) }
+    var actionsExpanded by remember { mutableStateOf(false) }
     var expandedTools by remember { mutableStateOf(setOf<Int>()) }
+    val compactionGateway = remember { HermesSessionCompactionGateway() }
+    val compactFailure = stringResource(R.string.sessions_compact_failed)
+    val compactedNotice = stringResource(R.string.sessions_compacted)
+    val compactInProgressNotice = stringResource(R.string.sessions_compact_in_progress)
+    val compactAbortedNotice = stringResource(R.string.sessions_compact_aborted)
+    val exportChooser = stringResource(R.string.sessions_export_chooser)
+    val exportFailure = stringResource(R.string.sessions_export_failed)
 
     fun reload() {
         scope.launch {
@@ -164,44 +183,127 @@ fun SessionDetailScreen(sessionId: String, onDeleted: (() -> Unit)? = null) {
         )
     }
 
+    if (confirmCompact) {
+        AlertDialog(
+            onDismissRequest = { if (!compacting) confirmCompact = false },
+            title = { Text(stringResource(R.string.sessions_compact_title)) },
+            text = { Text(stringResource(R.string.sessions_compact_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmCompact = false
+                        compacting = true
+                        scope.launch {
+                            runCatching { compactionGateway.compact(sessionId) }
+                                .onSuccess { result ->
+                                    message = result.message ?: when {
+                                        result.lockHeld -> compactInProgressNotice
+                                        result.status == "aborted" -> compactAbortedNotice
+                                        else -> compactedNotice
+                                    }
+                                    reload()
+                                }
+                                .onFailure { error = it.message ?: compactFailure }
+                            compacting = false
+                        }
+                    },
+                    enabled = !compacting,
+                ) { Text(stringResource(R.string.sessions_compact)) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { confirmCompact = false },
+                    enabled = !compacting,
+                ) { Text(stringResource(R.string.sessions_cancel)) }
+            },
+        )
+    }
+
     ScreenScaffold(
-        "Session",
+        stringResource(R.string.sessions_detail_title),
         sessionId.take(24),
         actions = {
-            TextButton(onClick = { renameOpen = true; renameTitle = session?.title.orEmpty() }) { Text("Rename") }
-            TextButton(onClick = {
-                scope.launch {
-                    repo.exportSessionMarkdown(sessionId)
-                        .onSuccess { md ->
-                            runCatching {
-                                val file = withContext(Dispatchers.IO) {
-                                    val dir = File(context.cacheDir, "exports").apply { mkdirs() }
-                                    File(dir, safeSessionExportFilename(sessionId)).also { it.writeText(md) }
-                                }
-                                val uri: Uri = FileProvider.getUriForFile(
-                                    context,
-                                    "${context.packageName}.files",
-                                    file,
-                                )
-                                val intent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/markdown"
-                                    putExtra(Intent.EXTRA_STREAM, uri)
-                                    putExtra(Intent.EXTRA_SUBJECT, "Hermes session $sessionId")
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                context.startActivity(Intent.createChooser(intent, "Export session"))
-                            }.onFailure {
-                                error = it.message ?: "Could not share the session export"
-                            }
-                        }
-                        .onFailure { error = it.message }
+            Box {
+                IconButton(onClick = { actionsExpanded = true }) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = stringResource(R.string.sessions_more_actions),
+                    )
                 }
-            }) { Text("Export") }
-            TextButton(
-                onClick = { latestVm.load(sessionId) },
-                enabled = latestUi !is LatestDescendantUiState.Loading,
-            ) { Text("Open latest") }
-            TextButton(onClick = { confirmDelete = true }) { Text("Delete") }
+                DropdownMenu(
+                    expanded = actionsExpanded,
+                    onDismissRequest = { actionsExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.sessions_rename)) },
+                        onClick = {
+                            actionsExpanded = false
+                            renameOpen = true
+                            renameTitle = session?.title.orEmpty()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.sessions_export)) },
+                        onClick = {
+                            actionsExpanded = false
+                            scope.launch {
+                                repo.exportSessionMarkdown(sessionId)
+                                    .onSuccess { md ->
+                                        runCatching {
+                                            val file = withContext(Dispatchers.IO) {
+                                                val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+                                                File(dir, safeSessionExportFilename(sessionId)).also { it.writeText(md) }
+                                            }
+                                            val uri: Uri = FileProvider.getUriForFile(
+                                                context,
+                                                "${context.packageName}.files",
+                                                file,
+                                            )
+                                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                                type = "text/markdown"
+                                                putExtra(Intent.EXTRA_STREAM, uri)
+                                                putExtra(Intent.EXTRA_SUBJECT, "Hermes session $sessionId")
+                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }
+                                            context.startActivity(
+                                                Intent.createChooser(
+                                                    intent,
+                                                    exportChooser,
+                                                ),
+                                            )
+                                        }.onFailure {
+                                            error = it.message ?: exportFailure
+                                        }
+                                    }
+                                    .onFailure { error = it.message }
+                            }
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.sessions_compact)) },
+                        onClick = {
+                            actionsExpanded = false
+                            confirmCompact = true
+                        },
+                        enabled = !compacting,
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.sessions_open_latest)) },
+                        onClick = {
+                            actionsExpanded = false
+                            latestVm.load(sessionId)
+                        },
+                        enabled = latestUi !is LatestDescendantUiState.Loading,
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.sessions_delete)) },
+                        onClick = {
+                            actionsExpanded = false
+                            confirmDelete = true
+                        },
+                    )
+                }
+            }
         },
     ) {
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
