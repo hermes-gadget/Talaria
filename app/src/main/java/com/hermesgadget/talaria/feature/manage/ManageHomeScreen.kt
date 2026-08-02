@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.SwitchAccount
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Webhook
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -121,6 +122,7 @@ private val manageSections = listOf(
             ManageItem("Learning", "Skills graph & clusters", Routes.LEARNING, Icons.Filled.Insights),
             ManageItem("Curator", "Automatic session upkeep", Routes.CURATOR, Icons.Filled.CleaningServices),
             ManageItem("Logs", "Agent / gateway / errors", Routes.LOGS, Icons.AutoMirrored.Filled.Article),
+            ManageItem("Terminal", "Live host shell over PTY", Routes.TERMINAL, Icons.Filled.Terminal),
             ManageItem("System", "Host stats, doctor, portal", Routes.SYSTEM, Icons.Filled.Dns),
         ),
     ),

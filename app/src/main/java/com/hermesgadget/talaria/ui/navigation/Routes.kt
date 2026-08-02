@@ -54,6 +54,7 @@ object Routes {
     const val FILES = "files"
     const val MODELS = "models"
     const val LEARNING = "learning"
+    const val TERMINAL = "terminal"
     const val SETTINGS = "settings"
 
     fun chat(resume: String? = null) =
