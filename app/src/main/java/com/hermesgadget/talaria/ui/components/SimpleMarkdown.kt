@@ -66,6 +66,25 @@ fun SimpleMarkdownText(
     modifier: Modifier = Modifier,
     onLinkClick: ((String) -> Unit)? = null,
 ) {
+    SimpleMarkdownText(
+        markdown = markdown,
+        modifier = modifier,
+        highlightQuery = "",
+        onLinkClick = onLinkClick,
+    )
+}
+
+/**
+ * Additive overload used by transcript search. The original three-argument
+ * signature remains intact for chat and non-chat callers.
+ */
+@Composable
+fun SimpleMarkdownText(
+    markdown: String,
+    modifier: Modifier = Modifier,
+    highlightQuery: String,
+    onLinkClick: ((String) -> Unit)? = null,
+) {
     val context = LocalContext.current
     val document = remember(markdown) { parseMarkdown(markdown) }
     val openLink: (String) -> Unit = { url ->
@@ -80,6 +99,7 @@ fun SimpleMarkdownText(
             MarkdownBlockView(
                 block = block,
                 onLinkClick = openLink,
+                highlightQuery = highlightQuery,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -98,6 +118,7 @@ private fun openMarkdownUrl(context: android.content.Context, url: String) {
 private fun MarkdownBlockView(
     block: MarkdownBlock,
     onLinkClick: (String) -> Unit,
+    highlightQuery: String,
     modifier: Modifier,
 ) {
     when (block) {
@@ -114,6 +135,7 @@ private fun MarkdownBlockView(
                 modifier = modifier,
                 onLinkClick = onLinkClick,
                 heading = block.headingLevel > 0,
+                highlightQuery = highlightQuery,
             )
         }
 
@@ -123,6 +145,8 @@ private fun MarkdownBlockView(
             val stringColor = MaterialTheme.colorScheme.secondary
             val commentColor = MaterialTheme.colorScheme.onSurfaceVariant
             val numberColor = MaterialTheme.colorScheme.tertiary
+            val highlightBackground = MaterialTheme.colorScheme.tertiaryContainer
+            val highlightForeground = MaterialTheme.colorScheme.onTertiaryContainer
             val annotated = remember(
                 block.tokens,
                 codeColor,
@@ -130,14 +154,22 @@ private fun MarkdownBlockView(
                 stringColor,
                 commentColor,
                 numberColor,
+                highlightQuery,
+                highlightBackground,
+                highlightForeground,
             ) {
-                buildCodeAnnotatedString(
-                    block.tokens,
-                    codeColor,
-                    keywordColor,
-                    stringColor,
-                    commentColor,
-                    numberColor,
+                highlightAnnotatedString(
+                    source = buildCodeAnnotatedString(
+                        block.tokens,
+                        codeColor,
+                        keywordColor,
+                        stringColor,
+                        commentColor,
+                        numberColor,
+                    ),
+                    query = highlightQuery,
+                    background = highlightBackground,
+                    foreground = highlightForeground,
                 )
             }
             Surface(
@@ -159,7 +191,7 @@ private fun MarkdownBlockView(
         }
 
         is MarkdownTable -> {
-            MarkdownTableView(block, onLinkClick, modifier)
+            MarkdownTableView(block, onLinkClick, highlightQuery, modifier)
         }
 
         is MarkdownQuote -> {
@@ -175,6 +207,7 @@ private fun MarkdownBlockView(
                     style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
                     modifier = Modifier.padding(start = 10.dp),
                     onLinkClick = onLinkClick,
+                    highlightQuery = highlightQuery,
                 )
             }
         }
@@ -197,6 +230,7 @@ private fun MarkdownBlockView(
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f),
                             onLinkClick = onLinkClick,
+                            highlightQuery = highlightQuery,
                         )
                     }
                 }
@@ -219,22 +253,39 @@ private fun MarkdownInlineText(
     modifier: Modifier,
     onLinkClick: (String) -> Unit,
     heading: Boolean = false,
+    highlightQuery: String = "",
 ) {
     val linkColor = MaterialTheme.colorScheme.primary
     val inlineCodeColor = MaterialTheme.colorScheme.tertiary
     val inlineCodeBackground = MaterialTheme.colorScheme.surfaceVariant
-    val annotated = remember(lines, linkColor, inlineCodeColor, inlineCodeBackground, heading) {
-        buildAnnotatedString {
-            lines.forEachIndexed { index, line ->
-                if (index > 0) append('\n')
-                appendInline(
-                    line,
-                    linkColor = linkColor,
-                    inlineCodeColor = inlineCodeColor,
-                    inlineCodeBackground = inlineCodeBackground,
-                )
-            }
-        }
+    val highlightBackground = MaterialTheme.colorScheme.tertiaryContainer
+    val highlightForeground = MaterialTheme.colorScheme.onTertiaryContainer
+    val annotated = remember(
+        lines,
+        linkColor,
+        inlineCodeColor,
+        inlineCodeBackground,
+        heading,
+        highlightQuery,
+        highlightBackground,
+        highlightForeground,
+    ) {
+        highlightAnnotatedString(
+            source = buildAnnotatedString {
+                lines.forEachIndexed { index, line ->
+                    if (index > 0) append('\n')
+                    appendInline(
+                        line,
+                        linkColor = linkColor,
+                        inlineCodeColor = inlineCodeColor,
+                        inlineCodeBackground = inlineCodeBackground,
+                    )
+                }
+            },
+            query = highlightQuery,
+            background = highlightBackground,
+            foreground = highlightForeground,
+        )
     }
     val hasLinks = annotated.getStringAnnotations(LINK_TAG, 0, annotated.length).isNotEmpty()
     if (hasLinks) {
@@ -257,6 +308,7 @@ private fun MarkdownInlineText(
 private fun MarkdownTableView(
     table: MarkdownTable,
     onLinkClick: (String) -> Unit,
+    highlightQuery: String,
     modifier: Modifier,
 ) {
     Surface(
@@ -265,10 +317,15 @@ private fun MarkdownTableView(
         shape = RoundedCornerShape(8.dp),
     ) {
         Column {
-            MarkdownTableRow(table.header, isHeader = true, onLinkClick = onLinkClick)
+            MarkdownTableRow(table.header, isHeader = true, onLinkClick = onLinkClick, highlightQuery = highlightQuery)
             table.rows.forEach { row ->
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                MarkdownTableRow(row, isHeader = false, onLinkClick = onLinkClick)
+                MarkdownTableRow(
+                    row,
+                    isHeader = false,
+                    onLinkClick = onLinkClick,
+                    highlightQuery = highlightQuery,
+                )
             }
         }
     }
@@ -279,6 +336,7 @@ private fun MarkdownTableRow(
     cells: List<List<MarkdownInline>>,
     isHeader: Boolean,
     onLinkClick: (String) -> Unit,
+    highlightQuery: String,
 ) {
     Row(modifier = Modifier.fillMaxWidth()) {
         cells.forEach { cell ->
@@ -289,6 +347,7 @@ private fun MarkdownTableRow(
                 ),
                 modifier = Modifier.weight(1f).padding(horizontal = 10.dp, vertical = 8.dp),
                 onLinkClick = onLinkClick,
+                highlightQuery = highlightQuery,
             )
         }
     }
@@ -354,6 +413,43 @@ private fun buildCodeAnnotatedString(
             MarkdownCodeTokenKind.PLAIN -> codeColor
         }
         withStyle(SpanStyle(color = color)) { append(token.text) }
+    }
+}
+
+/** Case-insensitive ranges used by both the Compose renderer and JVM tests. */
+internal fun markdownHighlightRanges(text: String, query: String): List<IntRange> {
+    val needle = query.trim()
+    if (needle.isEmpty() || text.isEmpty()) return emptyList()
+    val haystack = text.lowercase()
+    val lowerNeedle = needle.lowercase()
+    val ranges = mutableListOf<IntRange>()
+    var offset = 0
+    while (offset <= haystack.length - lowerNeedle.length) {
+        val found = haystack.indexOf(lowerNeedle, offset)
+        if (found < 0) break
+        ranges += found..(found + lowerNeedle.length - 1)
+        offset = found + lowerNeedle.length
+    }
+    return ranges
+}
+
+private fun highlightAnnotatedString(
+    source: AnnotatedString,
+    query: String,
+    background: Color,
+    foreground: Color,
+): AnnotatedString {
+    val ranges = markdownHighlightRanges(source.text, query)
+    if (ranges.isEmpty()) return source
+    return buildAnnotatedString {
+        append(source)
+        ranges.forEach { range ->
+            addStyle(
+                SpanStyle(background = background, color = foreground),
+                start = range.first,
+                end = range.last + 1,
+            )
+        }
     }
 }
 
@@ -645,6 +741,56 @@ private val LANGUAGE_KEYWORDS = mapOf(
     "bash" to setOf("case", "do", "done", "elif", "else", "esac", "fi", "for", "function", "if", "in", "then", "until", "while"),
     "yaml" to setOf("true", "false", "null", "yes", "no", "on", "off"),
     "json" to COMMON_KEYWORDS,
+    "javascript" to setOf(
+        "async", "await", "break", "case", "catch", "class", "const", "continue", "debugger", "default",
+        "delete", "do", "else", "export", "extends", "finally", "for", "from", "function", "if", "import",
+        "in", "instanceof", "let", "new", "of", "return", "switch", "this", "throw", "try", "typeof",
+        "var", "void", "while", "with", "yield", "undefined",
+    ),
+    "typescript" to setOf(
+        "as", "async", "await", "break", "case", "catch", "class", "const", "continue", "default", "else",
+        "enum", "export", "extends", "finally", "for", "from", "function", "if", "implements", "import",
+        "interface", "keyof", "let", "namespace", "new", "of", "private", "public", "readonly", "return",
+        "static", "switch", "this", "throw", "try", "type", "typeof", "var", "void", "while", "with",
+        "yield",
+    ),
+    "java" to setOf(
+        "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char", "class", "const", "continue",
+        "default", "do", "double", "else", "enum", "extends", "final", "finally", "float", "for", "if", "implements",
+        "import", "instanceof", "int", "interface", "long", "new", "package", "private", "protected", "public",
+        "return", "short", "static", "strictfp", "super", "switch", "synchronized", "this", "throw", "throws",
+        "transient", "try", "void", "volatile", "while",
+    ),
+    "csharp" to setOf(
+        "abstract", "as", "async", "await", "base", "bool", "break", "case", "catch", "class", "const", "continue",
+        "decimal", "default", "delegate", "do", "double", "else", "enum", "event", "explicit", "extern", "false",
+        "finally", "fixed", "float", "for", "foreach", "if", "implicit", "in", "int", "interface", "internal", "is",
+        "lock", "long", "namespace", "new", "null", "object", "operator", "out", "override", "params", "private",
+        "protected", "public", "readonly", "ref", "return", "sealed", "short", "sizeof", "stackalloc", "static",
+        "string", "struct", "switch", "this", "throw", "true", "try", "typeof", "uint", "ulong", "unchecked", "unsafe",
+        "ushort", "using", "virtual", "void", "volatile", "while",
+    ),
+    "go" to setOf(
+        "break", "case", "chan", "const", "continue", "default", "defer", "else", "fallthrough", "for", "func",
+        "go", "goto", "if", "import", "interface", "map", "package", "range", "return", "select", "struct", "switch",
+        "type", "var",
+    ),
+    "rust" to setOf(
+        "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false",
+        "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
+        "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while",
+    ),
+    "swift" to setOf(
+        "as", "break", "case", "catch", "class", "continue", "defer", "default", "do", "else", "enum", "extension",
+        "fallthrough", "false", "for", "func", "if", "import", "in", "init", "let", "nil", "override", "private",
+        "protocol", "public", "repeat", "return", "self", "static", "struct", "super", "switch", "throw", "throws",
+        "true", "try", "typealias", "var", "where", "while",
+    ),
+    "sql" to setOf(
+        "and", "as", "asc", "between", "by", "case", "create", "delete", "desc", "distinct", "drop", "else", "end",
+        "from", "group", "having", "in", "insert", "into", "is", "join", "left", "like", "limit", "not", "null", "on",
+        "or", "order", "outer", "select", "set", "table", "then", "union", "update", "values", "when", "where", "with",
+    ),
 )
 
 private fun tokenizeCode(code: String, language: String): List<MarkdownCodeToken> {
@@ -654,6 +800,12 @@ private fun tokenizeCode(code: String, language: String): List<MarkdownCodeToken
         "py" -> "python"
         "sh", "shell", "zsh" -> "bash"
         "yml" -> "yaml"
+        "js", "jsx", "mjs" -> "javascript"
+        "ts", "tsx" -> "typescript"
+        "cs" -> "csharp"
+        "golang" -> "go"
+        "rs" -> "rust"
+        "html", "xhtml" -> "xml"
         else -> language.lowercase()
     }
     val keywords = LANGUAGE_KEYWORDS[canonicalLanguage].orEmpty()
@@ -670,14 +822,31 @@ private fun tokenizeCode(code: String, language: String): List<MarkdownCodeToken
     var index = 0
     while (index < code.length) {
         val current = code[index]
-        val commentLength = when {
-            current == '#' && canonicalLanguage in setOf("python", "bash", "yaml") -> 1
-            current == '/' && index + 1 < code.length && code[index + 1] == '/' && canonicalLanguage in setOf("kotlin", "json") -> 2
-            else -> 0
+        val lineComment = when {
+            current == '#' && canonicalLanguage in setOf("python", "bash", "yaml", "ruby") -> true
+            current == '-' && index + 1 < code.length && code[index + 1] == '-' && canonicalLanguage == "sql" -> true
+            current == '/' && index + 1 < code.length && code[index + 1] == '/' &&
+                canonicalLanguage in setOf("kotlin", "json", "javascript", "typescript", "java", "csharp", "go", "rust", "swift", "css") -> true
+            current == '<' && code.startsWith("<!--", index) && canonicalLanguage == "xml" -> true
+            else -> false
         }
-        if (commentLength > 0) {
+        if (lineComment) {
             flushPlain()
-            val end = code.indexOf('\n', index).let { if (it < 0) code.length else it }
+            val end = when {
+                current == '<' -> code.indexOf("-->", index + 4).let { if (it < 0) code.length else it + 3 }
+                else -> code.indexOf('\n', index).let { if (it < 0) code.length else it }
+            }
+            result += MarkdownCodeToken(code.substring(index, end), MarkdownCodeTokenKind.COMMENT)
+            index = end
+            continue
+        }
+
+        if (current == '/' && index + 1 < code.length && code[index + 1] == '*' &&
+            canonicalLanguage in setOf("kotlin", "javascript", "typescript", "java", "csharp", "go", "rust", "swift", "css", "xml")
+        ) {
+            flushPlain()
+            val close = code.indexOf("*/", index + 2)
+            val end = if (close < 0) code.length else close + 2
             result += MarkdownCodeToken(code.substring(index, end), MarkdownCodeTokenKind.COMMENT)
             index = end
             continue

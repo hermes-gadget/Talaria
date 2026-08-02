@@ -112,4 +112,25 @@ class ChatSessionControlsTest {
         assertEquals(3, branchMessageCount(ChatLine("session-2", "assistant", "answer"), 0))
         assertEquals(2, branchMessageCount(ChatLine("optimistic", "user", "question"), 1))
     }
+
+    @Test
+    fun editingBranchesBeforeTheSelectedUserPrompt() {
+        val first = ChatMessageTarget("tab", "session", 1, "user", "first")
+        val later = first.copy(messageCount = 4)
+
+        assertEquals(0, editedMessageBranchCount(first))
+        assertEquals(3, editedMessageBranchCount(later))
+    }
+
+    @Test
+    fun messageActionsCanTransitionIntoAnEditDialog() {
+        val target = ChatMessageTarget("tab", "session", 2, "user", "old prompt")
+        val actions = ChatSessionControlsReducer.requestMessageActions(
+            ChatSessionControlsState(),
+            target,
+        )
+
+        val edit = ChatSessionControlsReducer.requestMessageEdit(actions, target)
+        assertEquals(target, (edit.dialog as ChatSessionDialog.EditMessage).target)
+    }
 }

@@ -33,3 +33,13 @@ internal fun visibleTranscriptLines(tab: ChatTab?, mode: TranscriptMode): List<C
         text = tab.streamingText,
     )
 }
+
+/** Search is intentionally line-based so the transcript remains easy to scan on a phone. */
+internal fun filterTranscriptLines(lines: List<ChatLine>, query: String): List<ChatLine> {
+    val needle = query.trim()
+    if (needle.isEmpty()) return lines
+    return lines.filter { it.text.contains(needle, ignoreCase = true) }
+}
+
+internal fun transcriptMatchCount(lines: List<ChatLine>, query: String): Int =
+    filterTranscriptLines(lines, query).size

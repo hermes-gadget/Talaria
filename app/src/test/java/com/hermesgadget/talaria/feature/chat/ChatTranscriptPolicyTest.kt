@@ -42,6 +42,19 @@ class ChatTranscriptPolicyTest {
         assertEquals(listOf(rawTui), visibleTranscriptLines(tab, mode))
     }
 
+    @Test
+    fun transcriptSearchFiltersCaseInsensitivelyAndCountsMatchingRows() {
+        val lines = listOf(
+            ChatLine("1", "user", "Build the Android app"),
+            ChatLine("2", "assistant", "The build is green"),
+            ChatLine("3", "assistant", "No match here"),
+        )
+
+        assertEquals(listOf("Build the Android app", "The build is green"), filterTranscriptLines(lines, "BUILD").map { it.text })
+        assertEquals(2, transcriptMatchCount(lines, "build"))
+        assertEquals(lines, filterTranscriptLines(lines, ""))
+    }
+
     private fun tab(working: Boolean) = ChatTab(
         id = "tab-1",
         title = "Build agent",

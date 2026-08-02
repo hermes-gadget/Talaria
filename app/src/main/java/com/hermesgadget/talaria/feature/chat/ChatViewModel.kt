@@ -22,6 +22,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.core.data.prefs.PersistedChatState
 import com.hermesgadget.talaria.core.data.prefs.PersistedChatTab
 import com.hermesgadget.talaria.core.data.prefs.PersistedAgentWatch
@@ -160,6 +161,10 @@ data class ChatUiState(
     val showSessionActions: Boolean = false,
     val showSlashPalette: Boolean = false,
     val slashSuggestions: List<SlashCommand> = emptyList(),
+    val showTranscriptSearch: Boolean = false,
+    val transcriptQuery: String = "",
+    val composerReferences: List<ComposerReference> = emptyList(),
+    val composerSuggestions: List<ComposerCompletion> = emptyList(),
     /** Parent stored-session id keyed by child id; absent on older dashboards. */
     val sessionBranchOrigins: Map<String, String> = emptyMap(),
     val sessionControls: ChatSessionControlsState = ChatSessionControlsState(),
@@ -511,6 +516,7 @@ class ChatViewModel(
                 activeTabId = id,
             )
         }
+        updateComposerAnalysis(draft)
         resume?.let { ProfileRegistry.markConnecting(profileName, it) }
         resume?.let { claimedSessions.add(it) }
 
@@ -547,6 +553,8 @@ class ChatViewModel(
 
     fun switchTab(tabId: String) {
         _ui.update { it.copy(activeTabId = tabId) }
+        val tab = _ui.value.tabs.firstOrNull { it.id == tabId }
+        updateComposerAnalysis(tab?.draft.orEmpty())
         persistChatState()
     }
 
@@ -667,13 +675,42 @@ class ChatViewModel(
         _ui.update { it.copy(showSessionActions = show) }
     }
 
+    fun toggleTranscriptSearch(show: Boolean = !_ui.value.showTranscriptSearch) {
+        _ui.update {
+            it.copy(
+                showTranscriptSearch = show,
+                transcriptQuery = if (show) it.transcriptQuery else "",
+            )
+        }
+    }
+
+    fun updateTranscriptQuery(query: String) {
+        _ui.update { it.copy(transcriptQuery = query) }
+    }
+
+    fun pickComposerCompletion(completion: ComposerCompletion) {
+        val tab = _ui.value.active ?: return
+        val draft = tab.draft
+        if (completion.tokenStart !in 0..draft.length || completion.tokenEnd !in 0..draft.length) return
+        if (completion.tokenStart > completion.tokenEnd) return
+        val replacement = buildString {
+            append(draft.substring(0, completion.tokenStart))
+            append(completion.insertText)
+            append(draft.substring(completion.tokenEnd))
+        }
+        applyDraft(tab.id, replacement)
+    }
+
     /** Opens the confirmation dialog only; the branch RPC starts after confirmation. */
     fun requestRewind(messageCount: Int, preview: String) {
         val tab = _ui.value.active ?: return
         val sessionId = tab.liveSessionId ?: tab.resumeSessionId ?: return
         if (messageCount <= 0) return
         if (tab.working) {
-            setSessionActionFailure(ChatSessionActionKind.REWIND, "Stop the current turn before branching")
+            setSessionActionFailure(
+                ChatSessionActionKind.REWIND,
+                TalariaApp.instance.getString(R.string.chat_branch_stop_turn),
+            )
             return
         }
         _ui.update {
@@ -687,6 +724,89 @@ class ChatViewModel(
                 ),
             )
         }
+    }
+
+    /** Opens message actions; the branch or edit only starts after the user chooses one. */
+    fun requestMessageActions(line: ChatLine, displayedIndex: Int) {
+        val tab = _ui.value.active ?: return
+        val sessionId = tab.liveSessionId ?: tab.resumeSessionId ?: return
+        if (tab.working) {
+            setSessionActionFailure(
+                ChatSessionActionKind.REWIND,
+                TalariaApp.instance.getString(R.string.chat_branch_stop_turn),
+            )
+            return
+        }
+        val target = ChatMessageTarget(
+            tabId = tab.id,
+            sessionId = sessionId,
+            messageCount = branchMessageCount(line, displayedIndex),
+            role = line.role,
+            text = line.text,
+        )
+        _ui.update {
+            it.copy(
+                sessionControls = ChatSessionControlsReducer.requestMessageActions(
+                    it.sessionControls,
+                    target,
+                ),
+            )
+        }
+    }
+
+    fun beginMessageBranch() {
+        val dialog = _ui.value.sessionControls.dialog as? ChatSessionDialog.MessageActions ?: return
+        val target = dialog.target
+        _ui.update {
+            it.copy(
+                sessionControls = ChatSessionControlsReducer.begin(
+                    it.sessionControls,
+                    ChatSessionActionKind.REWIND,
+                ),
+            )
+        }
+        branchSession(
+            ChatSessionDialog.Rewind(
+                tabId = target.tabId,
+                sessionId = target.sessionId,
+                messageCount = target.messageCount,
+                preview = target.text,
+            ),
+        )
+    }
+
+    fun beginMessageEdit() {
+        val dialog = _ui.value.sessionControls.dialog as? ChatSessionDialog.MessageActions ?: return
+        if (dialog.target.role != "user") return
+        _ui.update {
+            it.copy(
+                sessionControls = ChatSessionControlsReducer.requestMessageEdit(
+                    it.sessionControls,
+                    dialog.target,
+                ),
+            )
+        }
+    }
+
+    fun confirmMessageEdit(text: String) {
+        val dialog = _ui.value.sessionControls.dialog as? ChatSessionDialog.EditMessage ?: return
+        val edited = text.trim()
+        if (edited.isEmpty()) {
+            setSessionActionFailure(
+                ChatSessionActionKind.EDIT,
+                TalariaApp.instance.getString(R.string.chat_message_edit_empty),
+            )
+            return
+        }
+        _ui.update {
+            it.copy(
+                sessionControls = ChatSessionControlsReducer.begin(
+                    it.sessionControls,
+                    ChatSessionActionKind.EDIT,
+                ),
+            )
+        }
+        branchEditedMessage(dialog.target, edited)
     }
 
     /** Opens the confirmation dialog only; compaction starts after confirmation. */
@@ -766,6 +886,8 @@ class ChatViewModel(
                 compactSession(dialog)
             }
             is ChatSessionDialog.EditTitle -> Unit
+            is ChatSessionDialog.MessageActions -> Unit
+            is ChatSessionDialog.EditMessage -> Unit
         }
     }
 
@@ -811,18 +933,15 @@ class ChatViewModel(
     private fun branchSession(request: ChatSessionDialog.Rewind) {
         val runtime = runtimes[request.tabId]
         if (runtime == null) {
-            setSessionActionFailure(ChatSessionActionKind.REWIND, "The chat connection is no longer active")
+            setSessionActionFailure(
+                ChatSessionActionKind.REWIND,
+                TalariaApp.instance.getString(R.string.chat_branch_connection_error),
+            )
             return
         }
         viewModelScope.launch {
             try {
-                val root = runtime.eventClient.requestRpc(
-                    "session.branch",
-                    buildJsonObject {
-                        put("session_id", request.sessionId)
-                        put("count", request.messageCount)
-                    },
-                ) as? JsonObject ?: error("Hermes did not return a branch")
+                val root = requestBranch(runtime, request.sessionId, request.messageCount)
                 val storedSessionId = root["stored_session_id"]?.jsonPrimitive?.contentOrNull
                     ?.takeIf { it.isNotBlank() }
                     ?: root["session_id"]?.jsonPrimitive?.contentOrNull
@@ -855,11 +974,79 @@ class ChatViewModel(
             } catch (failure: Throwable) {
                 setSessionActionFailure(
                     ChatSessionActionKind.REWIND,
-                    failure.message ?: "Could not branch this session",
+                    failure.message ?: TalariaApp.instance.getString(R.string.chat_branch_failed),
                 )
             }
         }
     }
+
+    private fun branchEditedMessage(target: ChatMessageTarget, editedText: String) {
+        val runtime = runtimes[target.tabId]
+        if (runtime == null) {
+            setSessionActionFailure(
+                ChatSessionActionKind.EDIT,
+                TalariaApp.instance.getString(R.string.chat_branch_connection_error),
+            )
+            return
+        }
+        viewModelScope.launch {
+            try {
+                // Editing a prompt means retaining the history before it, then
+                // placing the replacement in the new chat's composer.
+                val root = requestBranch(
+                    runtime = runtime,
+                    sessionId = target.sessionId,
+                    messageCount = editedMessageBranchCount(target),
+                )
+                val storedSessionId = root["stored_session_id"]?.jsonPrimitive?.contentOrNull
+                    ?.takeIf { it.isNotBlank() }
+                    ?: root["session_id"]?.jsonPrimitive?.contentOrNull
+                        ?.takeIf { it.isNotBlank() }
+                    ?: error(TalariaApp.instance.getString(R.string.chat_branch_id_missing))
+                val title = root["title"]?.jsonPrimitive?.contentOrNull
+                    ?.takeIf { it.isNotBlank() }
+                    ?: TalariaApp.instance.getString(R.string.chat_edited_branch_title)
+                val parent = root["parent"]?.jsonPrimitive?.contentOrNull
+                    ?.takeIf { it.isNotBlank() }
+                    ?: target.sessionId
+                _ui.update {
+                    it.copy(sessionBranchOrigins = it.sessionBranchOrigins + (storedSessionId to parent))
+                }
+                newSession(
+                    resume = storedSessionId,
+                    titleOverride = title,
+                    draft = editedText,
+                )
+                _ui.update {
+                    it.copy(
+                        sessionControls = ChatSessionControlsReducer.succeed(
+                            it.sessionControls,
+                            ChatSessionActionKind.EDIT,
+                            TalariaApp.instance.getString(R.string.chat_edit_branch_success),
+                        ),
+                    )
+                }
+                refreshSessions()
+            } catch (failure: Throwable) {
+                setSessionActionFailure(
+                    ChatSessionActionKind.EDIT,
+                    failure.message ?: TalariaApp.instance.getString(R.string.chat_edit_branch_failed),
+                )
+            }
+        }
+    }
+
+    private suspend fun requestBranch(
+        runtime: SessionRuntime,
+        sessionId: String,
+        messageCount: Int,
+    ): JsonObject = runtime.eventClient.requestRpc(
+        "session.branch",
+        buildJsonObject {
+            put("session_id", sessionId)
+            put("count", messageCount)
+        },
+    ) as? JsonObject ?: error(TalariaApp.instance.getString(R.string.chat_branch_failed))
 
     private fun compactSession(request: ChatSessionDialog.Compact) {
         val runtime = runtimes[request.tabId]
@@ -1118,9 +1305,15 @@ class ChatViewModel(
     private fun applyDraft(tabId: String, text: String) {
         val slash = text.startsWith('/')
         val suggestions = SlashCommands.suggest(text, slashCatalog)
+        val composer = ComposerRefs.analyze(text, knownComposerAgents())
         updateTab(tabId) { it.copy(draft = text) }
         _ui.update {
-            it.copy(showSlashPalette = suggestions.isNotEmpty(), slashSuggestions = suggestions)
+            it.copy(
+                showSlashPalette = suggestions.isNotEmpty(),
+                slashSuggestions = suggestions,
+                composerReferences = composer.references,
+                composerSuggestions = composer.completions,
+            )
         }
         viewModelScope.launch { chatRepository.saveDraft(text) }
 
@@ -1168,7 +1361,25 @@ class ChatViewModel(
         slashCompletionJob?.cancel()
         updateTab(tabId) { it.copy(draft = replacement) }
         _ui.update { it.copy(showSlashPalette = false, slashSuggestions = emptyList()) }
+        updateComposerAnalysis(replacement)
         viewModelScope.launch { chatRepository.saveDraft(replacement) }
+    }
+
+    private fun knownComposerAgents(): List<String> = buildList {
+        add(TalariaApp.instance.getString(R.string.chat_known_agent_hermes))
+        add(TalariaApp.instance.getString(R.string.chat_known_participant_you))
+        _ui.value.tabs.mapTo(this) { it.title }
+        _ui.value.sessions.mapNotNullTo(this) { it.title }
+    }.map(String::trim).filter(String::isNotEmpty).distinctBy { it.lowercase() }
+
+    private fun updateComposerAnalysis(text: String) {
+        val composer = ComposerRefs.analyze(text, knownComposerAgents())
+        _ui.update {
+            it.copy(
+                composerReferences = composer.references,
+                composerSuggestions = composer.completions,
+            )
+        }
     }
 
     /** Read and validate a picker URI off the main thread, scoped to the tab that opened the picker. */
