@@ -1,4 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Strings owned by the toolset feature wave. English only; locale files are translated by the i18n pass. -->
+    <string name="toolset_more_actions">More actions</string>
+    <string name="toolset_update">Update Skill Hub</string>
+    <string name="toolset_refresh">Refresh</string>
+    <string name="toolset_edit_content">Edit content</string>
+    <string name="toolset_uninstall">Uninstall</string>
+    <string name="toolset_skill_filters">Skill filters</string>
+    <string name="toolset_group_other">Other toolsets</string>
+    <string name="toolset_configure">Configure</string>
+    <string name="toolset_config_loading_title">Toolset configuration</string>
+    <string name="toolset_config_loading">Loading %1$s…</string>
+    <string name="toolset_cancel">Cancel</string>
+    <string name="toolset_config_error_title">Could not load toolset configuration</string>
+    <string name="toolset_retry">Retry</string>
+    <string name="toolset_config_title">Configure %1$s</string>
+    <string name="toolset_config_no_category">This toolset has no configurable provider fields.</string>
+    <string name="toolset_config_no_providers">No providers are available for this toolset.</string>
+    <string name="toolset_provider_selected_title">%1$s · selected</string>
+    <string name="toolset_provider_auth_required">Additional account authentication is required.</string>
+    <string name="toolset_environment_fields">Environment fields</string>
+    <string name="toolset_saved">Saved</string>
+    <string name="toolset_save_values">Save values</string>
+    <string name="toolset_select_provider">Select provider</string>
+    <string name="toolset_run_setup">Run setup</string>
+    <string name="toolset_done">Done</string>
+    <string name="toolset_setup_confirm_title">Run setup?</string>
+    <string name="toolset_setup_confirm_message">This runs %1$s on the Hermes host and may install software. Continue?</string>
+    <string name="toolset_model_section">Model</string>
+    <string name="toolset_model_default">Default: %1$s</string>
 </resources>
