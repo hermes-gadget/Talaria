@@ -30,6 +30,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
+            android:supportsPictureInPicture="true"
             android:theme="@style/Theme.Talaria"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
@@ -60,6 +61,14 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".feature.pip.PipChatActivity"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation"
+            android:exported="false"
+            android:resizeableActivity="false"
+            android:supportsPictureInPicture="true"
+            android:theme="@style/Theme.Talaria" />
+
         <receiver
             android:name=".worker.BootReceiver"
             android:exported="true">
@@ -82,6 +91,18 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/status_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.TalariaQuickEntryWidgetReceiver"
+            android:exported="true"
+            android:label="Talaria quick entry">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/quick_entry_widget_info" />
         </receiver>
 
         <service
