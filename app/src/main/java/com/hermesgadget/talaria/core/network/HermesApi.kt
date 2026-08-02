@@ -36,6 +36,16 @@ import com.hermesgadget.talaria.domain.model.McpOAuthFlow
 import com.hermesgadget.talaria.domain.model.McpCatalogResponse
 import com.hermesgadget.talaria.domain.model.MessagingPlatformsResponse
 import com.hermesgadget.talaria.domain.model.OkResponse
+import com.hermesgadget.talaria.domain.model.OpsActionResponse
+import com.hermesgadget.talaria.domain.model.OpsBackupRequest
+import com.hermesgadget.talaria.domain.model.OpsDebugShareRequest
+import com.hermesgadget.talaria.domain.model.OpsDebugShareResponse
+import com.hermesgadget.talaria.domain.model.OpsHookCreateRequest
+import com.hermesgadget.talaria.domain.model.OpsHookDeleteRequest
+import com.hermesgadget.talaria.domain.model.OpsHooksResponse
+import com.hermesgadget.talaria.domain.model.OpsImportRequest
+import com.hermesgadget.talaria.domain.model.OpsRawConfigResponse
+import com.hermesgadget.talaria.domain.model.OpsRawConfigUpdate
 import com.hermesgadget.talaria.domain.model.PairingResponse
 import com.hermesgadget.talaria.domain.model.ProfilesResponse
 import com.hermesgadget.talaria.domain.model.SessionMessagesResponse
@@ -51,16 +61,22 @@ import com.hermesgadget.talaria.domain.model.WebhooksResponse
 import com.hermesgadget.talaria.domain.model.WsTicketResponse
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
+import okhttp3.ResponseBody
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.HTTP
+import retrofit2.http.Multipart
 import retrofit2.http.PATCH
 import retrofit2.http.POST
+import retrofit2.http.Part
 import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
 import retrofit2.http.QueryMap
+import retrofit2.http.Streaming
 
 /**
  * Retrofit surface mapped to Hermes Web Dashboard /api/ endpoints.
@@ -492,4 +508,58 @@ interface HermesApi {
         @Body body: JsonObject,
         @Query("profile") profile: String? = null,
     ): JsonElement
+
+    // --- Ops upgrades (Talaria feature/ops-system; Hermes v0.19.1) ---
+
+    @POST("api/ops/import")
+    suspend fun importOps(
+        @Body body: OpsImportRequest,
+    ): OpsActionResponse
+
+    @Multipart
+    @POST("api/ops/import-upload")
+    suspend fun importOpsUpload(
+        @Part file: MultipartBody.Part,
+        @Part("force") force: RequestBody,
+    ): OpsActionResponse
+
+    @POST("api/ops/backup")
+    suspend fun createOpsBackup(
+        @Body body: OpsBackupRequest = OpsBackupRequest(),
+    ): OpsActionResponse
+
+    @Streaming
+    @GET("api/ops/backup/download")
+    suspend fun downloadOpsBackup(
+        @Query("archive") archive: String,
+    ): ResponseBody
+
+    @GET("api/ops/hooks")
+    suspend fun getOpsHooks(): OpsHooksResponse
+
+    @POST("api/ops/hooks")
+    suspend fun createOpsHook(
+        @Body body: OpsHookCreateRequest,
+    ): OpsActionResponse
+
+    @HTTP(method = "DELETE", path = "api/ops/hooks", hasBody = true)
+    suspend fun deleteOpsHook(
+        @Body body: OpsHookDeleteRequest,
+    ): OpsActionResponse
+
+    @POST("api/ops/debug-share")
+    suspend fun createOpsDebugShare(
+        @Body body: OpsDebugShareRequest = OpsDebugShareRequest(),
+    ): OpsDebugShareResponse
+
+    @GET("api/config/raw")
+    suspend fun getOpsRawConfig(
+        @Query("profile") profile: String? = null,
+    ): OpsRawConfigResponse
+
+    @PUT("api/config/raw")
+    suspend fun putOpsRawConfig(
+        @Body body: OpsRawConfigUpdate,
+        @Query("profile") profile: String? = null,
+    ): OpsActionResponse
 }
