@@ -1,4 +1,50 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Strings owned by the minor feature wave. English only; locale files are translated by the i18n pass. -->
+    <string name="minor_analytics_overview">Overview</string>
+    <string name="minor_analytics_daily_usage">Daily usage</string>
+    <string name="minor_analytics_per_model">Per-model analytics</string>
+    <string name="minor_analytics_no_models">No model analytics for this window.</string>
+    <string name="minor_analytics_unknown_model">Unknown model</string>
+    <string name="minor_analytics_sessions">%1$d sessions</string>
+    <string name="minor_analytics_input">Input %1$s</string>
+    <string name="minor_analytics_output">Output %1$s</string>
+    <string name="minor_analytics_cache">Cache %1$s</string>
+    <string name="minor_analytics_cost">Cost %1$s</string>
+    <string name="minor_analytics_calls">%1$d API calls · %2$d tool calls</string>
+    <string name="minor_analytics_connectivity">Connectivity</string>
+    <string name="minor_analytics_egress_unavailable">Egress status is unavailable.</string>
+    <string name="minor_analytics_egress_empty">No egress status reported.</string>
+
+    <string name="minor_voice_elevenlabs">ElevenLabs voices</string>
+    <string name="minor_voice_elevenlabs_description">Available voices from the configured ElevenLabs account.</string>
+    <string name="minor_voice_refresh_voices">Refresh voices</string>
+    <string name="minor_voice_loading_voices">Loading voices…</string>
+    <string name="minor_voice_unavailable">ElevenLabs is not configured for this Hermes profile.</string>
+    <string name="minor_voice_no_voices">No voices returned.</string>
+    <string name="minor_voice_id">Voice ID: %1$s</string>
+
+    <string name="minor_cron_create_section">Create job</string>
+    <string name="minor_cron_jobs_section">Scheduled jobs</string>
+    <string name="minor_cron_blueprints_section">Blueprints</string>
+    <string name="minor_cron_fire_now">Fire now</string>
+
+    <string name="minor_profiles_create_section">Create profile</string>
+    <string name="minor_profiles_list_section">Profiles</string>
+    <string name="minor_profiles_sessions_section">Profile sessions</string>
+    <string name="minor_profiles_refresh_sessions">Refresh sessions</string>
+    <string name="minor_profiles_no_sessions">No profile sessions found.</string>
+    <string name="minor_profiles_session_active">active</string>
+    <string name="minor_profiles_set_model">Set model</string>
+    <string name="minor_profiles_model_title">Model for %1$s</string>
+    <string name="minor_profiles_provider">Provider</string>
+    <string name="minor_profiles_model">Model</string>
+    <string name="minor_profiles_save_model">Save model</string>
+    <string name="minor_profiles_model_saved">Saved model for %1$s</string>
+    <string name="minor_profiles_open_terminal">Open terminal</string>
+    <string name="minor_profiles_terminal_opened">Terminal requested for %1$s</string>
+    <string name="minor_profiles_setup_command">Setup command</string>
+    <string name="minor_profiles_setup_command_title">Setup command · %1$s</string>
+    <string name="minor_profiles_setup_command_missing">No setup command returned.</string>
+    <string name="minor_profiles_copy_command">Copy command</string>
 </resources>

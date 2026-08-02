@@ -56,12 +56,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.domain.model.VoiceCapability
 import com.hermesgadget.talaria.domain.model.VoiceHistoryItem
+import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 
 private enum class PermissionAction {
@@ -111,6 +114,7 @@ fun VoiceScreen(
 
     LaunchedEffect(Unit) {
         vm.refreshCapabilities()
+        vm.refreshElevenLabsVoices()
     }
 
     val subtitle = when {
@@ -128,7 +132,10 @@ fun VoiceScreen(
         showProfileSwitcher = true,
         actions = {
             TextButton(
-                onClick = vm::refreshCapabilities,
+                onClick = {
+                    vm.refreshCapabilities()
+                    vm.refreshElevenLabsVoices()
+                },
                 enabled = !ui.checkingCapabilities && ui.phase !in setOf(
                     VoicePhase.RECORDING,
                     VoicePhase.TRANSCRIBING,
@@ -177,6 +184,13 @@ fun VoiceScreen(
                 )
             }
 
+            CollapsibleSection(
+                title = stringResource(R.string.minor_voice_elevenlabs),
+                collapsible = true,
+            ) {
+                ElevenLabsVoicesContent(ui = ui, onRefresh = vm::refreshElevenLabsVoices)
+            }
+
             ui.error?.let { error ->
                 Text(
                     text = error,
@@ -184,6 +198,58 @@ fun VoiceScreen(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ElevenLabsVoicesContent(
+    ui: VoiceUiState,
+    onRefresh: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            stringResource(R.string.minor_voice_elevenlabs_description),
+            style = MaterialTheme.typography.bodySmall,
+        )
+        ui.elevenLabsError?.let { error ->
+            Text(
+                error,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        when {
+            ui.elevenLabsLoading -> LinearProgressIndicator(Modifier.fillMaxWidth())
+            ui.elevenLabsAvailable == false -> Text(
+                stringResource(R.string.minor_voice_unavailable),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            ui.elevenLabsVoices.isEmpty() -> Text(
+                stringResource(R.string.minor_voice_no_voices),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            else -> ui.elevenLabsVoices.forEach { voice ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    ),
+                    shape = MaterialTheme.shapes.small,
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(voice.label, style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            stringResource(R.string.minor_voice_id, voice.voiceId),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+        TextButton(onClick = onRefresh, enabled = !ui.elevenLabsLoading) {
+            Text(stringResource(R.string.minor_voice_refresh_voices))
         }
     }
 }

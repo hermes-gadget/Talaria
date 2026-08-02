@@ -39,8 +39,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import retrofit2.HttpException
 
 class VoiceViewModel(
@@ -99,6 +105,33 @@ class VoiceViewModel(
                     )
                 }
             }
+        }
+    }
+
+    fun refreshElevenLabsVoices() {
+        if (_ui.value.elevenLabsLoading) return
+        _ui.update { it.copy(elevenLabsLoading = true, elevenLabsError = null) }
+        viewModelScope.launch {
+            runCatching { parseElevenLabsVoices(api.getElevenLabsVoices()) }
+                .onSuccess { payload ->
+                    _ui.update {
+                        it.copy(
+                            elevenLabsAvailable = payload.available,
+                            elevenLabsVoices = payload.voices,
+                            elevenLabsError = payload.error,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _ui.update {
+                        it.copy(
+                            elevenLabsAvailable = false,
+                            elevenLabsVoices = emptyList(),
+                            elevenLabsError = messageFor(error),
+                        )
+                    }
+                }
+            _ui.update { it.copy(elevenLabsLoading = false) }
         }
     }
 
@@ -368,6 +401,35 @@ class VoiceViewModel(
 
     private fun messageFor(error: Throwable?, fallback: String = "Voice request failed"): String =
         error?.message?.takeIf { it.isNotBlank() } ?: fallback
+
+    private data class ElevenLabsPayload(
+        val available: Boolean,
+        val voices: List<ElevenLabsVoice>,
+        val error: String?,
+    )
+
+    private fun parseElevenLabsVoices(root: JsonElement): ElevenLabsPayload {
+        val obj = root as? JsonObject ?: return ElevenLabsPayload(false, emptyList(), messageFor(null))
+        val voices = (obj["voices"] as? JsonArray).orEmpty().mapNotNull { element ->
+            val voice = element as? JsonObject ?: return@mapNotNull null
+            val id = voice.stringValue("voice_id", "id") ?: return@mapNotNull null
+            val name = voice.stringValue("name") ?: id
+            ElevenLabsVoice(
+                voiceId = id,
+                name = name,
+                label = voice.stringValue("label") ?: name,
+            )
+        }
+        return ElevenLabsPayload(
+            available = obj["available"]?.jsonPrimitive?.booleanOrNull ?: voices.isNotEmpty(),
+            voices = voices,
+            error = obj["error"]?.jsonPrimitive?.contentOrNull,
+        )
+    }
+
+    private fun JsonObject.stringValue(vararg keys: String): String? = keys.firstNotNullOfOrNull { key ->
+        (this[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+    }
 
     companion object {
         private const val MAX_HISTORY = 6
