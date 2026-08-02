@@ -61,7 +61,10 @@ import com.hermesgadget.talaria.worker.SyncScheduler
 import com.hermesgadget.talaria.core.notifications.AgentTaskNotificationService
 
 @Composable
-fun YouScreen(onConnect: () -> Unit) {
+fun YouScreen(
+    onConnect: () -> Unit,
+    onOpenNotificationSettings: () -> Unit = {},
+) {
     val settings = TalariaApp.instance.container.settingsStore
     val context = LocalContext.current
     val spacing = LocalSpacing.current
@@ -158,6 +161,12 @@ fun YouScreen(onConnect: () -> Unit) {
                         if (!it && !agentPermissions) AgentTaskNotificationService.stopAll(context)
                     }
                 }
+            }
+            TextButton(
+                onClick = onOpenNotificationSettings,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Notification settings")
             }
             RowSwitch("Background sync (WorkManager)", bgSync) {
                 bgSync = it

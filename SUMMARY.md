@@ -40,3 +40,24 @@ Branch: `feature/widget-pip`
 - Preserved the existing Glance status widget, edge-to-edge setup, `adjustResize`, composer, and steer popover behavior.
 
 Verification: `JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon` — passed.
+
+## Notification parity
+
+Implemented on branch `feature/notifications`:
+
+- Added persisted quiet-hours enable/start/end settings with overnight and all-day window evaluation.
+- Agent notifications now use silent, low-priority delivery while quiet hours are active.
+- Added four stable per-agent Android channel slots plus an `Other agents` fallback, with a toggle to retain the legacy shared channels.
+- Added `NotificationSettingsScreen` and `NotificationSettingsViewModel`, including the active-window indicator, channel assignments, time pickers, and test-notification action.
+- Added one Notification settings row from You and wired `Routes.SETTINGS`.
+- Added unit coverage for quiet-hours boundaries and channel mapping.
+
+### Notification verification
+
+Command:
+
+```text
+JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon
+```
+
+`compileDebugKotlin` passed. The unit-test task ran 154 tests; one unrelated pre-existing `ArtifactExtractionTest` failed with `StackOverflowError` in recursive JSON primitive parsing.

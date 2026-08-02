@@ -44,6 +44,14 @@ data class AgentNotificationTarget(
     val managementProfile: String?,
 )
 
+enum class TestNotificationResult {
+    POSTED,
+    POSTED_SILENTLY,
+    NOTIFICATIONS_DISABLED,
+    PERMISSION_REQUIRED,
+    FAILED,
+}
+
 class TalariaNotifier(
     private val context: Context,
     private val settings: SettingsStore,
@@ -66,7 +74,7 @@ class TalariaNotifier(
         val id = stableId("agent-permission|${scopeKey(target)}|$notificationKey")
         settings.addActiveAgentPermission(permissionWatcherLane(target), id)
         show(
-            channel = NotificationChannels.AGENT_PERMISSIONS,
+            channel = agentChannel(target, NotificationChannels.AGENT_PERMISSIONS),
             id = id,
             title = "${target.agentName} needs permission",
             body = body,
@@ -102,7 +110,7 @@ class TalariaNotifier(
             else -> "${target.agentName} completed the task"
         }
         show(
-            channel = NotificationChannels.AGENT_TASKS,
+            channel = agentChannel(target, NotificationChannels.AGENT_TASKS),
             id = stableId("agent-complete|$lane"),
             title = title,
             body = body.take(MAX_NOTIFICATION_BODY),
@@ -218,6 +226,32 @@ class TalariaNotifier(
         show(NotificationChannels.TASKS, title.hashCode(), title, body, "talaria://chat")
     }
 
+    fun postTestNotification(): TestNotificationResult {
+        if (!settings.notificationsEnabled) return TestNotificationResult.NOTIFICATIONS_DISABLED
+        if (!hasPermission()) return TestNotificationResult.PERMISSION_REQUIRED
+        val quietHoursActive = QuietHoursPolicy.isActive(settings.quietHoursSettings())
+        val posted = show(
+            channel = if (settings.perAgentChannelsEnabled) {
+                NotificationChannels.channelForAgent("talaria-test-agent").id
+            } else {
+                NotificationChannels.AGENT_TASKS
+            },
+            id = TEST_NOTIFICATION_ID,
+            title = "Talaria test notification",
+            body = if (quietHoursActive) {
+                "Quiet hours are active; this notification is silent."
+            } else {
+                "Agent notification settings are working."
+            },
+            deepLink = "talaria://chat",
+            priority = NotificationCompat.PRIORITY_DEFAULT,
+            category = NotificationCompat.CATEGORY_STATUS,
+            onlyAlertOnce = true,
+        )
+        if (!posted) return TestNotificationResult.FAILED
+        return if (quietHoursActive) TestNotificationResult.POSTED_SILENTLY else TestNotificationResult.POSTED
+    }
+
     // Permission is checked immediately below. Keep the SecurityException guard as
     // well because notification permission/app-op state can change between the
     // check and the binder call.
@@ -236,8 +270,9 @@ class TalariaNotifier(
         category: String? = null,
         groupKey: String? = null,
         onlyAlertOnce: Boolean = false,
-    ) {
-        if (!hasPermission()) return
+    ): Boolean {
+        if (!hasPermission()) return false
+        val quietHoursActive = QuietHoursPolicy.isActive(settings.quietHoursSettings())
         val openIntent = Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
             data = deepLink.toUri()
@@ -262,11 +297,12 @@ class TalariaNotifier(
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(openPi)
             .setAutoCancel(autoCancel)
-            .setOnlyAlertOnce(onlyAlertOnce)
+            .setOnlyAlertOnce(onlyAlertOnce || quietHoursActive)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .addAction(0, context.getString(R.string.notif_action_open), openPi)
             .addAction(0, context.getString(R.string.notif_action_dismiss), dismissPi)
-            .setPriority(priority)
+            .setPriority(if (quietHoursActive) NotificationCompat.PRIORITY_LOW else priority)
+            .setSilent(quietHoursActive)
         category?.let(builder::setCategory)
         groupKey?.let(builder::setGroup)
 
@@ -316,8 +352,10 @@ class TalariaNotifier(
         }
         try {
             NotificationManagerCompat.from(context).notify(id, builder.build())
+            return true
         } catch (_: SecurityException) {
             // Permission was revoked while the notification was being built.
+            return false
         }
     }
 
@@ -360,10 +398,18 @@ class TalariaNotifier(
     private fun agentGroupKey(target: AgentNotificationTarget): String =
         "talaria-agent|${scopeKey(target)}|${target.sessionId ?: target.agentName}"
 
+    private fun agentChannel(target: AgentNotificationTarget, fallback: String): String =
+        if (settings.perAgentChannelsEnabled) {
+            NotificationChannels.channelForAgent(target.sessionId ?: target.watcherId).id
+        } else {
+            fallback
+        }
+
     private fun stableId(value: String): Int = value.hashCode()
 
     companion object {
         const val AGENT_MONITOR_NOTIFICATION_ID = 0x54414C
+        private const val TEST_NOTIFICATION_ID = 0x544553
         private const val MAX_NOTIFICATION_BODY = 1_000
     }
 }

@@ -23,6 +23,11 @@ import android.content.Context
 import androidx.core.content.getSystemService
 import com.hermesgadget.talaria.R
 
+data class AgentNotificationChannel(
+    val id: String,
+    val displayName: String,
+)
+
 object NotificationChannels {
     const val REPLIES = "replies"
     const val CRON = "cron"
@@ -34,6 +39,24 @@ object NotificationChannels {
     const val AGENT_PERMISSIONS = "agent_permissions_v2"
     const val AGENT_TASKS = "agent_tasks_v2"
     const val AGENT_MONITOR = "agent_monitor_v2"
+
+    private val agentChannels = listOf(
+        AgentNotificationChannel("agent_slot_1_v1", "Agent 1"),
+        AgentNotificationChannel("agent_slot_2_v1", "Agent 2"),
+        AgentNotificationChannel("agent_slot_3_v1", "Agent 3"),
+        AgentNotificationChannel("agent_slot_4_v1", "Agent 4"),
+        AgentNotificationChannel("agent_slot_other_v1", "Other agents"),
+    )
+
+    /** Fixed Android channels used to keep different agent sessions routable. */
+    val agentChannelSlots: List<AgentNotificationChannel> = agentChannels
+
+    fun channelForAgent(agentId: String?): AgentNotificationChannel {
+        val normalized = agentId?.trim().orEmpty()
+        if (normalized.isBlank()) return agentChannels.last()
+        val slotCount = agentChannels.lastIndex
+        return agentChannels[Math.floorMod(normalized.hashCode(), slotCount)]
+    }
 
     fun ensure(context: Context) {
         val nm = context.getSystemService<NotificationManager>() ?: return
@@ -68,7 +91,12 @@ object NotificationChannels {
                 description = context.getString(R.string.notif_channel_agent_monitor_description)
                 setShowBadge(false)
             },
-        )
+        ) + agentChannels.map { channel ->
+            NotificationChannel(channel.id, channel.displayName, NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Alerts from ${channel.displayName.lowercase()}"
+                enableVibration(true)
+            }
+        }
         nm.createNotificationChannels(channels)
     }
 }
