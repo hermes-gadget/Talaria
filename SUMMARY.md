@@ -1,3 +1,36 @@
+# Command Center implementation summary
+
+## What changed
+
+- Added a Manage > Command Center destination with Gateway, Logs, Usage, and Maintenance sections.
+- Gateway combines `/api/status` and `/api/system/stats`; logs tail `agent`, `gateway`, and `errors`; usage normalizes current and legacy analytics shapes.
+- Added pull-to-refresh, loading/error states, per-section graceful degradation, level-colored compact log rows, and System links for doctor, backup, and restart.
+- Added log-line and usage-summary parser unit tests. Existing HermesApi/repository endpoints already covered the live v0.19.1 contract, so no API additions were necessary.
+
+## Files
+
+- `app/src/main/java/com/hermesgadget/talaria/feature/manage/commandcenter/CommandCenterModels.kt`
+- `app/src/main/java/com/hermesgadget/talaria/feature/manage/commandcenter/CommandCenterViewModel.kt`
+- `app/src/main/java/com/hermesgadget/talaria/feature/manage/commandcenter/CommandCenterScreen.kt`
+- `app/src/test/java/com/hermesgadget/talaria/feature/manage/commandcenter/CommandCenterModelsTest.kt`
+- `app/src/main/java/com/hermesgadget/talaria/feature/manage/ManageHomeScreen.kt`
+- `app/src/main/java/com/hermesgadget/talaria/ui/navigation/Routes.kt`
+- `app/src/main/java/com/hermesgadget/talaria/ui/navigation/TalariaNavRoot.kt`
+
+## Live endpoint checks
+
+- `GET /api/status` — 200
+- `GET /api/system/stats` — 200
+- `GET /api/logs?file=agent|gateway|errors` — 200
+- `GET /api/analytics/usage?days=7` — 200
+- `/api/system` and `/api/usage` are not present; the Command Center uses the verified replacements. Maintenance routes are present in OpenAPI and remain behind the existing System screen to avoid accidental side effects during verification.
+
+## Verification
+
+- Passed: `JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon` (`BUILD SUCCESSFUL`, 30 actionable tasks).
+
+---
+
 # Composer UX implementation summary
 
 ## What changed
