@@ -45,6 +45,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.material3.ColorScheme
 import com.hermesgadget.talaria.domain.model.StatusResponse
 import com.hermesgadget.talaria.domain.model.SystemStats
+import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
@@ -161,7 +162,7 @@ private fun LogsSection(section: CommandCenterSection<CommandCenterLogs>) {
         is CommandCenterSection.Unavailable -> DisabledSection("Logs", section.reason)
         is CommandCenterSection.Available -> {
             val logs = section.value
-            SectionCard("Logs") {
+            SectionCard("Logs", collapsible = true) {
                 Text(
                     "Recent agent, gateway, and error lines",
                     style = MaterialTheme.typography.bodySmall,
@@ -278,7 +279,7 @@ private fun UsageMetric(label: String, value: String, modifier: Modifier = Modif
 
 @Composable
 private fun MaintenanceSection(onOpenSystem: () -> Unit) {
-    SectionCard("Maintenance") {
+    SectionCard("Maintenance", collapsible = true) {
         Text(
             "Open System to review and run the gateway maintenance actions.",
             style = MaterialTheme.typography.bodySmall,
@@ -296,20 +297,12 @@ private fun MaintenanceSection(onOpenSystem: () -> Unit) {
 }
 
 @Composable
-private fun SectionCard(title: String, content: @Composable () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-        shape = MaterialTheme.shapes.medium,
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            content()
-        }
-    }
+private fun SectionCard(
+    title: String,
+    collapsible: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    CollapsibleSection(title = title, collapsible = collapsible, content = content)
 }
 
 @Composable

@@ -46,9 +46,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.ui.components.PollEffect
+import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import com.hermesgadget.talaria.ui.theme.LocalSpacing
 import kotlinx.coroutines.delay
@@ -102,38 +105,43 @@ fun LogsScreen() {
         ) { Text("Share") }
     }) {
         Column {
-            // Single compact filter row: file segmented chips + level/component dropdowns.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+            CollapsibleSection(
+                title = stringResource(R.string.declutter_logs_filters),
+                collapsible = true,
             ) {
-                listOf("agent", "gateway", "errors").forEach { f ->
-                    FilterChip(selected = file == f, onClick = { file = f }, label = { Text(f) })
+                // Single compact filter row: file segmented chips + level/component dropdowns.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+                ) {
+                    listOf("agent", "gateway", "errors").forEach { f ->
+                        FilterChip(selected = file == f, onClick = { file = f }, label = { Text(f) })
+                    }
+                    DropdownFilterChip(
+                        label = "level",
+                        value = level,
+                        options = listOf("debug", "info", "warn", "error"),
+                        onSelect = { level = it },
+                    )
+                    DropdownFilterChip(
+                        label = "component",
+                        value = component,
+                        options = listOf("gateway", "agent", "tools", "cron"),
+                        onSelect = { component = it },
+                    )
                 }
-                DropdownFilterChip(
-                    label = "level",
-                    value = level,
-                    options = listOf("debug", "info", "warn", "error"),
-                    onSelect = { level = it },
-                )
-                DropdownFilterChip(
-                    label = "component",
-                    value = component,
-                    options = listOf("gateway", "agent", "tools", "cron"),
-                    onSelect = { component = it },
+                OutlinedTextField(
+                    value = search,
+                    onValueChange = { search = it },
+                    label = { Text("Search") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = spacing.xs),
+                    singleLine = true,
                 )
             }
-            OutlinedTextField(
-                value = search,
-                onValueChange = { search = it },
-                label = { Text("Search") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = spacing.xs),
-                singleLine = true,
-            )
             error?.let {
                 Text(
                     it,
