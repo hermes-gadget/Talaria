@@ -394,7 +394,7 @@ class MemoryViewModel(
     private suspend fun getMemoryProviderOAuthStatus(provider: String): MemoryProviderOAuthStatus =
         parseMemoryProviderOAuthStatus(api.getMemoryProviderOAuthStatus(provider))
 
-    private fun valuesBody(values: Map<String, String>): JsonElement = buildJsonObject {
+    private fun valuesBody(values: Map<String, String>): JsonObject = buildJsonObject {
         put(
             "values",
             buildJsonObject {

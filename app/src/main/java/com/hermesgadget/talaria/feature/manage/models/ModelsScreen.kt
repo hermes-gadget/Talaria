@@ -137,14 +137,17 @@ fun ModelsScreen(vm: ModelsViewModel = viewModel(factory = ModelsViewModel.facto
                     ) {
                         when {
                             ui.moaLoading -> LoadingInline(R.string.models_moa_loading)
-                            ui.moa != null -> MoaEditor(
-                                config = ui.moa,
-                                saving = ui.moaSaving,
-                                saved = ui.moaSaved,
-                                error = ui.moaError,
-                                onRetry = vm::getMoaConfig,
-                                onSave = vm::putMoaConfig,
-                            )
+                            ui.moa != null -> {
+                                val moa = ui.moa ?: return@CollapsibleSection
+                                MoaEditor(
+                                    config = moa,
+                                    saving = ui.moaSaving,
+                                    saved = ui.moaSaved,
+                                    error = ui.moaError,
+                                    onRetry = vm::getMoaConfig,
+                                    onSave = vm::putMoaConfig,
+                                )
+                            }
                             else -> UnavailableSection(
                                 error = ui.moaError,
                                 unavailable = R.string.models_moa_unavailable,
@@ -161,10 +164,13 @@ fun ModelsScreen(vm: ModelsViewModel = viewModel(factory = ModelsViewModel.facto
                     ) {
                         when {
                             ui.auxiliaryLoading -> LoadingInline(R.string.models_auxiliary_loading)
-                            ui.auxiliary != null -> AuxiliaryModelsSection(
-                                models = ui.auxiliary,
-                                onRefresh = vm::getAuxiliaryModels,
-                            )
+                            ui.auxiliary != null -> {
+                                val auxiliary = ui.auxiliary ?: return@CollapsibleSection
+                                AuxiliaryModelsSection(
+                                    models = auxiliary,
+                                    onRefresh = vm::getAuxiliaryModels,
+                                )
+                            }
                             else -> UnavailableSection(
                                 error = ui.auxiliaryError,
                                 unavailable = R.string.models_auxiliary_unavailable,

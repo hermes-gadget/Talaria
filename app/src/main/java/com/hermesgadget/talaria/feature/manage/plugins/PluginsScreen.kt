@@ -122,13 +122,13 @@ internal data class PluginsContent(
     val busyAction: String? = null,
 )
 
-sealed interface PluginsUiState {
+internal sealed interface PluginsUiState {
     data object Loading : PluginsUiState
     data class Content(val value: PluginsContent) : PluginsUiState
     data class Failure(val message: String?, val previous: PluginsContent? = null) : PluginsUiState
 }
 
-class PluginsViewModel(
+internal class PluginsViewModel(
     private val api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
 ) : ViewModel() {
     private val _ui = MutableStateFlow<PluginsUiState>(PluginsUiState.Loading)
@@ -230,7 +230,7 @@ class PluginsViewModel(
 }
 
 @Composable
-fun PluginsScreen(vm: PluginsViewModel = viewModel(factory = PluginsViewModel.factory())) {
+internal fun PluginsScreen(vm: PluginsViewModel = viewModel(factory = PluginsViewModel.factory())) {
     val state by vm.ui.collectAsStateWithLifecycle()
     var installIdentifier by rememberSaveable { mutableStateOf("") }
     var forceInstall by rememberSaveable { mutableStateOf(false) }

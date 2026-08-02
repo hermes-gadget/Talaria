@@ -190,25 +190,25 @@ internal data class KanbanContent(
     val busy: Boolean = false,
 )
 
-sealed interface KanbanUiState {
+internal sealed interface KanbanUiState {
     data object Loading : KanbanUiState
     data class Content(val value: KanbanContent) : KanbanUiState
     data class Failure(val message: String?, val previous: KanbanContent? = null) : KanbanUiState
 }
 
-sealed interface KanbanTaskState {
+internal sealed interface KanbanTaskState {
     data object Loading : KanbanTaskState
     data class Content(val value: KanbanTaskDetail) : KanbanTaskState
     data class Failure(val message: String?) : KanbanTaskState
 }
 
-sealed interface KanbanRunState {
+internal sealed interface KanbanRunState {
     data object Loading : KanbanRunState
     data class Content(val value: KanbanRunRow) : KanbanRunState
     data class Failure(val message: String?) : KanbanRunState
 }
 
-class KanbanViewModel(
+internal class KanbanViewModel(
     private val api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
 ) : ViewModel() {
     private val _ui = MutableStateFlow<KanbanUiState>(KanbanUiState.Loading)
@@ -415,7 +415,7 @@ class KanbanViewModel(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun KanbanScreen(vm: KanbanViewModel = viewModel(factory = KanbanViewModel.factory())) {
+internal fun KanbanScreen(vm: KanbanViewModel = viewModel(factory = KanbanViewModel.factory())) {
     val state by vm.ui.collectAsStateWithLifecycle()
     val taskState by vm.task.collectAsStateWithLifecycle()
     val runState by vm.run.collectAsStateWithLifecycle()
@@ -703,9 +703,10 @@ private fun StatsSection(content: KanbanContent) {
         if (content.stats.byStatus.isEmpty()) {
             Text(stringResource(R.string.kanban_no_stats))
         } else {
+            val labels = content.stats.byStatus.entries.associate { (status, _) -> status to statusLabel(status) }
             Text(
                 content.stats.byStatus.entries.joinToString(" · ") { (status, count) ->
-                    "${statusLabel(status)}: $count"
+                    "${labels[status] ?: status}: $count"
                 },
                 style = MaterialTheme.typography.bodySmall,
             )

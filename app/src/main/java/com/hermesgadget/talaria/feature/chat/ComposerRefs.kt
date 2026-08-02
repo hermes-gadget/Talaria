@@ -17,17 +17,17 @@
 package com.hermesgadget.talaria.feature.chat
 
 /** A reference detected in the composer without changing the submitted prompt. */
-internal enum class ComposerReferenceKind { MENTION, URL, PATH }
+enum class ComposerReferenceKind { MENTION, URL, PATH }
 
-internal data class ComposerReference(
+data class ComposerReference(
     val kind: ComposerReferenceKind,
     val value: String,
 )
 
-internal enum class ComposerCompletionKind { MENTION, EMOJI }
+enum class ComposerCompletionKind { MENTION, EMOJI }
 
 /** A completion replacement range is kept so a tap never loses surrounding draft text. */
-internal data class ComposerCompletion(
+data class ComposerCompletion(
     val kind: ComposerCompletionKind,
     val label: String,
     val insertText: String,
