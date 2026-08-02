@@ -73,6 +73,10 @@ import com.hermesgadget.talaria.domain.model.PasswordLoginResponse
 import com.hermesgadget.talaria.domain.model.SystemStats
 import com.hermesgadget.talaria.domain.model.WebhooksResponse
 import com.hermesgadget.talaria.domain.model.WsTicketResponse
+import com.hermesgadget.talaria.domain.model.VoiceSpeakRequest
+import com.hermesgadget.talaria.domain.model.VoiceSpeakResponse
+import com.hermesgadget.talaria.domain.model.VoiceTranscriptionRequest
+import com.hermesgadget.talaria.domain.model.VoiceTranscriptionResponse
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import okhttp3.MultipartBody
@@ -707,4 +711,22 @@ interface HermesApi {
         @Path("provider_id") providerId: String,
         @Path("session_id") sessionId: String,
     ): JsonElement
+
+    // --- Server voice (Hermes v0.19.1 verified routes) ---
+
+    /** Read-only capability probe used by the standalone server voice screen. */
+    @GET("openapi.json")
+    suspend fun getOpenApi(): JsonObject
+
+    @POST("api/audio/transcribe")
+    suspend fun transcribeAudio(
+        @Body body: VoiceTranscriptionRequest,
+        @Query("profile") profile: String? = null,
+    ): VoiceTranscriptionResponse
+
+    @POST("api/audio/speak")
+    suspend fun speakText(
+        @Body body: VoiceSpeakRequest,
+        @Query("profile") profile: String? = null,
+    ): VoiceSpeakResponse
 }

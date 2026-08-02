@@ -40,3 +40,32 @@ Branch: `feature/widget-pip`
 - Preserved the existing Glance status widget, edge-to-edge setup, `adjustResize`, composer, and steer popover behavior.
 
 Verification: `JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon` — passed.
+
+## Server voice
+
+Implemented on branch `feature/server-voice`.
+
+### Live capability probe
+
+Hermes v0.19.1 at `127.0.0.1:9119` exposed these voice paths in `GET /openapi.json`:
+
+- `POST /api/audio/transcribe`
+- `POST /api/audio/speak`
+- `GET /api/audio/elevenlabs/voices`
+
+The requested `GET /api/voice` and `GET /api/audio` probes returned `404`; both were read-only probes.
+
+### Delivered
+
+- Added typed server voice request/response models in `VoiceModels.kt`.
+- Added only the verified OpenAPI/STT/TTS methods to the end of `HermesApi.kt`, with profile query support.
+- Added the standalone `feature/voice` screen and view model: local recording to an audio data URL, Hermes transcription, copyable/editable text, Hermes TTS playback through `MediaPlayer`, and a six-item in-memory history.
+- Added runtime OpenAPI capability refresh and an explicit unavailable state listing missing routes. When server voice is unavailable, the screen reports Android `SpeechRecognizer` availability and offers the existing on-device dictation coordinator as a local fallback.
+- Added pure voice lifecycle reducer tests covering idle → recording → transcribing → playing and unavailable → available recovery.
+
+Chat dictation hooks and navigation were intentionally left untouched per the ownership constraints; the voice surface is standalone for this wave.
+
+### Verification
+
+- `JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon`
+- Result: passed (`BUILD SUCCESSFUL`, 30 actionable tasks).
