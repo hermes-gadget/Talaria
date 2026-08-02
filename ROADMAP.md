@@ -64,39 +64,39 @@ Patterns (established in the `3de87d8` UI decluttering merge, 2026-08-02):
 
 | # | Item | Status | Priority |
 |---|------|--------|----------|
-| 18 | Extract the collapsible `Section` composable (currently private in SystemScreen) into `ui/components` and reuse it across Manage detail screens | ❌ | MEDIUM |
-| 19 | Apply progressive disclosure to remaining flat surfaces: Status, Config, Command Center, Cron, Skills, MCP, Files, Logs, Analytics, Sessions | ❌ | MEDIUM |
-| 20 | Audit every screen for "everything at once" violations before new features land (design gate for the v0.6 UX backlog) | ❌ | MEDIUM |
+| 18 | Extract the collapsible `Section` composable (currently private in SystemScreen) into `ui/components` and reuse it across Manage detail screens | ✅ | MEDIUM |
+| 19 | Apply progressive disclosure to remaining flat surfaces: Status, Config, Command Center, Cron, Skills, MCP, Files, Logs, Analytics, Sessions | ✅ | MEDIUM |
+| 20 | Audit every screen for "everything at once" violations before new features land (design gate for the v0.6 UX backlog) | 🟡 | MEDIUM |
 
 ## Next remote-capable parity work (v0.6 plan)
 
-> Status per item verified against source and the live Hermes `v0.19.1` API (2026-08-02). Priorities are ordered by user value and destructive-operation risk. All server-side routes listed below are confirmed present in the live `/openapi.json`; none have Talaria UI coverage yet.
+> Status per item verified against source and the live Hermes `v0.19.1` API (2026-08-02). All items below were implemented and shipped in v0.6.0 (2026-08-02) via a parallel MissionDeck agent wave; verified on the Android emulator against the live backend.
 
 ### API-backed features
 
 | # | Item | Status | Priority |
 |---|------|--------|----------|
-| 1 | Managed file transfer — `/api/files` upload/download/mkdir/delete/read plus `/api/media` listing with media previews and progress. Files today is text browse/edit only (`/api/fs`) | ❌ | HIGH |
-| 2 | Dashboard plugin surface — `/api/dashboard/plugins` + hub/rescan/visibility, agent-plugin install/enable/disable/update, plugin-providers. Live server also exposes Kanban and Achievements plugin routes (a Kanban board view is a natural phone surface) | ❌ | HIGH |
-| 3 | Guided Telegram and WhatsApp onboarding — `/api/messaging/{telegram,whatsapp}/onboarding/start`, `/{pairing_id}`, `/{pairing_id}/apply` | ❌ | MEDIUM |
-| 4 | MCP server edit — collection `PUT /api/mcp/servers` (Talaria can add/delete/enable/test but not edit) | ❌ | MEDIUM |
-| 5 | Memory provider config/setup/OAuth — `/api/memory/providers/{name}/config`, `/setup`, `/oauth/start` + `/oauth/status` | ❌ | MEDIUM |
-| 6 | Computer-use status/permission grant and terminal backend panel — `/api/tools/computer-use/status`, `/permissions/grant`, `/api/tools/terminal/backends`, `/backend` | ❌ | MEDIUM |
-| 7 | Toolset deep config — `/api/tools/toolsets/{name}/config`, `/env`, `/model`, `/models`, `/provider`, `/post-setup` | ❌ | MEDIUM |
-| 8 | Model MoA/auxiliary/recommended-default — `/api/model/moa`, `/auxiliary`, `/recommended-default` | ❌ | LOW |
-| 9 | Update apply + gateway drain — `POST /api/hermes/update` (check exists; apply does not), `POST /api/gateway/drain` before restart | ❌ | LOW |
-| 10 | Ops depth — `/api/ops/checkpoints` + `/prune`, `/config-migrate`, `/dump`, `/prompt-size` | ❌ | LOW |
-| 11 | Minor surfaces — `/api/analytics/models`, `/api/audio/elevenlabs/voices`, `/api/audio/speak-stream`, `/api/egress/status`, `/api/cron/fire`, `/api/profiles/sessions`, `/api/profiles/{name}/model\|open-terminal\|setup-command` | ❌ | LOW |
+| 1 | Managed file transfer — `/api/files` upload/download/mkdir/delete/read plus `/api/media` listing with media previews and progress. Files today is text browse/edit only (`/api/fs`) | ✅ | HIGH |
+| 2 | Dashboard plugin surface — `/api/dashboard/plugins` + hub/rescan/visibility, agent-plugin install/enable/disable/update, plugin-providers. Live server also exposes Kanban and Achievements plugin routes (a Kanban board view is a natural phone surface) | ✅ | HIGH |
+| 3 | Guided Telegram and WhatsApp onboarding — `/api/messaging/{telegram,whatsapp}/onboarding/start`, `/{pairing_id}`, `/{pairing_id}/apply` | ✅ | MEDIUM |
+| 4 | MCP server edit — collection `PUT /api/mcp/servers` (Talaria can add/delete/enable/test but not edit) | ✅ | MEDIUM |
+| 5 | Memory provider config/setup/OAuth — `/api/memory/providers/{name}/config`, `/setup`, `/oauth/start` + `/oauth/status` | ✅ | MEDIUM |
+| 6 | Computer-use status/permission grant and terminal backend panel — `/api/tools/computer-use/status`, `/permissions/grant`, `/api/tools/terminal/backends`, `/backend` | ✅ | MEDIUM |
+| 7 | Toolset deep config — `/api/tools/toolsets/{name}/config`, `/env`, `/model`, `/models`, `/provider`, `/post-setup` | ✅ | MEDIUM |
+| 8 | Model MoA/auxiliary/recommended-default — `/api/model/moa`, `/auxiliary`, `/recommended-default` | ✅ | LOW |
+| 9 | Update apply + gateway drain — `POST /api/hermes/update` (check exists; apply does not), `POST /api/gateway/drain` before restart | ✅ | LOW |
+| 10 | Ops depth — `/api/ops/checkpoints` + `/prune`, `/config-migrate`, `/dump`, `/prompt-size` | ✅ | LOW |
+| 11 | Minor surfaces — `/api/analytics/models`, `/api/audio/elevenlabs/voices`, `/api/audio/speak-stream`, `/api/egress/status`, `/api/cron/fire`, `/api/profiles/sessions`, `/api/profiles/{name}/model\|open-terminal\|setup-command` | ✅ | LOW |
 
 ### UX backlog (no server work required)
 
 | # | Item | Status | Priority |
 |---|------|--------|----------|
-| 12 | Composer refs — @-mentions, URL/path chips, emoji completions (desktop parity) | ❌ | MEDIUM |
-| 13 | Find-in-session — search within a transcript | ❌ | MEDIUM |
-| 14 | Markdown upgrade — syntax-highlighted code blocks (offline); current `SimpleMarkdown` renders bold/italic/inline-code only | ❌ | HIGH (chat is the primary surface) |
-| 15 | Message edit + branch-in-new-chat (rewind exists) | ❌ | LOW |
-| 16 | Session pin + compaction UI | ❌ | LOW |
+| 12 | Composer refs — @-mentions, URL/path chips, emoji completions (desktop parity) | ✅ | MEDIUM |
+| 13 | Find-in-session — search within a transcript | ✅ | MEDIUM |
+| 14 | Markdown upgrade — syntax-highlighted code blocks (offline); current `SimpleMarkdown` renders bold/italic/inline-code only | ✅ | HIGH (chat is the primary surface) |
+| 15 | Message edit + branch-in-new-chat (rewind exists) | ✅ | LOW |
+| 16 | Session pin + compaction UI | ✅ | LOW |
 | 17 | i18n completion — ~40 strings missing per locale (command center/themes/voice titles, notification actions); widget and PiP strings are hardcoded English | 🟡 | MEDIUM |
 
 ## v0.6 release floor (bug fixes to land with v0.6)

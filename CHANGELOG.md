@@ -6,14 +6,31 @@ All notable Talaria changes are documented here. Versions below correspond to re
 
 ### Added
 
-- Added thread-aware agent notifications for permission/clarification/secret requests and foreground or background task completion. A foreground monitor follows each user-started turn while Talaria is backgrounded, restores active watches after service recreation, deep-links to the exact thread, and includes the thread's selected agent name.
-- Added dedicated notification controls and Android 13+ runtime permission onboarding for agent attention and task-completion alerts.
+- Thread-aware agent notifications for permission/clarification/secret requests and foreground or background task completion; dedicated notification controls and Android 13+ runtime permission onboarding (rolled up from 0.4.0-era work).
 
-### Fixed
+## [0.6.0] — 2026-08-02
 
-- Typed Hermes `background.complete` and failure-only `message.complete` events, deduplicated alerts arriving through both live chat and the background monitor, and cleared stale permission notifications when a prompt expires or its task completes.
-- Replaced the legacy notification glyph with the current winged-sandal app icon.
-- Kept active turns in the clean transcript, hiding raw PTY/TUI redraws, partial deltas, and interim model commentary until the final result arrives.
+### Added
+
+- Managed file transfers over `/api/files`: upload (with progress), download via SAF, mkdir, delete, and image previews through `/api/media` — replacing the text-only browse surface.
+- Dashboard and agent plugin management: installed/hub listing, rescan, visibility toggle, install/enable/disable/update/delete, and runtime-provider configuration.
+- Kanban board view (MissionDeck boards): board switcher, create board, columns by status, task create/detail/comments/log, stats, assignees, active workers, and run detail/terminate.
+- Guided Telegram and WhatsApp pairing onboarding (start/poll/apply/cancel).
+- MCP server editing alongside add/remove/enable/test.
+- Memory provider configuration, setup, and OAuth flows per provider.
+- Computer-use readiness + permission grant on the Status screen; terminal backend picker.
+- Toolset deep configuration: env, model, provider, model list, and post-setup actions.
+- Model MoA (mixture-of-agents) editing, auxiliary-model assignments, and recommended-default lookup.
+- Hermes update apply + gateway drain actions, and Ops depth: checkpoints list/prune, config-migrate, ops dump, prompt-size.
+- Minor surfaces: per-model analytics, ElevenLabs voices, cron fire-now, profile sessions/model/open-terminal/setup-command, egress status.
+- Chat UX backlog: composer @-mentions/URL/path chips/emoji completions, find-in-session, message edit + branch-in-new-chat, and syntax-highlighted markdown code blocks.
+- Session pinning (local persistence) and compaction UI.
+- Progressive disclosure rollout across Status, Config, Command Center, Cron, Skills, MCP, Files, Logs, Analytics, and Sessions via the shared `CollapsibleSection` component; Manage hub regrouped with an Extensions category.
+- Unit tests for SystemViewModel, SessionAdminViewModel, ArtifactsViewModel, session pins/filters, and markdown rendering.
+
+### Security
+
+- Release builds now trust system CAs only; user-installed CA certificates are debug-only. Removed redundant cleartext flag (network security config is authoritative) and dead pre-Android-O guards.
 
 ## [0.4.0] — 2026-08-01
 
