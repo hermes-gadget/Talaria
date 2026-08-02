@@ -98,7 +98,7 @@
     <string name="chat_agent_activity">Agent activity</string>
     <string name="chat_change_model">Change model</string>
     <string name="chat_steer_settings">Steer and trigger settings</string>
-    <string name="chat_pip">Open chat in picture-in-picture</string>
+    <string name="chat_pip">Picture-in-picture</string>
     <string name="chat_steer_trigger">Steer / trigger</string>
     <string name="chat_choose_model">Choose a model</string>
     <string name="chat_reasoning_effort">Reasoning effort</string>
@@ -146,15 +146,18 @@
     <string name="language_simplified_chinese">中文</string>
     <string name="language_traditional_chinese">繁體中文</string>
     <string name="language_arabic">العربية</string>
-    <string name="you_notifications_voice">Notifications &amp; voice</string>
     <string name="you_notifications">Notifications</string>
+    <string name="you_notifications_enable">Enable notifications</string>
+    <string name="you_notification_settings">Notification settings</string>
+    <string name="you_notification_settings_subtitle">Alerts, quiet hours &amp; channels</string>
+    <string name="you_voice_speech">Voice &amp; speech</string>
+    <string name="you_data_privacy">Data &amp; privacy</string>
     <string name="you_agent_permissions">Agent permission requests</string>
     <string name="you_agent_completion">Agent task completion</string>
     <string name="you_background_sync">Background sync (WorkManager)</string>
     <string name="you_speak_responses">Speak responses (TTS)</string>
     <string name="you_cloud_speech">Allow cloud speech recognition</string>
     <string name="you_telemetry">Telemetry (off by default)</string>
-    <string name="you_privacy">Privacy</string>
     <string name="you_local_first">Local-first · no accounts required</string>
     <string name="you_api_baseline">Hermes API baseline: %1$s</string>
     <string name="you_network_description">Network only contacts your configured Hermes endpoints. Default telemetry=%1$s.</string>
@@ -175,6 +178,7 @@ See PRIVACY.md in the repository for the full statement.</string>
     <string name="manage_agents">Agents</string>
     <string name="manage_capabilities">Capabilities</string>
     <string name="manage_messaging">Messaging</string>
+    <string name="manage_workspace">Workspace</string>
     <string name="manage_system_section">System</string>
     <string name="manage_status_title">Status</string>
     <string name="manage_status_subtitle">Version, gateway, live sessions</string>

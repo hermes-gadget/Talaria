@@ -56,6 +56,7 @@ import com.hermesgadget.talaria.feature.activity.ActivityScreen
 import com.hermesgadget.talaria.feature.chat.ChatScreen
 import com.hermesgadget.talaria.feature.connection.ConnectScreen
 import com.hermesgadget.talaria.feature.manage.ManageHomeScreen
+import com.hermesgadget.talaria.feature.manage.ManageSectionScreen
 import com.hermesgadget.talaria.feature.manage.analytics.AnalyticsScreen
 import com.hermesgadget.talaria.feature.manage.apikeys.ApiKeysScreen
 import com.hermesgadget.talaria.feature.manage.artifacts.ArtifactsScreen
@@ -306,12 +307,26 @@ fun TalariaNavRoot(
                     )
                 }
                 composable(TopDest.Manage.route) {
-                    ManageHomeScreen(onOpen = { navController.navigate(it) })
+                    ManageHomeScreen(
+                        onOpen = { navController.navigate(it) },
+                        onOpenSection = { navController.navigate(Routes.manageSection(it)) },
+                    )
+                }
+                composable(
+                    Routes.MANAGE_SECTION,
+                    arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                ) { entry ->
+                    ManageSectionScreen(
+                        sectionId = entry.arguments?.getString("id"),
+                        onOpen = { navController.navigate(it) },
+                    )
                 }
                 composable(TopDest.You.route) {
                     YouScreen(
                         onConnect = { navController.navigate(Routes.CONNECT) },
                         onOpenNotificationSettings = { navController.navigate(Routes.SETTINGS) },
+                        onOpenThemes = { navController.navigate(Routes.THEMES) },
+                        onOpenVoice = { navController.navigate(Routes.VOICE) },
                     )
                 }
                 composable(Routes.SETTINGS) { NotificationSettingsScreen() }

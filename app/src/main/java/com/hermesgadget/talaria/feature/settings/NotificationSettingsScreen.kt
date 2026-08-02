@@ -41,9 +41,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.hermesgadget.talaria.R
+import com.hermesgadget.talaria.core.notifications.AgentTaskNotificationService
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import com.hermesgadget.talaria.ui.theme.LocalSpacing
 import kotlinx.coroutines.delay
@@ -69,6 +72,22 @@ fun NotificationSettingsScreen(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState()),
         ) {
+            // Alert kinds moved here from You so that screen keeps only the
+            // master switch and every notification control lives in one place.
+            SectionHeader("Alerts")
+            SettingsRowSwitch(
+                stringResource(R.string.you_agent_permissions),
+                ui.notifyAgentPermissions,
+            ) { enabled ->
+                if (vm.setNotifyAgentPermissions(enabled)) AgentTaskNotificationService.stopAll(context)
+            }
+            SettingsRowSwitch(
+                stringResource(R.string.you_agent_completion),
+                ui.notifyTaskCompletions,
+            ) { enabled ->
+                if (vm.setNotifyTaskCompletions(enabled)) AgentTaskNotificationService.stopAll(context)
+            }
+
             SectionHeader("Quiet hours")
             SettingsRowSwitch("Quiet hours", ui.quietHoursEnabled, vm::setQuietHoursEnabled)
             Text(

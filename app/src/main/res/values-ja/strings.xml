@@ -67,7 +67,7 @@
     <string name="chat_agent_activity">エージェントの活動</string>
     <string name="chat_change_model">モデルを変更</string>
     <string name="chat_steer_settings">ステアリングとトリガーの設定</string>
-    <string name="chat_pip">ピクチャーインピクチャーで開く</string>
+    <string name="chat_pip">ピクチャーインピクチャー</string>
     <string name="chat_steer_trigger">ステア / トリガー</string>
     <string name="chat_choose_model">モデルを選択</string>
     <string name="chat_reasoning_effort">推論の強度</string>
@@ -114,15 +114,18 @@
     <string name="language_simplified_chinese">中文</string>
     <string name="language_traditional_chinese">繁體中文</string>
     <string name="language_arabic">العربية</string>
-    <string name="you_notifications_voice">通知と音声</string>
     <string name="you_notifications">通知</string>
+    <string name="you_notifications_enable">通知を有効にする</string>
+    <string name="you_notification_settings">通知設定</string>
+    <string name="you_notification_settings_subtitle">アラート、サイレント時間、チャンネル</string>
+    <string name="you_voice_speech">音声</string>
+    <string name="you_data_privacy">データとプライバシー</string>
     <string name="you_agent_permissions">エージェントの権限リクエスト</string>
     <string name="you_agent_completion">エージェントタスクの完了</string>
     <string name="you_background_sync">バックグラウンド同期 (WorkManager)</string>
     <string name="you_speak_responses">応答を読み上げる (TTS)</string>
     <string name="you_cloud_speech">クラウド音声認識を許可</string>
     <string name="you_telemetry">テレメトリ (デフォルトでオフ)</string>
-    <string name="you_privacy">プライバシー</string>
     <string name="you_local_first">ローカル優先 · アカウント不要</string>
     <string name="you_api_baseline">Hermes API ベースライン: %1$s</string>
     <string name="you_network_description">ネットワークは設定した Hermes エンドポイントにのみ接続します。デフォルトのテレメトリ=%1$s。</string>
@@ -142,6 +145,7 @@
     <string name="manage_agents">エージェント</string>
     <string name="manage_capabilities">機能</string>
     <string name="manage_messaging">メッセージング</string>
+    <string name="manage_workspace">ワークスペース</string>
     <string name="manage_system_section">システム</string>
     <string name="manage_status_title">ステータス</string>
     <string name="manage_status_subtitle">バージョン、ゲートウェイ、ライブセッション</string>

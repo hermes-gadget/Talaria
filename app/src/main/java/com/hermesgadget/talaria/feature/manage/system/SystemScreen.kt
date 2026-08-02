@@ -21,6 +21,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,10 +30,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -44,10 +49,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.hermesgadget.talaria.R
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesgadget.talaria.domain.model.OpsActionResponse
@@ -70,7 +79,6 @@ fun SystemScreen() {
     var hookMatcher by remember { mutableStateOf("") }
     var hookTimeout by remember { mutableStateOf("") }
     var approveHook by remember { mutableStateOf(true) }
-    var rawExpanded by remember { mutableStateOf(true) }
 
     val importFileLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -167,17 +175,17 @@ fun SystemScreen() {
                         }
                     }
 
-                    Section("Doctor") {
+                    Section("Doctor", collapsible = true) {
                         OutlinedButton(onClick = { vm.runDoctor() }) { Text("Run doctor") }
                         ui.doctor?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
 
-                    Section("Security audit") {
+                    Section("Security audit", collapsible = true) {
                         OutlinedButton(onClick = { vm.runSecurityAudit() }) { Text("Run audit") }
                         ui.audit?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
 
-                    Section("Backup") {
+                    Section("Backup", collapsible = true) {
                         OutlinedButton(onClick = { vm.runBackup() }) { Text("Run backup") }
                         ui.backup?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                         OutlinedButton(
@@ -201,7 +209,7 @@ fun SystemScreen() {
                         }
                     }
 
-                    Section("Import backup") {
+                    Section("Import backup", collapsible = true) {
                         Text(
                             "Select a Hermes backup ZIP or JSON export. The server may require a full backup ZIP for restore.",
                             style = MaterialTheme.typography.bodySmall,
@@ -249,7 +257,7 @@ fun SystemScreen() {
                         }
                     }
 
-                    Section("Hooks") {
+                    Section("Hooks", collapsible = true) {
                         when (val state = ui.hooks) {
                             HooksUiState.Loading -> Text("Loading hooks…")
                             is HooksUiState.Failed -> {
@@ -331,7 +339,7 @@ fun SystemScreen() {
                         ui.hooksMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
 
-                    Section("Debug share") {
+                    Section("Debug share", collapsible = true) {
                         Text(
                             "Capture a redacted report and logs, then share the generated output file and URLs.",
                             style = MaterialTheme.typography.bodySmall,
@@ -358,59 +366,50 @@ fun SystemScreen() {
                         }
                     }
 
-                    Section("Raw YAML config") {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Text("Raw YAML", style = MaterialTheme.typography.titleSmall)
-                            TextButton(onClick = { rawExpanded = !rawExpanded }) {
-                                Text(if (rawExpanded) "Hide" else "Show")
+                    // The section header is the show/hide control now, so the
+                    // editor no longer carries its own nested toggle.
+                    Section("Raw YAML config", collapsible = true) {
+                        when (val state = ui.rawConfig) {
+                            RawConfigUiState.Loading -> Text("Loading raw config…")
+                            is RawConfigUiState.Unsupported -> Text(state.message)
+                            is RawConfigUiState.Failed -> {
+                                Text(state.message, color = MaterialTheme.colorScheme.error)
+                                TextButton(onClick = { vm.refreshRawConfig() }) { Text("Retry") }
                             }
-                        }
-                        if (rawExpanded) {
-                            when (val state = ui.rawConfig) {
-                                RawConfigUiState.Loading -> Text("Loading raw config…")
-                                is RawConfigUiState.Unsupported -> Text(state.message)
-                                is RawConfigUiState.Failed -> {
-                                    Text(state.message, color = MaterialTheme.colorScheme.error)
-                                    TextButton(onClick = { vm.refreshRawConfig() }) { Text("Retry") }
+                            is RawConfigUiState.Ready -> {
+                                state.path?.let {
+                                    Text("Path: $it", style = MaterialTheme.typography.bodySmall)
                                 }
-                                is RawConfigUiState.Ready -> {
-                                    state.path?.let {
-                                        Text("Path: $it", style = MaterialTheme.typography.bodySmall)
-                                    }
-                                    OutlinedTextField(
-                                        value = state.yaml,
-                                        onValueChange = vm::updateRawConfig,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .heightIn(min = 280.dp),
-                                        minLines = 16,
-                                        label = { Text("config.yaml") },
-                                    )
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(
-                                            enabled = !state.saving && state.yaml != state.savedYaml,
-                                            onClick = { vm.saveRawConfig() },
-                                        ) { Text(if (state.saving) "Saving…" else "Save YAML") }
-                                        OutlinedButton(
-                                            enabled = !state.saving,
-                                            onClick = { vm.refreshRawConfig() },
-                                        ) { Text("Reload") }
-                                    }
-                                    state.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                                OutlinedTextField(
+                                    value = state.yaml,
+                                    onValueChange = vm::updateRawConfig,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 280.dp),
+                                    minLines = 16,
+                                    label = { Text("config.yaml") },
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(
+                                        enabled = !state.saving && state.yaml != state.savedYaml,
+                                        onClick = { vm.saveRawConfig() },
+                                    ) { Text(if (state.saving) "Saving…" else "Save YAML") }
+                                    OutlinedButton(
+                                        enabled = !state.saving,
+                                        onClick = { vm.refreshRawConfig() },
+                                    ) { Text("Reload") }
                                 }
+                                state.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                             }
                         }
                     }
 
-                    Section("Update check") {
+                    Section("Update check", collapsible = true) {
                         OutlinedButton(onClick = { vm.checkUpdate() }) { Text("Check for updates") }
                         ui.update?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
 
-                    Section("Portal") {
+                    Section("Portal", collapsible = true) {
                         OutlinedButton(onClick = { vm.refreshPortal() }) { Text("Refresh portal") }
                         ui.portal?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
@@ -484,8 +483,18 @@ private fun formatUptime(seconds: Long): String {
     ).joinToString(" ")
 }
 
+/**
+ * A titled card. Maintenance groups pass [collapsible] so the screen opens as a
+ * short list of headers instead of a wall of every form and button at once;
+ * "Host" and "Gateway" stay open because they are the at-a-glance content.
+ */
 @Composable
-private fun Section(title: String, content: @Composable () -> Unit) {
+private fun Section(
+    title: String,
+    collapsible: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    var expanded by rememberSaveable(title) { mutableStateOf(!collapsible) }
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -497,12 +506,35 @@ private fun Section(title: String, content: @Composable () -> Unit) {
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.secondary,
-            )
-            content()
+            if (collapsible) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { expanded = !expanded },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                    Icon(
+                        if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                        contentDescription = stringResource(
+                            if (expanded) R.string.common_collapse else R.string.common_expand,
+                        ),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+            }
+            if (expanded) content()
         }
     }
 }

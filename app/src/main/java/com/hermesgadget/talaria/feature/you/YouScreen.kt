@@ -29,11 +29,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
@@ -56,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.hermesgadget.talaria.BuildConfig
 import com.hermesgadget.talaria.R
@@ -71,13 +74,13 @@ import com.hermesgadget.talaria.core.notifications.AgentTaskNotificationService
 fun YouScreen(
     onConnect: () -> Unit,
     onOpenNotificationSettings: () -> Unit = {},
+    onOpenThemes: () -> Unit = {},
+    onOpenVoice: () -> Unit = {},
 ) {
     val settings = TalariaApp.instance.container.settingsStore
     val context = LocalContext.current
     val spacing = LocalSpacing.current
     var notifications by remember { mutableStateOf(settings.notificationsEnabled) }
-    var agentPermissions by remember { mutableStateOf(settings.notifyAgentPermissions) }
-    var taskCompletions by remember { mutableStateOf(settings.notifyTaskCompletions) }
     var bgSync by remember { mutableStateOf(settings.backgroundSyncEnabled) }
     var tts by remember { mutableStateOf(settings.ttsEnabled) }
     var cloudStt by remember { mutableStateOf(settings.cloudSttOptIn) }
@@ -152,14 +155,10 @@ fun YouScreen(
             }
 
             SectionHeader(stringResource(R.string.you_appearance))
-            RowSwitch(stringResource(R.string.you_dynamic_color), dynamicColor) {
-                dynamicColor = it
-                settings.dynamicColor = it
-            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = spacing.xs),
+                    .heightIn(min = SettingsRowHeight),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
@@ -178,25 +177,25 @@ fun YouScreen(
                     }
                 }
             }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { languagePickerOpen = true }
-                    .padding(vertical = spacing.xs),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(stringResource(R.string.you_language), style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    localeLabel(appLocale),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+            RowSwitch(stringResource(R.string.you_dynamic_color), dynamicColor) {
+                dynamicColor = it
+                settings.dynamicColor = it
             }
+            // Palette presets are a per-device preference, so they live beside the
+            // other appearance controls rather than under the host's Manage tree.
+            LinkRow(
+                label = stringResource(R.string.manage_themes_title),
+                value = stringResource(R.string.manage_themes_subtitle),
+                onClick = onOpenThemes,
+            )
+            RowValue(
+                label = stringResource(R.string.you_language),
+                value = localeLabel(appLocale),
+                onClick = { languagePickerOpen = true },
+            )
 
-            SectionHeader(stringResource(R.string.you_notifications_voice))
-            RowSwitch(stringResource(R.string.you_notifications), notifications) {
+            SectionHeader(stringResource(R.string.you_notifications))
+            RowSwitch(stringResource(R.string.you_notifications_enable), notifications) {
                 notifications = it
                 settings.notificationsEnabled = it
                 if (!it) {
@@ -210,31 +209,17 @@ fun YouScreen(
                     notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
             }
+            // Alert kinds, quiet hours and per-agent channels all live on the
+            // dedicated screen so this list stays a single master switch.
             AnimatedVisibility(visible = notifications) {
-                Column {
-                    RowSwitch(stringResource(R.string.you_agent_permissions), agentPermissions) {
-                        agentPermissions = it
-                        settings.notifyAgentPermissions = it
-                        if (!it && !taskCompletions) AgentTaskNotificationService.stopAll(context)
-                    }
-                    RowSwitch(stringResource(R.string.you_agent_completion), taskCompletions) {
-                        taskCompletions = it
-                        settings.notifyTaskCompletions = it
-                        if (!it && !agentPermissions) AgentTaskNotificationService.stopAll(context)
-                    }
-                }
+                LinkRow(
+                    label = stringResource(R.string.you_notification_settings),
+                    value = stringResource(R.string.you_notification_settings_subtitle),
+                    onClick = onOpenNotificationSettings,
+                )
             }
-            TextButton(
-                onClick = onOpenNotificationSettings,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Notification settings")
-            }
-            RowSwitch(stringResource(R.string.you_background_sync), bgSync) {
-                bgSync = it
-                settings.backgroundSyncEnabled = it
-                SyncScheduler.ensurePeriodic(context)
-            }
+
+            SectionHeader(stringResource(R.string.you_voice_speech))
             RowSwitch(stringResource(R.string.you_speak_responses), tts) {
                 tts = it
                 settings.ttsEnabled = it
@@ -243,13 +228,22 @@ fun YouScreen(
                 cloudStt = it
                 settings.cloudSttOptIn = it
             }
+            LinkRow(
+                label = stringResource(R.string.manage_voice_title),
+                value = stringResource(R.string.manage_voice_subtitle),
+                onClick = onOpenVoice,
+            )
+
+            SectionHeader(stringResource(R.string.you_data_privacy))
+            RowSwitch(stringResource(R.string.you_background_sync), bgSync) {
+                bgSync = it
+                settings.backgroundSyncEnabled = it
+                SyncScheduler.ensurePeriodic(context)
+            }
             RowSwitch(stringResource(R.string.you_telemetry), telemetry) {
                 telemetry = it
                 settings.telemetryEnabled = it
             }
-
-            // Privacy folded in as an expandable section (was a standalone screen).
-            SectionHeader(stringResource(R.string.you_privacy))
             TextButton(
                 onClick = { privacyExpanded = !privacyExpanded },
                 modifier = Modifier.fillMaxWidth(),
@@ -267,24 +261,24 @@ fun YouScreen(
                 )
             }
             AnimatedVisibility(visible = privacyExpanded) {
-                Text(
-                    stringResource(R.string.you_privacy_text),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = spacing.sm),
-                )
+                Column {
+                    Text(
+                        stringResource(R.string.you_privacy_text),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = spacing.sm),
+                    )
+                    Text(
+                        stringResource(R.string.you_api_baseline, BuildConfig.HERMES_API_BASELINE),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Text(
+                        stringResource(R.string.you_network_description, BuildConfig.DEFAULT_TELEMETRY),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
-
-            Spacer(Modifier.height(spacing.md))
-            Text(
-                stringResource(R.string.you_api_baseline, BuildConfig.HERMES_API_BASELINE),
-                style = MaterialTheme.typography.labelMedium,
-            )
-            Text(
-                stringResource(R.string.you_network_description, BuildConfig.DEFAULT_TELEMETRY),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
             Spacer(Modifier.height(spacing.xl))
         }
     }
@@ -301,13 +295,19 @@ private fun SectionHeader(title: String) {
     )
 }
 
+/**
+ * Shared geometry for every settings row. A Switch is taller than a plain text
+ * row, so without a common minimum the list gets a lumpy rhythm; pinning all
+ * rows to the same height keeps the sections evenly spaced.
+ */
+private val SettingsRowHeight = 56.dp
+
 @Composable
 private fun RowSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    val spacing = LocalSpacing.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = spacing.xs),
+            .heightIn(min = SettingsRowHeight),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
@@ -317,6 +317,52 @@ private fun RowSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Un
             modifier = Modifier.weight(1f),
         )
         Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+/** A settings row whose trailing text is the current value (opens a picker). */
+@Composable
+private fun RowValue(label: String, value: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = SettingsRowHeight)
+            .clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            value,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+/** A settings row that navigates to another screen. */
+@Composable
+private fun LinkRow(label: String, value: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = SettingsRowHeight)
+            .clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                value,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

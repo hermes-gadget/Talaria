@@ -34,6 +34,7 @@ object Routes {
     const val CHAT = "chat?resume={resume}"
     const val SESSION_DETAIL = "session/{id}"
     const val MANAGE_HOME = "manage_home"
+    const val MANAGE_SECTION = "manage_section/{id}"
     const val STATUS = "status"
     const val COMMAND_CENTER = "command_center"
     const val VOICE = "voice"
@@ -65,6 +66,8 @@ object Routes {
         if (resume.isNullOrBlank()) "chat?resume=" else "chat?resume=${encode(resume)}"
 
     fun sessionDetail(id: String) = "session/${encode(id)}"
+
+    fun manageSection(id: String) = "manage_section/${encode(id)}"
 
     private fun encode(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")

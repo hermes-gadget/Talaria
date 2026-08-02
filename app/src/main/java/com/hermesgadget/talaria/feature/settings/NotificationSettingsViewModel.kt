@@ -35,6 +35,8 @@ data class NotificationChannelStatus(
 )
 
 data class NotificationSettingsUiState(
+    val notifyAgentPermissions: Boolean,
+    val notifyTaskCompletions: Boolean,
     val quietHoursEnabled: Boolean,
     val quietHoursStartMinutes: Int,
     val quietHoursEndMinutes: Int,
@@ -53,6 +55,20 @@ class NotificationSettingsViewModel(
 
     fun refresh() {
         _ui.value = snapshot(_ui.value.message)
+    }
+
+    /** True once no alert kind is left enabled, so the caller can stop watchers. */
+    fun setNotifyAgentPermissions(enabled: Boolean): Boolean {
+        settings.notifyAgentPermissions = enabled
+        refresh()
+        return !enabled && !settings.notifyTaskCompletions
+    }
+
+    /** True once no alert kind is left enabled, so the caller can stop watchers. */
+    fun setNotifyTaskCompletions(enabled: Boolean): Boolean {
+        settings.notifyTaskCompletions = enabled
+        refresh()
+        return !enabled && !settings.notifyAgentPermissions
     }
 
     fun setQuietHoursEnabled(enabled: Boolean) {
@@ -90,6 +106,8 @@ class NotificationSettingsViewModel(
     private fun snapshot(message: String? = null): NotificationSettingsUiState {
         val quietHours = settings.quietHoursSettings()
         return NotificationSettingsUiState(
+            notifyAgentPermissions = settings.notifyAgentPermissions,
+            notifyTaskCompletions = settings.notifyTaskCompletions,
             quietHoursEnabled = quietHours.enabled,
             quietHoursStartMinutes = quietHours.startMinutes,
             quietHoursEndMinutes = quietHours.endMinutes,
