@@ -66,6 +66,7 @@ import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
@@ -117,8 +118,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesgadget.talaria.TalariaApp
+import com.hermesgadget.talaria.MainActivity
 import com.hermesgadget.talaria.domain.model.ToolCallUi
 import com.hermesgadget.talaria.domain.model.scopeId
+import com.hermesgadget.talaria.feature.pip.PipChatIntent
+import com.hermesgadget.talaria.feature.pip.PipChatMessage
+import com.hermesgadget.talaria.feature.pip.PipChatSnapshot
 import com.hermesgadget.talaria.ui.components.SimpleMarkdownText
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -510,6 +515,33 @@ fun ChatScreen(
                     }
                     IconButton(onClick = { vm.toggleSteerPopover() }) {
                         Icon(Icons.Filled.Tune, contentDescription = "Steer and trigger settings")
+                    }
+                    IconButton(
+                        onClick = {
+                            val tab = active ?: return@IconButton
+                            val messages = (tab.readingMessages.ifEmpty { tab.lines })
+                                .filter { it.text.isNotBlank() }
+                                .takeLast(24)
+                                .map { PipChatMessage(role = it.role, text = it.text) }
+                            val snapshot = PipChatSnapshot(
+                                title = tab.title,
+                                messages = messages,
+                                streamingText = tab.streamingText.takeIf {
+                                    tab.assistantStreaming && it.isNotBlank()
+                                }.orEmpty(),
+                            )
+                            if (context is MainActivity) {
+                                context.openPipChat(snapshot)
+                            } else {
+                                context.startActivity(PipChatIntent.create(context, snapshot))
+                            }
+                        },
+                        enabled = active != null,
+                    ) {
+                        Icon(
+                            Icons.Filled.PictureInPictureAlt,
+                            contentDescription = "Open chat in picture-in-picture",
+                        )
                     }
                     DropdownMenu(
                         expanded = ui.showSteerPopover,

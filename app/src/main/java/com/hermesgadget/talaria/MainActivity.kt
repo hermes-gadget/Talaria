@@ -17,8 +17,13 @@
 package com.hermesgadget.talaria
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.app.PictureInPictureParams
+import android.content.pm.PackageManager
+import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -34,6 +39,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.view.WindowCompat
 import com.hermesgadget.talaria.core.data.prefs.ThemeMode
+import com.hermesgadget.talaria.feature.pip.PipChatIntent
+import com.hermesgadget.talaria.feature.pip.PipChatSnapshot
+import com.hermesgadget.talaria.feature.pip.PipModeState
 import com.hermesgadget.talaria.ui.navigation.TalariaNavRoot
 import com.hermesgadget.talaria.ui.theme.TalariaTheme
 
@@ -41,6 +49,9 @@ class MainActivity : ComponentActivity() {
     private var shareText by mutableStateOf<String?>(null)
     private var shareImage by mutableStateOf<Uri?>(null)
     private var deepLink by mutableStateOf<String?>(null)
+    private var pipModeState = PipModeState()
+    private var pipChatRequested = false
+    private var launchingPipActivity = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(
@@ -78,7 +89,67 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
+    /** Start the read-only chat snapshot in the dedicated PiP activity. */
+    fun openPipChat(snapshot: PipChatSnapshot) {
+        pipChatRequested = true
+        launchingPipActivity = true
+        startActivity(PipChatIntent.create(this, snapshot))
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        // Starting the child activity is itself a user-initiated transition on
+        // some Android versions. Let the child own the PiP window in that case.
+        if (launchingPipActivity) {
+            launchingPipActivity = false
+            return
+        }
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            pipChatRequested &&
+            pipModeState.shouldEnterOnUserLeave(
+                supportsPictureInPicture = packageManager.hasSystemFeature(
+                    PackageManager.FEATURE_PICTURE_IN_PICTURE,
+                ),
+                isFinishing = isFinishing,
+            )
+        ) {
+            enterPictureInPictureMode(
+                PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .build(),
+            )
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        pipModeState = pipModeState.onPictureInPictureModeChanged(isInPictureInPictureMode)
+        WindowCompat.setDecorFitsSystemWindows(window, isInPictureInPictureMode)
+        if (!isInPictureInPictureMode) {
+            // Restore the same edge-to-edge contract used by the Compose host after
+            // a PiP window is expanded again. The manifest keeps adjustResize.
+            enableEdgeToEdge(
+                statusBarStyle = SystemBarStyle.auto(
+                    lightScrim = Color.Transparent.toArgb(),
+                    darkScrim = Color.Transparent.toArgb(),
+                ),
+                navigationBarStyle = SystemBarStyle.auto(
+                    lightScrim = Color.Transparent.toArgb(),
+                    darkScrim = Color.Transparent.toArgb(),
+                ),
+            )
+        }
+    }
+
     private fun handleIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(PipChatIntent.EXTRA_PIP_RETURNED, false) == true) {
+            pipChatRequested = false
+            launchingPipActivity = false
+        }
         when (intent?.action) {
             Intent.ACTION_SEND -> {
                 shareText = intent.getStringExtra(Intent.EXTRA_TEXT)
@@ -92,7 +163,17 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            Intent.ACTION_VIEW -> deepLink = intent.data?.toString()
+            Intent.ACTION_VIEW -> {
+                if (intent.data?.getQueryParameter("focus") == "composer") {
+                    // The widget cannot host text input. Ask the full chat surface
+                    // to bring up its composer when its deep link is opened.
+                    window.setSoftInputMode(
+                        android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                            android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE,
+                    )
+                }
+                deepLink = intent.data?.toString()
+            }
         }
     }
 }
