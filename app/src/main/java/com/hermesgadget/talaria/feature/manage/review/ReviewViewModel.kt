@@ -29,6 +29,9 @@ import com.hermesgadget.talaria.domain.model.GitChangedFile
 import com.hermesgadget.talaria.domain.model.GitStatus
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -73,7 +76,17 @@ class ReviewViewModel(
     private val _ui = MutableStateFlow<ReviewUiState>(ReviewUiState.Loading)
     val ui: StateFlow<ReviewUiState> = _ui.asStateFlow()
 
+    /** User-supplied repo path override (the default workspace cwd may not be a git repo). */
+    private var repoOverride: String? = null
+
     init {
+        refresh()
+    }
+
+    fun setRepoPath(path: String) {
+        val trimmed = path.trim()
+        if (trimmed.isEmpty()) return
+        repoOverride = trimmed
         refresh()
     }
 
@@ -177,8 +190,16 @@ class ReviewViewModel(
     }
 
     private suspend fun loadReadyState(): ReviewUiState.Ready {
-        val repoPath = api.fsDefaultCwd().cwd.trim().ifBlank {
-            error("Hermes did not provide a workspace path")
+        val repoPath = repoOverride ?: run {
+            val cwd = api.fsDefaultCwd().cwd.trim().ifBlank {
+                error("Hermes did not provide a workspace path")
+            }
+            // Resolve the actual git repo root (the default cwd may not be a repo).
+            val gitRoot = (api.fsGitRoot(cwd) as? JsonObject)?.get("root")
+                ?.let { r -> if (r is JsonNull) null else r.jsonPrimitive.content }
+            gitRoot ?: error(
+                "No git repository found at $cwd. Enter a repo path (e.g. /home/ben/Talaria).",
+            )
         }
         val loaded = coroutineScope {
             val status = async { api.gitStatus(repoPath) }

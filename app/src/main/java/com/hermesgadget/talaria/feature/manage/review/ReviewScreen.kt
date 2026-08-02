@@ -36,9 +36,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -109,11 +111,35 @@ fun ReviewScreen(
 
         is ReviewUiState.Failed -> {
             val failure = ui as ReviewUiState.Failed
+            var repoPath by remember { mutableStateOf("") }
             ScreenScaffold(
                 title = "Review",
                 showProfileSwitcher = true,
                 actions = { TextButton(onClick = vm::refresh) { Text("Refresh") } },
-            ) { ErrorBox(failure.message, vm::refresh) }
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(failure.message, color = MaterialTheme.colorScheme.error)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = repoPath,
+                        onValueChange = { repoPath = it },
+                        label = { Text("Repository path") },
+                        placeholder = { Text("/home/ben/Talaria") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(
+                        onClick = { vm.setRepoPath(repoPath) },
+                        enabled = repoPath.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Open repository")
+                    }
+                }
+            }
         }
 
         is ReviewUiState.Ready -> {
