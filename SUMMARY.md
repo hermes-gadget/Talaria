@@ -40,3 +40,12 @@ Branch: `feature/widget-pip`
 - Preserved the existing Glance status widget, edge-to-edge setup, `adjustResize`, composer, and steer popover behavior.
 
 Verification: `JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon` — passed.
+
+## Themes parity wave
+
+- Branch: `feature/themes`
+- Added six data-driven presets: Dark (default), Light, Solarized, Nord, Dracula, and Gruvbox. Each exposes complete dark/light Material 3 schemes plus a monochrome accent variant.
+- Added the Manage → Themes destination with instant preset selection, `theme_preset` persistence, live swatch previews, and process-local server color overrides.
+- Backend probe (Hermes v0.19.1, read-only): `GET /api/skin` returned 404. `GET /api/config` returned `dashboard.theme = mono` and `display.skin = default`, but no supported `primary`, `accent`, or `background` fields. The UI therefore keeps “Sync from server” disabled with an explanatory note while retaining a config parser/mapping path for compatible servers.
+- Added unit coverage for preset lookup/completeness and SettingsStore persistence round-trip.
+- Verification: `JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon` passed.
