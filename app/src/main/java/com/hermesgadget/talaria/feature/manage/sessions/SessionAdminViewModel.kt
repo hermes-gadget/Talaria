@@ -14,7 +14,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.core.network.HermesApi
+import com.hermesgadget.talaria.core.network.HermesEventClient
 import com.hermesgadget.talaria.domain.model.BulkDeleteSessionsResponse
 import com.hermesgadget.talaria.domain.model.EmptySessionCount
 import com.hermesgadget.talaria.domain.model.EmptySessionsDeleteResponse
@@ -22,6 +24,7 @@ import com.hermesgadget.talaria.domain.model.LatestDescendantResponse
 import com.hermesgadget.talaria.domain.model.SessionImportResponse
 import com.hermesgadget.talaria.domain.model.SessionStats
 import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
+import com.hermesgadget.talaria.domain.model.scopeId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -82,10 +85,51 @@ class HermesSessionAdminGateway(
         )
 }
 
+/** Result of the existing `session.compress` WebSocket control. */
+data class SessionCompactionResult(
+    val status: String? = null,
+    val message: String? = null,
+    val lockHeld: Boolean = false,
+)
+
+/**
+ * Compaction has no REST session endpoint in Hermes. This gateway deliberately
+ * uses the already-connected Chat JSON-RPC control instead of inventing a new
+ * client route.
+ */
+interface SessionCompactionGateway {
+    suspend fun compact(sessionId: String): SessionCompactionResult
+}
+
+class HermesSessionCompactionGateway(
+    private val eventClientProvider: () -> HermesEventClient = {
+        TalariaApp.instance.container.eventClient
+    },
+) : SessionCompactionGateway {
+    override suspend fun compact(sessionId: String): SessionCompactionResult {
+        val root = eventClientProvider().requestRpc(
+            "session.compress",
+            buildJsonObject { put("session_id", sessionId) },
+        ) as? JsonObject ?: throw SessionCompactionUnavailableException()
+        return parseSessionCompaction(root)
+    }
+}
+
+class SessionCompactionUnavailableException : IllegalStateException()
+
+internal fun parseSessionCompaction(root: JsonObject): SessionCompactionResult {
+    return SessionCompactionResult(
+        status = root["status"].asString(),
+        message = root["message"].asString(),
+        lockHeld = root["lock_held"].asBoolean() == true,
+    )
+}
+
 data class SessionAdminContent(
     val stats: SessionStats? = null,
     val emptyCount: Int? = null,
     val selectedIds: Set<String> = emptySet(),
+    val pinnedIds: Set<String> = emptySet(),
     val busy: Boolean = false,
     val message: String? = null,
 )
@@ -98,6 +142,10 @@ sealed interface SessionAdminUiState {
 
 class SessionAdminViewModel(
     private val gateway: SessionAdminGateway,
+    private val pinStore: SessionPinStore? = null,
+    private val scopeIdProvider: () -> String? = { null },
+    private val compactionGateway: SessionCompactionGateway? = null,
+    private val messageFor: (Int) -> String = { "" },
 ) : ViewModel() {
     private val _ui = MutableStateFlow<SessionAdminUiState>(SessionAdminUiState.Loading)
     val ui: StateFlow<SessionAdminUiState> = _ui.asStateFlow()
@@ -127,6 +175,49 @@ class SessionAdminViewModel(
         _ui.update { state ->
             val content = contentOf(state) ?: return@update state
             SessionAdminUiState.Content(content.copy(selectedIds = emptySet()))
+        }
+    }
+
+    fun togglePinned(id: String) {
+        val content = contentOf(_ui.value) ?: return
+        setPinned(id, id !in content.pinnedIds)
+    }
+
+    fun setPinned(id: String, pinned: Boolean) {
+        val content = contentOf(_ui.value) ?: return
+        val scopeId = scopeIdProvider()?.takeIf { it.isNotBlank() }
+        val store = pinStore
+        if (scopeId == null || store == null) {
+            setMessage(messageFor(R.string.sessions_pin_unavailable))
+            return
+        }
+        runCatching { store.setPinned(scopeId, id, pinned) }
+            .onSuccess {
+                val pinnedIds = if (pinned) content.pinnedIds + id else content.pinnedIds - id
+                _ui.update { state ->
+                    val current = contentOf(state) ?: return@update state
+                    SessionAdminUiState.Content(current.copy(pinnedIds = pinnedIds))
+                }
+            }
+            .onFailure { error -> setMessage(error.message ?: messageFor(R.string.sessions_pin_failed)) }
+    }
+
+    fun compactSession(id: String, onFinished: () -> Unit = {}) {
+        val content = contentOf(_ui.value) ?: return
+        if (content.busy) return
+        val compactor = compactionGateway
+        if (compactor == null) {
+            setFailure(messageFor(R.string.sessions_compact_failed))
+            return
+        }
+        setBusy(true)
+        viewModelScope.launch {
+            runCatching { compactor.compact(id) }
+                .onSuccess { result ->
+                    loadSnapshot(result.message ?: compactionNotice(result))
+                    onFinished()
+                }
+                .onFailure { error -> setFailure(error.message ?: messageFor(R.string.sessions_compact_failed)) }
         }
     }
 
@@ -178,10 +269,28 @@ class SessionAdminViewModel(
             val empty = gateway.emptyCount().count
             stats to empty
         }.onSuccess { (stats, empty) ->
+            val previous = contentOf(_ui.value)
             _ui.value = SessionAdminUiState.Content(
-                SessionAdminContent(stats = stats, emptyCount = empty, message = message),
+                SessionAdminContent(
+                    stats = stats,
+                    emptyCount = empty,
+                    selectedIds = previous?.selectedIds.orEmpty(),
+                    pinnedIds = loadPinnedIds(),
+                    message = message,
+                ),
             )
         }.onFailure { error -> setFailure(error.message ?: "Could not load session administration") }
+    }
+
+    private fun loadPinnedIds(): Set<String> {
+        val scopeId = scopeIdProvider()?.takeIf { it.isNotBlank() } ?: return emptySet()
+        return runCatching { pinStore?.load(scopeId).orEmpty() }.getOrDefault(emptySet())
+    }
+
+    private fun compactionNotice(result: SessionCompactionResult): String = when {
+        result.lockHeld -> messageFor(R.string.sessions_compact_in_progress)
+        result.status == "aborted" -> messageFor(R.string.sessions_compact_aborted)
+        else -> messageFor(R.string.sessions_compacted)
     }
 
     private fun setBusy(busy: Boolean) {
@@ -213,9 +322,21 @@ class SessionAdminViewModel(
             gateway: SessionAdminGateway = HermesSessionAdminGateway(
                 TalariaApp.instance.container.clientFactory.api(),
             ),
+            pinStore: SessionPinStore = SharedPreferencesSessionPinStore(TalariaApp.instance),
+            scopeIdProvider: () -> String? = {
+                TalariaApp.instance.container.connectionStore.activeProfile()?.scopeId()
+            },
+            compactionGateway: SessionCompactionGateway = HermesSessionCompactionGateway(),
+            messageFor: (Int) -> String = { id -> TalariaApp.instance.getString(id) },
         ) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T = SessionAdminViewModel(gateway) as T
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = SessionAdminViewModel(
+                gateway = gateway,
+                pinStore = pinStore,
+                scopeIdProvider = scopeIdProvider,
+                compactionGateway = compactionGateway,
+                messageFor = messageFor,
+            ) as T
         }
     }
 }

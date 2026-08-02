@@ -15,7 +15,9 @@
  */
 package com.hermesgadget.talaria.feature.manage.sessions
 
+import com.hermesgadget.talaria.domain.model.SessionSummary
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -66,5 +68,19 @@ class SessionFiltersTest {
         assertTrue(SessionFilters.matchesTab("CRON", SessionTab.Automation))
         assertTrue(SessionFilters.matchesTab("WebHook", SessionTab.Automation))
         assertTrue(SessionFilters.matchesTab("Discord", SessionTab.Chats))
+    }
+
+    @Test
+    fun `pinned sessions are promoted without changing unpinned order`() {
+        val sessions = listOf(
+            SessionSummary(id = "first"),
+            SessionSummary(id = "pinned"),
+            SessionSummary(id = "last"),
+        )
+
+        assertEquals(
+            listOf("pinned", "first", "last"),
+            SessionFilters.prioritizePinned(sessions, setOf("pinned")).map { it.id },
+        )
     }
 }

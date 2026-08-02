@@ -62,3 +62,21 @@ JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testD
 ```
 
 No third-party dependencies were added. No services were restarted, and nothing was pushed.
+
+## Sessions feature summary
+
+Implemented ROADMAP items 16 and 19 for the Talaria Sessions surface.
+
+- Added locally persisted, connection/profile-scoped session pins using the existing `talaria_settings` SharedPreferences pattern. Pinned sessions are promoted first and can be toggled from each row's overflow menu.
+- Added list and detail compaction actions using Hermes's existing `session.compress` WebSocket JSON-RPC control. The UI documents that this is the existing Chat control and does not delete the session; server lock/status messages are surfaced.
+- Decluttered the Sessions list with collapsible Overview, Administration, and Filters sections, a top-level overflow menu, and row/detail overflow actions.
+- Added `SessionAdminViewModel`, pin-store, and pinned-order unit coverage, including fake admin/compaction gateways and Robolectric persistence coverage.
+- Added all new user-facing strings to `app/src/main/res/values/strings_sessions.xml` with the `sessions_` prefix.
+
+### Sessions verification
+
+- `git diff --check`: passed.
+- Prescribed compile was attempted once with `--no-daemon`, `--max-workers=1`, and `-Xmx768m`.
+- The compile ran for 28m52s and failed because the shared Kotlin daemon ran out of heap during IR lowering of the pre-existing `HermesSyncWorker.kt` (`java.lang.OutOfMemoryError: Java heap space`). No retry was made, per the one-compile instruction.
+
+No prohibited source or resource files were changed for the Sessions feature.
