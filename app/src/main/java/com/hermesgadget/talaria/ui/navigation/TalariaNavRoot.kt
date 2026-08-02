@@ -76,8 +76,10 @@ import com.hermesgadget.talaria.feature.manage.status.StatusScreen
 import com.hermesgadget.talaria.feature.manage.curator.CuratorScreen
 import com.hermesgadget.talaria.feature.manage.files.FilesScreen
 import com.hermesgadget.talaria.feature.manage.learning.LearningScreen
+import com.hermesgadget.talaria.feature.manage.kanban.KanbanScreen
 import com.hermesgadget.talaria.feature.manage.memory.MemoryScreen
 import com.hermesgadget.talaria.feature.manage.models.ModelsScreen
+import com.hermesgadget.talaria.feature.manage.plugins.PluginsScreen
 import com.hermesgadget.talaria.feature.manage.system.SystemScreen
 import com.hermesgadget.talaria.feature.manage.webhooks.WebhooksScreen
 import com.hermesgadget.talaria.feature.settings.ThemeScreen
@@ -377,6 +379,8 @@ fun TalariaNavRoot(
                         navController.navigate(Routes.sessionDetail(id)) { launchSingleTop = true }
                     })
                 }
+                composable(Routes.PLUGINS) { PluginsScreen() }
+                composable(Routes.KANBAN) { KanbanScreen() }
             }
         }
     }
