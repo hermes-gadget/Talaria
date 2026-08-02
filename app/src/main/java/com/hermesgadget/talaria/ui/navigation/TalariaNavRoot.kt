@@ -80,6 +80,7 @@ import com.hermesgadget.talaria.feature.manage.models.ModelsScreen
 import com.hermesgadget.talaria.feature.manage.system.SystemScreen
 import com.hermesgadget.talaria.feature.manage.webhooks.WebhooksScreen
 import com.hermesgadget.talaria.feature.settings.ThemeScreen
+import com.hermesgadget.talaria.feature.voice.VoiceScreen
 import com.hermesgadget.talaria.feature.settings.NotificationSettingsScreen
 import com.hermesgadget.talaria.feature.terminal.TerminalScreen
 import com.hermesgadget.talaria.feature.you.YouScreen
@@ -338,6 +339,7 @@ fun TalariaNavRoot(
                 composable(Routes.LOGS) { LogsScreen() }
                 composable(Routes.TERMINAL) { TerminalScreen(onNeedConnection = { navController.navigate(Routes.CONNECT) }) }
                 composable(Routes.THEMES) { ThemeScreen() }
+                composable(Routes.VOICE) { VoiceScreen() }
                 composable(Routes.ANALYTICS) { AnalyticsScreen() }
                 composable(Routes.CRON) { CronScreen() }
                 composable(Routes.PROFILES) {
