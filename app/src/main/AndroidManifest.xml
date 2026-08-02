@@ -23,7 +23,6 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Talaria"
-        android:usesCleartextTraffic="true"
         tools:targetApi="36">
 
         <activity

@@ -1,9 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
+    <!--
+        Release posture: system CAs only. Cleartext HTTP stays permitted in
+        the base config because Talaria connects to user-configured
+        self-hosted Hermes hosts (arbitrary LAN IPs/hostnames entered in the
+        Connect screen) which are frequently plain HTTP; the release
+        mechanism for hostile networks is per-profile TLS pinning
+        (CertificatePinnerFactory), not a static cleartext ban.
+
+        User-installed CA certificates are trusted ONLY in debug builds, so
+        a release APK cannot be MITM'd by a certificate planted on the
+        device. Debug builds additionally allow cleartext everywhere via
+        debug-overrides (emulator loopback and local dev hosts).
+    -->
     <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <debug-overrides>
         <trust-anchors>
             <certificates src="system" />
             <certificates src="user" />
         </trust-anchors>
-    </base-config>
+    </debug-overrides>
 </network-security-config>

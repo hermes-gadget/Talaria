@@ -111,7 +111,6 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             pipChatRequested &&
             pipModeState.shouldEnterOnUserLeave(
                 supportsPictureInPicture = packageManager.hasSystemFeature(

@@ -146,7 +146,6 @@ class PipChatActivity : ComponentActivity() {
     }
 
     private fun enterPictureInPictureIfSupported() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         if (
             pipModeState.shouldEnterOnUserLeave(
                 supportsPictureInPicture = packageManager.hasSystemFeature(
