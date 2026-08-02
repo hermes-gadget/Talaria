@@ -1,4 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Strings owned by the plugins feature wave. English only; locale files are translated by the i18n pass. -->
+    <string name="plugins_title">Plugins</string>
+    <string name="plugins_subtitle">Dashboard extensions and agent plugins</string>
+    <string name="plugins_dashboard_section">Dashboard plugins</string>
+    <string name="plugins_agents_section">Agent plugins</string>
+    <string name="plugins_install_section">Install an agent plugin</string>
+    <string name="plugins_providers_section">Runtime providers</string>
+    <string name="plugins_install_hint">Install a plugin from a repository or URL, then choose whether Hermes should enable it.</string>
+    <string name="plugins_install_identifier">Repository or URL</string>
+    <string name="plugins_install_force">Force reinstall</string>
+    <string name="plugins_install_enable">Enable after install</string>
+    <string name="plugins_install_button">Install plugin</string>
+    <string name="plugins_rescan">Rescan</string>
+    <string name="plugins_version">Version %1$s</string>
+    <string name="plugins_auth_required">Authentication required: %1$s</string>
+    <string name="plugins_update">Update</string>
+    <string name="plugins_delete">Remove</string>
+    <string name="plugins_delete_title">Remove plugin?</string>
+    <string name="plugins_delete_message">Remove %1$s from this Hermes host?</string>
+    <string name="plugins_delete_confirm">Remove</string>
+    <string name="plugins_memory_provider">Memory provider</string>
+    <string name="plugins_context_engine">Context engine</string>
+    <string name="plugins_provider_default">Built-in default</string>
+    <string name="plugins_save_providers">Save providers</string>
+    <string name="plugins_no_dashboard_plugins">No dashboard plugins are available.</string>
+    <string name="plugins_no_agent_plugins">No agent plugins are installed.</string>
+    <string name="plugins_no_provider_options">No additional provider options were reported.</string>
+    <string name="plugins_error_generic">The plugin surface could not be loaded.</string>
 </resources>
