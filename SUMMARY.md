@@ -30,15 +30,35 @@
 
 - Approval mode is global in the current Hermes server, so the popover labels it accordingly. No requested server-side control was found to be unsupported; reasoning and YOLO are disabled only while a tab has no active/resumable session.
 
----
+## Ops system implementation
 
-# Git review pane
+Branch: `feature/ops-system`
 
-Implemented the small-screen Review destination on `feature/git-review`.
+### Implemented
 
-- Added typed `/api/git/*` Retrofit coverage in one marked Git review section. The live v0.19.1 OpenAPI exposes branch switching as `POST /api/git/branch/switch`; `/api/git/switch` was checked and is not a POST route.
-- Added workspace status, branch/base-branch browsing, confirmed branch switching, changed-file review, working-tree text reads, client-side unified-diff rendering, copy-path, and Files-pane navigation.
-- Added unit coverage for line diffs, unified patch rendering, live branch response decoding, and detached-branch parsing.
-- Kept changes within the requested feature/navigation/API/model scope plus this summary.
+- Added additive Hermes v0.19.1 Retrofit declarations for ops import/import-upload, backup creation and streamed download, hooks CRUD, debug-share, and raw YAML config.
+- Added serializable ops request/response models in `OpsModels.kt`.
+- Added `SystemViewModel` with sealed operation states, preserving the existing host, gateway, doctor, security-audit, backup, update, and portal actions.
+- Enhanced `SystemScreen` with SAF import selection and destructive confirmation, FileProvider backup download/share, hook create/delete confirmation, debug-share capture/share, and a raw YAML editor.
+- Added unit coverage for hook payload parsing and import-file validation.
 
-Verification: `JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon` passed (`BUILD SUCCESSFUL`; 123 tests completed).
+### Live API checks
+
+The dashboard at `127.0.0.1:9119` reported Hermes `0.19.1`. Authenticated probes confirmed:
+
+- `GET /api/ops/hooks` returns `hooks` and `valid_events`.
+- `POST /api/ops/backup` returns an archive path; `GET /api/ops/backup/download?archive=...` streams `application/zip`.
+- `POST /api/ops/import` accepts an archive path and `POST /api/ops/import-upload` accepts multipart `file` + `force`.
+- `POST/DELETE /api/ops/hooks`, `POST /api/ops/debug-share`, and `GET/PUT /api/config/raw` are available.
+
+The live import-upload endpoint describes and enforces a backup ZIP. The client validates both JSON and ZIP selections as requested, then surfaces any server-side rejection for a JSON file instead of silently treating it as a successful restore.
+
+### Ops verification
+
+Command run with `JAVA_HOME=/home/ben/java` and `ANDROID_HOME=/home/ben/android-sdk`:
+
+```text
+./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon
+```
+
+Kotlin compilation passed and the owned `OpsValidationTest` passed. The full suite reported 123 tests with one unrelated existing failure: `ArtifactExtractionTest > extracts nested tool payload paths and classifies archives` throws `StackOverflowError` in unowned `feature/manage/artifacts/ArtifactExtraction.kt` due recursive lenient JSON primitive parsing. No artifacts files or tests were modified.
