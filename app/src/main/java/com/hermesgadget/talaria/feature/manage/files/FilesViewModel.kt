@@ -15,28 +15,102 @@
  */
 package com.hermesgadget.talaria.feature.manage.files
 
+import android.content.ContentResolver
+import android.net.Uri
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
-import com.hermesgadget.talaria.core.data.repo.HermesRepository
-import com.hermesgadget.talaria.domain.model.FsDataUrl
-import com.hermesgadget.talaria.domain.model.FsEntry
-import com.hermesgadget.talaria.domain.model.FsTextFile
+import com.hermesgadget.talaria.core.network.HermesApi
+import com.hermesgadget.talaria.domain.model.ManagedFileEntry
+import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
+
+data class ManagedFilePreview(
+    val path: String,
+    val name: String,
+    val size: Long,
+    val mimeType: String,
+    val binary: Boolean,
+    val text: String = "",
+)
+
+data class ManagedUploadCandidate(
+    val uri: Uri,
+    val displayName: String,
+    val mimeType: String?,
+    val targetPath: String,
+)
+
+enum class FileTransferPhase {
+    PREPARING,
+    SENDING,
+}
+
+sealed interface FileUploadState {
+    data object Idle : FileUploadState
+
+    data class Running(
+        val displayName: String,
+        val phase: FileTransferPhase,
+        val bytesSent: Long = 0L,
+        val totalBytes: Long = -1L,
+    ) : FileUploadState
+
+    data class Complete(val displayName: String) : FileUploadState
+
+    data class Failed(val message: String) : FileUploadState
+}
+
+sealed interface FileDownloadState {
+    data object Idle : FileDownloadState
+
+    data class Downloading(
+        val displayName: String,
+        val bytesCopied: Long = 0L,
+        val totalBytes: Long = -1L,
+    ) : FileDownloadState
+
+    data class Ready(
+        val file: File,
+        val displayName: String,
+        val mimeType: String,
+    ) : FileDownloadState
+
+    data class Saving(
+        val displayName: String,
+        val bytesCopied: Long = 0L,
+        val totalBytes: Long = -1L,
+    ) : FileDownloadState
+
+    data class Complete(val displayName: String) : FileDownloadState
+
+    data class Failed(val message: String) : FileDownloadState
+}
 
 data class FilesUiState(
-    val cwd: String = "",
-    val branch: String = "",
     val path: String = "",
-    val entries: List<FsEntry> = emptyList(),
+    val parent: String? = null,
+    val root: String? = null,
+    val lockedRoot: String? = null,
+    val canChangePath: Boolean = true,
+    val entries: List<ManagedFileEntry> = emptyList(),
     val loading: Boolean = true,
     val error: String? = null,
-    val preview: FsTextFile? = null,
+    val preview: ManagedFilePreview? = null,
     val previewLoading: Boolean = false,
     val previewType: FilePreviewType? = null,
     val previewBytes: ByteArray? = null,
@@ -49,71 +123,89 @@ data class FilesUiState(
     val shareLoading: Boolean = false,
     val sharePayload: FileSharePayload? = null,
     val shareError: String? = null,
+    val actionLoading: Boolean = false,
+    val actionError: String? = null,
+    val uploadCandidate: ManagedUploadCandidate? = null,
+    val uploadState: FileUploadState = FileUploadState.Idle,
+    val downloadState: FileDownloadState = FileDownloadState.Idle,
 )
 
-/**
- * Host filesystem browser (Desktop Files pane parity, roadmap 15.1). Lazily lists
- * `/api/fs/list`, reads text metadata via `/api/fs/read-text`, and loads media through
- * `/api/fs/read-data-url`.
- */
+/** Managed Hermes host file browser and transfer surface (ROADMAP items 1 and 19). */
 class FilesViewModel(
-    private val repo: HermesRepository = TalariaApp.instance.container.hermesRepository,
-    private val dataUrlReader: suspend (String) -> FsDataUrl = { path ->
-        TalariaApp.instance.container.clientFactory.api().fsReadDataUrl(path)
-    },
+    private val api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
+    private val cacheDirectory: File = TalariaApp.instance.cacheDir,
 ) : ViewModel() {
     private val _ui = MutableStateFlow(FilesUiState())
     val ui: StateFlow<FilesUiState> = _ui.asStateFlow()
 
+    private var uploadResolver: ContentResolver? = null
+
     init {
-        viewModelScope.launch {
-            repo.fsDefaultCwd().fold(
-                onSuccess = { cwd ->
-                    _ui.update { it.copy(cwd = cwd.cwd, branch = cwd.branch) }
-                    open(cwd.cwd)
-                },
-                onFailure = { e -> _ui.update { it.copy(loading = false, error = e.message) } },
-            )
-        }
+        open(null)
     }
 
-    /** List a directory. Blank path falls back to the default cwd. */
-    fun open(path: String) {
-        val target = path.ifBlank { _ui.value.cwd }
-        _ui.update { it.copy(loading = true, error = null, path = target) }
+    /** Lists the managed root when [path] is null, or a managed directory otherwise. */
+    fun open(path: String?) {
+        val requestedPath = path?.takeIf { it.isNotBlank() }
+        _ui.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
-            repo.fsList(target).fold(
-                onSuccess = { entries -> _ui.update { it.copy(loading = false, entries = entries) } },
-                onFailure = { e -> _ui.update { it.copy(loading = false, error = e.message) } },
+            runCatching { api.listManagedFiles(path = requestedPath) }.fold(
+                onSuccess = { response ->
+                    _ui.update {
+                        it.copy(
+                            path = response.path.takeIf { value -> value.isNotBlank() }
+                                ?: requestedPath
+                                ?: "/",
+                            parent = response.parent,
+                            root = response.root,
+                            lockedRoot = response.lockedRoot,
+                            canChangePath = response.canChangePath,
+                            entries = response.entries,
+                            loading = false,
+                            error = null,
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    _ui.update {
+                        it.copy(
+                            loading = false,
+                            error = error.message ?: appString(R.string.files_error_load_directory),
+                        )
+                    }
+                },
             )
         }
     }
 
     fun refresh() {
-        repo.clearCache()
-        open(_ui.value.path)
+        open(_ui.value.path.takeIf { it.isNotBlank() })
     }
 
-    /** Refresh the current directory each time the Files destination resumes. */
     fun refreshOnResume() {
         if (_ui.value.path.isNotBlank()) refresh()
     }
 
-    /** Navigate to the parent directory, stopping at the filesystem root. */
     fun up() {
-        val current = _ui.value.path.trimEnd('/')
-        val parent = current.substringBeforeLast('/', "")
-        open(parent.ifBlank { "/" })
+        val state = _ui.value
+        if (state.canChangePath) state.parent?.let(::open)
     }
 
-    fun openFile(entry: FsEntry) {
+    fun openFile(entry: ManagedFileEntry) {
+        val initialType = previewTypeFor(entry.name, entry.mimeType)
         _ui.update {
             it.copy(
-                preview = FsTextFile(path = entry.path),
+                preview = ManagedFilePreview(
+                    path = entry.path,
+                    name = entry.name.ifBlank { entry.path.substringAfterLast('/') },
+                    size = entry.size ?: 0L,
+                    mimeType = entry.mimeType.orEmpty(),
+                    binary = initialType != FilePreviewType.TEXT,
+                ),
                 previewLoading = true,
-                previewType = previewTypeFor(entry.name),
+                previewType = initialType,
                 previewBytes = null,
-                previewMimeType = null,
+                previewMimeType = entry.mimeType,
                 editing = false,
                 editDraft = "",
                 saving = false,
@@ -124,109 +216,76 @@ class FilesViewModel(
                 shareError = null,
             )
         }
+
         viewModelScope.launch {
-            val result = repo.fsReadText(entry.path)
-            result.getOrNull()?.let { file ->
-                loadPreview(entry, file)
-            } ?: run {
-                val extensionType = previewTypeFor(entry.name)
-                if (extensionType == FilePreviewType.IMAGE) {
-                    loadImagePreview(
-                        entry,
-                        FsTextFile(path = entry.path, binary = true),
+            runCatching {
+                if (initialType == FilePreviewType.IMAGE) {
+                    val response = api.getMediaDataUrl(entry.path)
+                    val parsed = parseDataUrl(response.dataUrl)
+                    PreviewPayload(
+                        type = FilePreviewType.IMAGE,
+                        mimeType = normalizedMime(entry.name, entry.mimeType, parsed.mimeType),
+                        bytes = parsed.bytes,
+                        text = "",
+                        size = (entry.size ?: 0L).takeIf { it > 0L } ?: parsed.bytes.size.toLong(),
+                        name = entry.name,
                     )
                 } else {
+                    val response = api.readManagedFile(entry.path)
+                    val parsed = parseDataUrl(response.dataUrl)
+                    val name = response.name.ifBlank { entry.name }
+                    val mimeType = normalizedMime(name, response.mimeType, parsed.mimeType)
+                    val type = managedPreviewType(name, mimeType)
+                    PreviewPayload(
+                        type = type,
+                        mimeType = mimeType,
+                        bytes = parsed.bytes,
+                        text = if (type == FilePreviewType.TEXT) {
+                            parsed.bytes.toString(Charsets.UTF_8)
+                        } else {
+                            ""
+                        },
+                        size = response.size.takeIf { it > 0L } ?: parsed.bytes.size.toLong(),
+                        name = name,
+                    )
+                }
+            }.fold(
+                onSuccess = { payload ->
                     updateCurrentPreview(entry.path) {
                         it.copy(
                             previewLoading = false,
-                            previewType = FilePreviewType.BINARY,
-                            preview = FsTextFile(path = entry.path, binary = true),
-                            previewMimeType = "application/octet-stream",
-                            previewError = result.exceptionOrNull()?.message ?: "Could not read file",
+                            preview = ManagedFilePreview(
+                                path = entry.path,
+                                name = payload.name.ifBlank { entry.name },
+                                size = payload.size,
+                                mimeType = payload.mimeType,
+                                binary = payload.type != FilePreviewType.TEXT,
+                                text = payload.text,
+                            ),
+                            previewType = payload.type,
+                            previewBytes = payload.bytes.takeIf { payload.type != FilePreviewType.TEXT },
+                            previewMimeType = payload.mimeType,
+                            editDraft = payload.text,
+                            previewError = null,
+                            shareError = null,
                         )
                     }
-                }
-            }
-        }
-    }
-
-    private suspend fun loadPreview(entry: FsEntry, file: FsTextFile) {
-        val normalized = file.copy(path = file.path.ifBlank { entry.path })
-        val type = previewTypeFor(entry.name, normalized.mimeType, normalized.binary)
-        if (type == FilePreviewType.IMAGE) {
-            loadImagePreview(entry, normalized)
-            return
-        }
-
-        updateCurrentPreview(entry.path) {
-            it.copy(
-                previewLoading = false,
-                preview = normalized,
-                previewType = type,
-                previewBytes = null,
-                previewMimeType = effectiveMimeType(entry.name, normalized, type),
-                editing = false,
-                editDraft = normalized.text,
-                previewError = null,
-                shareError = null,
+                },
+                onFailure = { error ->
+                    updateCurrentPreview(entry.path) {
+                        it.copy(
+                            previewLoading = false,
+                            previewError = error.message ?: appString(R.string.files_error_read_file),
+                        )
+                    }
+                },
             )
         }
     }
 
-    private suspend fun loadImagePreview(entry: FsEntry, file: FsTextFile) {
-        val normalized = file.copy(
-            path = file.path.ifBlank { entry.path },
-            binary = true,
-        )
-        runCatching {
-            val response = dataUrlReader(entry.path)
-            val parsed = parseDataUrl(response.dataUrl)
-            response to parsed
-        }.fold(
-            onSuccess = { (response, parsed) ->
-                val mimeType = response.mimeType
-                    ?.takeIf { it.isNotBlank() }
-                    ?: parsed.mimeType
-                    ?: normalized.mimeType
-                    ?: mimeTypeFor(entry.name)
-                val byteSize = normalized.byteSize.takeIf { it > 0 }
-                    ?: response.byteSize.takeIf { it > 0 }
-                    ?: parsed.bytes.size.toLong()
-                updateCurrentPreview(entry.path) {
-                    it.copy(
-                        previewLoading = false,
-                        preview = normalized.copy(
-                            byteSize = byteSize,
-                            mimeType = mimeType,
-                        ),
-                        previewType = FilePreviewType.IMAGE,
-                        previewBytes = parsed.bytes,
-                        previewMimeType = mimeType,
-                        editing = false,
-                        editDraft = "",
-                        previewError = null,
-                        shareError = null,
-                    )
-                }
-            },
-            onFailure = { error ->
-                updateCurrentPreview(entry.path) {
-                    it.copy(
-                        previewLoading = false,
-                        preview = normalized,
-                        previewType = FilePreviewType.IMAGE,
-                        previewBytes = null,
-                        previewMimeType = effectiveMimeType(entry.name, normalized, FilePreviewType.IMAGE),
-                        previewError = error.message ?: "Could not load image preview",
-                    )
-                }
-            },
-        )
-    }
-
     fun beginEdit() = _ui.update { state ->
         val file = state.preview
-        if (file == null || file.binary || file.truncated) state
+        if (file == null || file.binary) state
         else state.copy(editing = true, editDraft = file.text, previewError = null)
     }
 
@@ -240,11 +299,10 @@ class FilesViewModel(
         )
     }
 
-    /** Requests confirmation before overwriting the remote text file. */
     fun saveEdit() {
         val state = _ui.value
         val file = state.preview ?: return
-        if (!state.editing || file.binary || file.truncated || state.saving) return
+        if (!state.editing || file.binary || state.saving) return
         _ui.update { it.copy(confirmSave = true) }
     }
 
@@ -253,25 +311,32 @@ class FilesViewModel(
     fun confirmSave() {
         val state = _ui.value
         val file = state.preview ?: return
-        if (!state.confirmSave || !state.editing || file.binary || file.truncated || state.saving) return
+        if (!state.confirmSave || !state.editing || file.binary || state.saving) return
         val draft = state.editDraft
-        val expectedOriginal = file.text
+        val path = file.path
         _ui.update { it.copy(confirmSave = false, saving = true, previewError = null) }
         viewModelScope.launch {
-            repo.fsWriteText(file.path, draft, expectedOriginal).fold(
-                onSuccess = { saved ->
-                    val normalized = saved.copy(path = saved.path.ifBlank { file.path })
-                    updateCurrentPreview(file.path) {
+            runCatching {
+                api.uploadManagedFile(
+                    managedUploadBody(
+                        path = path,
+                        dataUrl = dataUrlFor(draft.toByteArray(Charsets.UTF_8), "text/plain"),
+                        overwrite = true,
+                    ),
+                )
+            }.fold(
+                onSuccess = {
+                    updateCurrentPreview(path) {
                         it.copy(
-                            preview = normalized,
+                            preview = file.copy(
+                                size = draft.toByteArray(Charsets.UTF_8).size.toLong(),
+                                mimeType = "text/plain",
+                                text = draft,
+                            ),
                             previewType = FilePreviewType.TEXT,
                             previewBytes = null,
-                            previewMimeType = effectiveMimeType(
-                                file.path,
-                                normalized,
-                                FilePreviewType.TEXT,
-                            ),
-                            editDraft = normalized.text,
+                            previewMimeType = "text/plain",
+                            editDraft = draft,
                             editing = false,
                             saving = false,
                             previewError = null,
@@ -280,10 +345,10 @@ class FilesViewModel(
                     }
                 },
                 onFailure = { error ->
-                    updateCurrentPreview(file.path) {
+                    updateCurrentPreview(path) {
                         it.copy(
                             saving = false,
-                            previewError = error.message ?: "Save failed",
+                            previewError = error.message ?: appString(R.string.files_error_save_file),
                         )
                     }
                 },
@@ -294,41 +359,22 @@ class FilesViewModel(
     fun sharePreview() {
         val state = _ui.value
         val file = state.preview ?: return
+        val type = state.previewType ?: return
         if (state.previewLoading || state.shareLoading) return
-        val type = state.previewType ?: previewTypeFor(file.path, file.mimeType, file.binary)
         _ui.update { it.copy(shareLoading = true, sharePayload = null, shareError = null) }
         viewModelScope.launch {
             runCatching {
-                when (type) {
-                    FilePreviewType.TEXT -> FileSharePayload(
-                        path = file.path,
-                        mimeType = effectiveMimeType(file.path, file, type),
-                        bytes = file.text.toByteArray(Charsets.UTF_8),
-                    )
-
+                val bytes = when (type) {
+                    FilePreviewType.TEXT -> file.text.toByteArray(Charsets.UTF_8)
                     FilePreviewType.IMAGE,
                     FilePreviewType.BINARY,
-                    -> {
-                        val parsed = state.previewBytes?.let {
-                            ParsedDataUrl(state.previewMimeType, it)
-                        } ?: run {
-                            val response = dataUrlReader(file.path)
-                            val decoded = parseDataUrl(response.dataUrl)
-                            ParsedDataUrl(
-                                mimeType = response.mimeType
-                                    ?: decoded.mimeType
-                                    ?: state.previewMimeType,
-                                bytes = decoded.bytes,
-                            )
-                        }
-                        FileSharePayload(
-                            path = file.path,
-                            mimeType = parsed.mimeType
-                                ?: effectiveMimeType(file.path, file, type),
-                            bytes = parsed.bytes,
-                        )
-                    }
+                    -> state.previewBytes ?: readPreviewBytes(file.path, type)
                 }
+                FileSharePayload(
+                    path = file.path,
+                    mimeType = effectiveShareMimeType(file.name, file.mimeType, type),
+                    bytes = bytes,
+                )
             }.fold(
                 onSuccess = { payload ->
                     updateCurrentPreview(file.path) {
@@ -339,7 +385,7 @@ class FilesViewModel(
                     updateCurrentPreview(file.path) {
                         it.copy(
                             shareLoading = false,
-                            shareError = error.message ?: "Could not prepare file for sharing",
+                            shareError = error.message ?: appString(R.string.files_error_prepare_share),
                         )
                     }
                 },
@@ -351,34 +397,6 @@ class FilesViewModel(
 
     fun shareFailed(message: String) = _ui.update {
         it.copy(sharePayload = null, shareLoading = false, shareError = message)
-    }
-
-    private fun effectiveMimeType(
-        fileName: String,
-        file: FsTextFile,
-        type: FilePreviewType,
-    ): String {
-        val serverMime = file.mimeType
-            ?.substringBefore(';')
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-        return when {
-            type == FilePreviewType.TEXT && (serverMime == null || serverMime == "application/octet-stream") -> {
-                "text/plain"
-            }
-            type == FilePreviewType.IMAGE && (serverMime == null || serverMime == "application/octet-stream") -> {
-                mimeTypeFor(fileName)
-            }
-            serverMime != null -> serverMime
-            else -> mimeTypeFor(fileName)
-        }
-    }
-
-    private fun updateCurrentPreview(
-        path: String,
-        transform: (FilesUiState) -> FilesUiState,
-    ) = _ui.update { state ->
-        if (state.preview?.path == path) transform(state) else state
     }
 
     fun closePreview() = _ui.update {
@@ -399,6 +417,368 @@ class FilesViewModel(
         )
     }
 
+    fun prepareUpload(uri: Uri, resolver: ContentResolver) {
+        val displayName = contentDisplayName(resolver, uri)
+            .ifBlank { appString(R.string.files_upload_default_name) }
+        val targetPath = runCatching { joinManagedPath(_ui.value.path, displayName) }
+            .getOrDefault(displayName)
+        uploadResolver = resolver
+        _ui.update {
+            it.copy(
+                uploadCandidate = ManagedUploadCandidate(
+                    uri = uri,
+                    displayName = displayName,
+                    mimeType = resolver.getType(uri),
+                    targetPath = targetPath,
+                ),
+                uploadState = FileUploadState.Idle,
+                actionError = null,
+            )
+        }
+    }
+
+    fun cancelUploadSelection() {
+        uploadResolver = null
+        _ui.update { it.copy(uploadCandidate = null) }
+    }
+
+    fun confirmUpload(overwrite: Boolean) {
+        val candidate = _ui.value.uploadCandidate ?: return
+        val resolver = uploadResolver ?: return
+        val totalBytes = contentLength(resolver, candidate.uri)
+        _ui.update {
+            it.copy(
+                uploadCandidate = null,
+                uploadState = FileUploadState.Running(
+                    displayName = candidate.displayName,
+                    phase = FileTransferPhase.PREPARING,
+                    totalBytes = totalBytes,
+                ),
+                actionError = null,
+            )
+        }
+        uploadResolver = null
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    uploadCandidate(candidate, resolver, overwrite, totalBytes)
+                }
+            }.fold(
+                onSuccess = {
+                    _ui.update {
+                        it.copy(uploadState = FileUploadState.Complete(candidate.displayName))
+                    }
+                    refresh()
+                },
+                onFailure = { error ->
+                    _ui.update {
+                        it.copy(
+                            uploadState = FileUploadState.Failed(
+                                error.message ?: appString(R.string.files_error_upload),
+                            ),
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    fun download(entry: ManagedFileEntry) {
+        download(
+            path = entry.path,
+            displayName = entry.name.ifBlank { entry.path.substringAfterLast('/') },
+            size = entry.size ?: -1L,
+            mimeType = entry.mimeType ?: "application/octet-stream",
+        )
+    }
+
+    fun downloadPreview() {
+        val file = _ui.value.preview ?: return
+        download(file.path, file.name, file.size, file.mimeType)
+    }
+
+    private fun download(path: String, displayName: String, size: Long, mimeType: String) {
+        if (_ui.value.downloadState is FileDownloadState.Downloading ||
+            _ui.value.downloadState is FileDownloadState.Saving
+        ) return
+        deleteReadyDownload()
+        _ui.update {
+            it.copy(
+                downloadState = FileDownloadState.Downloading(
+                    displayName = displayName,
+                    totalBytes = size.takeIf { bytes -> bytes > 0L } ?: -1L,
+                ),
+                actionError = null,
+            )
+        }
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val directory = File(cacheDirectory, "managed-downloads").apply { mkdirs() }
+                    val output = File.createTempFile("hermes-file-", ".download", directory)
+                    try {
+                        api.downloadManagedFile(path).use { response ->
+                            val total = response.contentLength().takeIf { it > 0L } ?: size
+                            _ui.update {
+                                it.copy(
+                                    downloadState = FileDownloadState.Downloading(
+                                        displayName = displayName,
+                                        totalBytes = total,
+                                    ),
+                                )
+                            }
+                            response.byteStream().use { source ->
+                                output.outputStream().use { destination ->
+                                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                                    var copied = 0L
+                                    while (true) {
+                                        val count = source.read(buffer)
+                                        if (count < 0) break
+                                        destination.write(buffer, 0, count)
+                                        copied += count
+                                        _ui.update {
+                                            it.copy(
+                                                downloadState = FileDownloadState.Downloading(
+                                                    displayName = displayName,
+                                                    bytesCopied = copied,
+                                                    totalBytes = total,
+                                                ),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        FileDownloadState.Ready(output, displayName, mimeType)
+                    } catch (error: Throwable) {
+                        output.delete()
+                        throw error
+                    }
+                }
+            }.fold(
+                onSuccess = { ready -> _ui.update { it.copy(downloadState = ready) } },
+                onFailure = { error ->
+                    _ui.update {
+                        it.copy(
+                            downloadState = FileDownloadState.Failed(
+                                error.message ?: appString(R.string.files_error_download),
+                            ),
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    fun saveDownload(uri: Uri, resolver: ContentResolver) {
+        val ready = _ui.value.downloadState as? FileDownloadState.Ready ?: return
+        _ui.update {
+            it.copy(
+                downloadState = FileDownloadState.Saving(
+                    displayName = ready.displayName,
+                    totalBytes = ready.file.length(),
+                ),
+            )
+        }
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val output = resolver.openOutputStream(uri) ?: error("")
+                    output.use { destination ->
+                        ready.file.inputStream().use { source ->
+                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                            var copied = 0L
+                            while (true) {
+                                val count = source.read(buffer)
+                                if (count < 0) break
+                                destination.write(buffer, 0, count)
+                                copied += count
+                                _ui.update {
+                                    it.copy(
+                                        downloadState = FileDownloadState.Saving(
+                                            displayName = ready.displayName,
+                                            bytesCopied = copied,
+                                            totalBytes = ready.file.length(),
+                                        ),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }.fold(
+                onSuccess = {
+                    ready.file.delete()
+                    _ui.update {
+                        it.copy(downloadState = FileDownloadState.Complete(ready.displayName))
+                    }
+                },
+                onFailure = { error ->
+                    _ui.update {
+                        it.copy(
+                            downloadState = FileDownloadState.Failed(
+                                error.message ?: appString(R.string.files_error_save_download),
+                            ),
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    fun cancelDownload() {
+        deleteReadyDownload()
+        _ui.update { it.copy(downloadState = FileDownloadState.Idle) }
+    }
+
+    fun createDirectory(name: String) {
+        val target = runCatching { joinManagedPath(_ui.value.path, name) }.getOrElse {
+            _ui.update { state -> state.copy(actionError = appString(R.string.files_error_create_folder)) }
+            return
+        }
+        if (_ui.value.actionLoading) return
+        _ui.update { it.copy(actionLoading = true, actionError = null) }
+        viewModelScope.launch {
+            runCatching {
+                api.createManagedDir(buildJsonObject { put("path", target) })
+            }.fold(
+                onSuccess = {
+                    _ui.update { it.copy(actionLoading = false, actionError = null) }
+                    refresh()
+                },
+                onFailure = { error ->
+                    _ui.update {
+                        it.copy(
+                            actionLoading = false,
+                            actionError = error.message
+                                ?: appString(R.string.files_error_create_folder),
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    fun delete(entry: ManagedFileEntry) {
+        if (_ui.value.actionLoading) return
+        _ui.update { it.copy(actionLoading = true, actionError = null) }
+        viewModelScope.launch {
+            runCatching { api.deleteManagedFile(entry.path) }.fold(
+                onSuccess = {
+                    _ui.update { state ->
+                        state.copy(
+                            actionLoading = false,
+                            actionError = null,
+                            preview = state.preview?.takeUnless { it.path == entry.path },
+                            previewLoading = state.previewLoading && state.preview?.path != entry.path,
+                            previewType = state.previewType.takeUnless { state.preview?.path == entry.path },
+                            previewBytes = state.previewBytes.takeUnless { state.preview?.path == entry.path },
+                        )
+                    }
+                    refresh()
+                },
+                onFailure = { error ->
+                    _ui.update {
+                        it.copy(
+                            actionLoading = false,
+                            actionError = error.message ?: appString(R.string.files_error_delete),
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    private suspend fun uploadCandidate(
+        candidate: ManagedUploadCandidate,
+        resolver: ContentResolver,
+        overwrite: Boolean,
+        totalBytes: Long,
+    ) {
+        val mimeType = candidate.mimeType
+            ?.takeIf { it.isNotBlank() }
+            ?.toMediaType()
+            ?: "application/octet-stream".toMediaType()
+        if (totalBytes in 0L..INLINE_UPLOAD_LIMIT_BYTES) {
+            val bytes = readContent(resolver, candidate.uri, totalBytes) { copied, total ->
+                updateUploadProgress(candidate.displayName, FileTransferPhase.PREPARING, copied, total)
+            }
+            api.uploadManagedFile(
+                managedUploadBody(
+                    path = candidate.targetPath,
+                    dataUrl = dataUrlFor(bytes, mimeType.toString()),
+                    overwrite = overwrite,
+                ),
+            )
+        } else {
+            val body = ContentResolverRequestBody(
+                resolver = resolver,
+                uri = candidate.uri,
+                mediaType = mimeType,
+                length = totalBytes,
+            ) { copied, total ->
+                updateUploadProgress(candidate.displayName, FileTransferPhase.SENDING, copied, total)
+            }
+            api.uploadManagedFileStream(
+                path = candidate.targetPath.toRequestBody("text/plain".toMediaType()),
+                overwrite = overwrite.toString().toRequestBody("text/plain".toMediaType()),
+                file = MultipartBody.Part.createFormData("file", candidate.displayName, body),
+            )
+        }
+    }
+
+    private fun updateUploadProgress(
+        displayName: String,
+        phase: FileTransferPhase,
+        copied: Long,
+        total: Long,
+    ) {
+        _ui.update {
+            it.copy(
+                uploadState = FileUploadState.Running(
+                    displayName = displayName,
+                    phase = phase,
+                    bytesSent = copied,
+                    totalBytes = total,
+                ),
+            )
+        }
+    }
+
+    private suspend fun readPreviewBytes(path: String, type: FilePreviewType): ByteArray {
+        return if (type == FilePreviewType.IMAGE) {
+            parseDataUrl(api.getMediaDataUrl(path).dataUrl).bytes
+        } else {
+            parseDataUrl(api.readManagedFile(path).dataUrl).bytes
+        }
+    }
+
+    private fun updateCurrentPreview(
+        path: String,
+        transform: (FilesUiState) -> FilesUiState,
+    ) = _ui.update { state ->
+        if (state.preview?.path == path) transform(state) else state
+    }
+
+    private fun managedUploadBody(path: String, dataUrl: String, overwrite: Boolean) =
+        buildJsonObject {
+            put("path", path)
+            put("data_url", dataUrl)
+            put("overwrite", overwrite)
+        }
+
+    private fun deleteReadyDownload() {
+        val ready = _ui.value.downloadState as? FileDownloadState.Ready
+        ready?.file?.delete()
+    }
+
+    private fun appString(@StringRes resourceId: Int): String = TalariaApp.instance.getString(resourceId)
+
+    override fun onCleared() {
+        deleteReadyDownload()
+        super.onCleared()
+    }
+
     companion object {
         fun factory() = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -406,3 +786,81 @@ class FilesViewModel(
         }
     }
 }
+
+private data class PreviewPayload(
+    val type: FilePreviewType,
+    val mimeType: String,
+    val bytes: ByteArray,
+    val text: String,
+    val size: Long,
+    val name: String,
+)
+
+private fun managedPreviewType(name: String, mimeType: String): FilePreviewType {
+    val mime = mimeType.substringBefore(';').trim().lowercase()
+    return when {
+        mime.startsWith("image/") -> FilePreviewType.IMAGE
+        mime.startsWith("text/") || mime in textMimeTypes -> FilePreviewType.TEXT
+        mime == "application/octet-stream" && isLikelyTextFile(name) -> FilePreviewType.TEXT
+        mime.isBlank() && isLikelyTextFile(name) -> FilePreviewType.TEXT
+        else -> FilePreviewType.BINARY
+    }
+}
+
+private fun normalizedMime(name: String, responseMime: String?, dataUrlMime: String?): String {
+    val response = responseMime?.substringBefore(';')?.trim()?.takeIf { it.isNotBlank() }
+    val parsed = dataUrlMime?.substringBefore(';')?.trim()?.takeIf { it.isNotBlank() }
+    return when {
+        response != null && response != "application/octet-stream" -> response
+        parsed != null -> parsed
+        response != null -> response
+        else -> mimeTypeFor(name)
+    }
+}
+
+private fun effectiveShareMimeType(name: String, mimeType: String, type: FilePreviewType): String =
+    when {
+        type == FilePreviewType.TEXT -> "text/plain"
+        mimeType.isNotBlank() && mimeType != "application/octet-stream" -> mimeType
+        else -> mimeTypeFor(name)
+    }
+
+private val textMimeTypes = setOf(
+    "application/json",
+    "application/ld+json",
+    "application/javascript",
+    "application/xml",
+    "application/yaml",
+    "application/x-yaml",
+)
+
+private fun isLikelyTextFile(name: String): Boolean =
+    name.substringAfterLast('.', "").lowercase() in setOf(
+        "c",
+        "cfg",
+        "conf",
+        "css",
+        "csv",
+        "gradle",
+        "h",
+        "html",
+        "ini",
+        "java",
+        "js",
+        "json",
+        "kt",
+        "log",
+        "md",
+        "properties",
+        "py",
+        "rb",
+        "rs",
+        "sh",
+        "sql",
+        "toml",
+        "ts",
+        "txt",
+        "xml",
+        "yaml",
+        "yml",
+    )

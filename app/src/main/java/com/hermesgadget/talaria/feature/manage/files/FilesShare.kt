@@ -19,6 +19,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
+import com.hermesgadget.talaria.R
 import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
@@ -46,7 +47,10 @@ internal suspend fun buildFileShareIntent(
     Intent(Intent.ACTION_SEND).apply {
         type = payload.mimeType
         putExtra(Intent.EXTRA_STREAM, uri)
-        putExtra(Intent.EXTRA_SUBJECT, "Hermes file ${payload.path.substringAfterLast('/')}")
+        putExtra(
+            Intent.EXTRA_SUBJECT,
+            context.getString(R.string.files_share_subject, payload.path.substringAfterLast('/')),
+        )
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 }
