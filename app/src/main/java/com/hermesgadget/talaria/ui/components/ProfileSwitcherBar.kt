@@ -35,7 +35,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
 import kotlinx.coroutines.launch
 
@@ -73,7 +75,7 @@ fun ProfileSwitcherChip() {
         (listOf("") + hermesNames).distinct()
     }
     val nonDefault = managementProfile.isNotBlank()
-    val displayLabel = if (nonDefault) managementProfile else "default"
+    val displayLabel = if (nonDefault) managementProfile else stringResource(R.string.common_default)
 
     AssistChip(
         onClick = { if (!switching) expanded = true },
@@ -82,7 +84,11 @@ fun ProfileSwitcherChip() {
             Icon(Icons.Outlined.Dns, contentDescription = null, modifier = Modifier.size(16.dp))
         },
         trailingIcon = {
-            Icon(Icons.Filled.ArrowDropDown, contentDescription = "Switch profile", modifier = Modifier.size(18.dp))
+            Icon(
+                Icons.Filled.ArrowDropDown,
+                contentDescription = stringResource(R.string.profile_switch),
+                modifier = Modifier.size(18.dp),
+            )
         },
         border = if (nonDefault) null else AssistChipDefaults.assistChipBorder(enabled = true),
         colors = if (nonDefault) {
@@ -98,7 +104,7 @@ fun ProfileSwitcherChip() {
     )
     DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
         options.forEach { name ->
-            val label = if (name.isBlank()) "default" else name
+            val label = if (name.isBlank()) stringResource(R.string.common_default) else name
             DropdownMenuItem(
                 text = { Text(label) },
                 onClick = {

@@ -108,6 +108,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -119,6 +120,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.MainActivity
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.domain.model.ToolCallUi
 import com.hermesgadget.talaria.domain.model.scopeId
 import com.hermesgadget.talaria.feature.pip.PipChatIntent
@@ -151,13 +153,14 @@ fun ChatScreen(
     var monitorOpen by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
+    val microphonePermissionDenied = stringResource(R.string.chat_microphone_permission_denied)
     val settings = TalariaApp.instance.container.settingsStore
     val lifecycleOwner = LocalLifecycleOwner.current
     val micPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) vm.toggleListen()
-        else vm.reportError("Microphone permission denied")
+        else vm.reportError(microphonePermissionDenied)
     }
     val imagePickerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
@@ -211,16 +214,30 @@ fun ChatScreen(
     }
 
     val status = when {
-        active?.connecting == true -> "Connecting…"
-        active?.connected == true -> buildString {
-            append("Live · ${active.modelLabel ?: "Hermes"}")
-            active.reasoningEffort?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
-            active.approvalMode?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
-            if (active.yolo) append(" · ⚡yolo")
-            active.totalTokens?.let { append(" · ${it} tok") }
-            active.costUsd?.let { append(" · $${"%.4f".format(it)}") }
+        active?.connecting == true -> stringResource(R.string.chat_status_connecting)
+        active?.connected == true -> {
+            var liveStatus = stringResource(
+                R.string.chat_status_live,
+                active.modelLabel ?: stringResource(R.string.app_name),
+            )
+            val reasoningEffort = active.reasoningEffort?.takeIf { it.isNotBlank() }
+            if (reasoningEffort != null) {
+                liveStatus += stringResource(R.string.chat_status_detail, reasoningEffort)
+            }
+            val approvalMode = active.approvalMode?.takeIf { it.isNotBlank() }
+            if (approvalMode != null) {
+                liveStatus += stringResource(R.string.chat_status_detail, approvalMode)
+            }
+            if (active.yolo) liveStatus += stringResource(R.string.chat_status_yolo)
+            if (active.totalTokens != null) {
+                liveStatus += stringResource(R.string.chat_status_tokens, active.totalTokens)
+            }
+            if (active.costUsd != null) {
+                liveStatus += stringResource(R.string.chat_status_cost, active.costUsd)
+            }
+            liveStatus
         }
-        else -> "Disconnected · tap to reconnect"
+        else -> stringResource(R.string.chat_status_disconnected)
     }
 
     if (active?.prompt != null) {
@@ -237,7 +254,7 @@ fun ChatScreen(
                     Text(prompt.message)
                     if (prompt.choices.isNotEmpty()) {
                         Text(
-                            "Choices: ${prompt.choices.joinToString(", ")}",
+                            stringResource(R.string.chat_choices, prompt.choices.joinToString(", ")),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -247,7 +264,13 @@ fun ChatScreen(
                         OutlinedTextField(
                             value = clarifyText,
                             onValueChange = { clarifyText = it },
-                            label = { Text(if (masksText) "Secure response" else "Response") },
+                            label = {
+                                Text(
+                                    stringResource(
+                                        if (masksText) R.string.chat_secure_response else R.string.chat_response,
+                                    ),
+                                )
+                            },
                             visualTransformation = if (masksText) {
                                 PasswordVisualTransformation()
                             } else {
@@ -264,10 +287,14 @@ fun ChatScreen(
                         if (needsText) vm.respondPrompt(true, clarifyText.ifBlank { null })
                         else vm.respondPrompt(true)
                     },
-                ) { Text(if (needsText) "Send" else "Approve") }
+                ) {
+                    Text(stringResource(if (needsText) R.string.common_send else R.string.common_approve))
+                }
             },
             dismissButton = {
-                TextButton(onClick = { vm.respondPrompt(false) }) { Text("Deny") }
+                TextButton(onClick = { vm.respondPrompt(false) }) {
+                    Text(stringResource(R.string.common_deny))
+                }
             },
         )
     }
@@ -276,13 +303,13 @@ fun ChatScreen(
         var name by remember(target.id) { mutableStateOf(target.title) }
         AlertDialog(
             onDismissRequest = { renameTarget = null },
-            title = { Text("Rename agent") },
+            title = { Text(stringResource(R.string.chat_rename_agent)) },
             text = {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     singleLine = true,
-                    label = { Text("Name") },
+                    label = { Text(stringResource(R.string.common_name)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
             },
@@ -292,10 +319,12 @@ fun ChatScreen(
                         vm.renameTab(target.id, name)
                         renameTarget = null
                     },
-                ) { Text("Save") }
+                ) { Text(stringResource(R.string.common_save)) }
             },
             dismissButton = {
-                TextButton(onClick = { renameTarget = null }) { Text("Cancel") }
+                TextButton(onClick = { renameTarget = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
             },
         )
     }
@@ -303,52 +332,63 @@ fun ChatScreen(
     when (val dialog = ui.sessionControls.dialog) {
         is ChatSessionDialog.Rewind -> AlertDialog(
             onDismissRequest = vm::dismissSessionDialog,
-            title = { Text("Rewind to this message?") },
+            title = { Text(stringResource(R.string.chat_rewind_title)) },
             text = {
                 Text(
-                    "This creates a new chat branch containing the conversation through this message. " +
-                        "The current session stays open.\n\n${dialog.preview.take(240)}",
+                    stringResource(R.string.chat_rewind_body, dialog.preview.take(240)),
                 )
             },
             confirmButton = {
-                TextButton(onClick = vm::confirmSessionDialog) { Text("Create branch") }
+                TextButton(onClick = vm::confirmSessionDialog) {
+                    Text(stringResource(R.string.common_create_branch))
+                }
             },
             dismissButton = {
-                TextButton(onClick = vm::dismissSessionDialog) { Text("Cancel") }
+                TextButton(onClick = vm::dismissSessionDialog) {
+                    Text(stringResource(R.string.common_cancel))
+                }
             },
         )
         is ChatSessionDialog.Compact -> AlertDialog(
             onDismissRequest = vm::dismissSessionDialog,
-            title = { Text("Compact session?") },
+            title = { Text(stringResource(R.string.chat_compact_title)) },
             text = {
-                Text("Hermes will summarize older context to reduce the session's context usage.")
+                Text(stringResource(R.string.chat_compact_body))
             },
             confirmButton = {
-                TextButton(onClick = vm::confirmSessionDialog) { Text("Compact") }
+                TextButton(onClick = vm::confirmSessionDialog) {
+                    Text(stringResource(R.string.common_compact))
+                }
             },
             dismissButton = {
-                TextButton(onClick = vm::dismissSessionDialog) { Text("Cancel") }
+                TextButton(onClick = vm::dismissSessionDialog) {
+                    Text(stringResource(R.string.common_cancel))
+                }
             },
         )
         is ChatSessionDialog.EditTitle -> {
             var title by remember(dialog.sessionId) { mutableStateOf(dialog.initialTitle) }
             AlertDialog(
                 onDismissRequest = vm::dismissSessionDialog,
-                title = { Text("Edit session title") },
+                title = { Text(stringResource(R.string.common_edit_session_title)) },
                 text = {
                     OutlinedTextField(
                         value = title,
                         onValueChange = { title = it },
                         singleLine = true,
-                        label = { Text("Title") },
+                        label = { Text(stringResource(R.string.common_title)) },
                         modifier = Modifier.fillMaxWidth(),
                     )
                 },
                 confirmButton = {
-                    TextButton(onClick = { vm.confirmSessionTitle(title) }) { Text("Save") }
+                    TextButton(onClick = { vm.confirmSessionTitle(title) }) {
+                        Text(stringResource(R.string.common_save))
+                    }
                 },
                 dismissButton = {
-                    TextButton(onClick = vm::dismissSessionDialog) { Text("Cancel") }
+                    TextButton(onClick = vm::dismissSessionDialog) {
+                        Text(stringResource(R.string.common_cancel))
+                    }
                 },
             )
         }
@@ -361,17 +401,21 @@ fun ChatScreen(
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         ) {
             Text(
-                "Sessions",
+                stringResource(R.string.chat_sessions),
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
             Row(modifier = Modifier.padding(horizontal = 8.dp)) {
-                TextButton(onClick = { vm.newSession() }) { Text("New agent") }
-                TextButton(onClick = { vm.refreshSessions() }) { Text("Refresh") }
+                TextButton(onClick = { vm.newSession() }) {
+                    Text(stringResource(R.string.common_new_agent))
+                }
+                TextButton(onClick = { vm.refreshSessions() }) {
+                    Text(stringResource(R.string.common_refresh))
+                }
                 TextButton(onClick = {
                     vm.toggleSessionRail(false)
                     onOpenSessions()
-                }) { Text("All sessions") }
+                }) { Text(stringResource(R.string.common_all_sessions)) }
             }
             LazyColumn {
                 items(ui.sessions, key = { it.id }) { s ->
@@ -384,17 +428,25 @@ fun ChatScreen(
                     ListItem(
                         headlineContent = {
                             Text(
-                                (s.title ?: s.preview ?: s.id.take(8)) + if (isOpen) " · open" else "",
+                                (s.title ?: s.preview ?: s.id.take(8)) +
+                                    if (isOpen) stringResource(R.string.chat_open_suffix) else "",
                                 color = if (isOpen) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurface,
                             )
                         },
                         supportingContent = {
                             Column {
-                                Text("${s.source ?: "cli"} · ${s.model ?: "?"} · ${s.message_count ?: 0} msgs")
-                                parentTitle?.let {
+                                Text(
+                                    stringResource(
+                                        R.string.chat_session_metadata,
+                                        s.source ?: stringResource(R.string.chat_cli_source),
+                                        s.model ?: stringResource(R.string.chat_unknown_model),
+                                        s.message_count ?: 0,
+                                    ),
+                                )
+                                if (parentTitle != null) {
                                     Text(
-                                        "Branch from $it",
+                                        stringResource(R.string.chat_branch_from, parentTitle),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.secondary,
                                     )
@@ -403,7 +455,12 @@ fun ChatScreen(
                         },
                         trailingContent = {
                             IconButton(onClick = { vm.requestSessionTitleEdit(s.id) }) {
-                                Icon(Icons.Filled.Edit, contentDescription = "Edit session title")
+                                Icon(
+                                    Icons.Filled.Edit,
+                                    contentDescription = stringResource(
+                                        R.string.chat_edit_session_title_content_description,
+                                    ),
+                                )
                             }
                         },
                         modifier = Modifier.clickable { vm.resumeSession(s.id) },
@@ -417,13 +474,13 @@ fun ChatScreen(
     if (ui.showModelPicker) {
         ModalBottomSheet(onDismissRequest = { vm.toggleModelPicker(false) }) {
             Text(
-                "Models",
+                stringResource(R.string.chat_models),
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(16.dp),
             )
             LazyColumn {
                 items(ui.modelOptions, key = { it.id ?: it.name ?: it.label ?: it.hashCode() }) { opt ->
-                    val label = opt.label ?: opt.name ?: opt.id ?: "model"
+                    val label = opt.label ?: opt.name ?: opt.id ?: stringResource(R.string.chat_model_fallback)
                     ListItem(
                         headlineContent = { Text(label) },
                         supportingContent = { opt.provider?.let { Text(it) } },
@@ -431,7 +488,12 @@ fun ChatScreen(
                     )
                 }
                 if (ui.modelOptions.isEmpty()) {
-                    item { Text("No options from API — try /model in chat", Modifier.padding(16.dp)) }
+                    item {
+                        Text(
+                            stringResource(R.string.chat_no_model_options),
+                            Modifier.padding(16.dp),
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -445,7 +507,7 @@ fun ChatScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("Chat", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.chat_title), style = MaterialTheme.typography.titleMedium)
                         Text(
                             status,
                             style = MaterialTheme.typography.bodySmall,
@@ -466,7 +528,10 @@ fun ChatScreen(
                     val reading = transcriptMode == TranscriptMode.READING
                     if (active?.working == true && active.connected) {
                         IconButton(onClick = { vm.sendInterrupt() }) {
-                            Icon(Icons.Filled.Stop, contentDescription = "Interrupt (Ctrl-C)")
+                            Icon(
+                                Icons.Filled.Stop,
+                                contentDescription = stringResource(R.string.chat_interrupt),
+                            )
                         }
                     }
                     if (active?.working != true) {
@@ -477,21 +542,26 @@ fun ChatScreen(
                         }) {
                             Icon(
                                 if (reading) Icons.Filled.Terminal else Icons.AutoMirrored.Filled.Article,
-                                contentDescription = if (reading) "Terminal view" else "Reading view",
+                                contentDescription = stringResource(
+                                    if (reading) R.string.chat_terminal_view else R.string.chat_reading_view,
+                                ),
                             )
                         }
                     }
                     val sessionReady = active?.liveSessionId != null || active?.resumeSessionId != null
                     val sessionActionRunning = ui.sessionControls.action is ChatSessionActionState.Running
                     IconButton(onClick = { vm.toggleSessionActions() }) {
-                        Icon(Icons.Filled.MoreVert, contentDescription = "Session actions")
+                        Icon(
+                            Icons.Filled.MoreVert,
+                            contentDescription = stringResource(R.string.chat_session_actions),
+                        )
                     }
                     DropdownMenu(
                         expanded = ui.showSessionActions,
                         onDismissRequest = { vm.toggleSessionActions(false) },
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Compact session") },
+                            text = { Text(stringResource(R.string.chat_compact_session)) },
                             onClick = {
                                 vm.toggleSessionActions(false)
                                 vm.requestCompactSession()
@@ -499,7 +569,7 @@ fun ChatScreen(
                             enabled = sessionReady && active?.working != true && !sessionActionRunning,
                         )
                         DropdownMenuItem(
-                            text = { Text("Edit session title") },
+                            text = { Text(stringResource(R.string.common_edit_session_title)) },
                             onClick = {
                                 vm.toggleSessionActions(false)
                                 vm.requestSessionTitleEdit()
@@ -508,13 +578,22 @@ fun ChatScreen(
                         )
                     }
                     IconButton(onClick = { monitorOpen = !monitorOpen }) {
-                        Icon(Icons.Filled.Hub, contentDescription = "Agent activity")
+                        Icon(
+                            Icons.Filled.Hub,
+                            contentDescription = stringResource(R.string.chat_agent_activity),
+                        )
                     }
                     IconButton(onClick = { vm.toggleModelPicker() }) {
-                        Icon(Icons.Filled.SmartToy, contentDescription = "Change model")
+                        Icon(
+                            Icons.Filled.SmartToy,
+                            contentDescription = stringResource(R.string.chat_change_model),
+                        )
                     }
                     IconButton(onClick = { vm.toggleSteerPopover() }) {
-                        Icon(Icons.Filled.Tune, contentDescription = "Steer and trigger settings")
+                        Icon(
+                            Icons.Filled.Tune,
+                            contentDescription = stringResource(R.string.chat_steer_settings),
+                        )
                     }
                     IconButton(
                         onClick = {
@@ -540,7 +619,7 @@ fun ChatScreen(
                     ) {
                         Icon(
                             Icons.Filled.PictureInPictureAlt,
-                            contentDescription = "Open chat in picture-in-picture",
+                            contentDescription = stringResource(R.string.chat_pip),
                         )
                     }
                     DropdownMenu(
@@ -548,16 +627,16 @@ fun ChatScreen(
                         onDismissRequest = { vm.toggleSteerPopover(false) },
                     ) {
                         Text(
-                            "Steer / trigger",
+                            stringResource(R.string.chat_steer_trigger),
                             style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                         )
                         DropdownMenuItem(
                             text = {
                                 Column {
-                                    Text("Model")
+                                    Text(stringResource(R.string.chat_models))
                                     Text(
-                                        active?.modelLabel ?: "Choose a model",
+                                        active?.modelLabel ?: stringResource(R.string.chat_choose_model),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -570,7 +649,7 @@ fun ChatScreen(
                             enabled = active != null,
                         )
                         Text(
-                            "Reasoning effort",
+                            stringResource(R.string.chat_reasoning_effort),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -590,7 +669,7 @@ fun ChatScreen(
                             )
                         }
                         Text(
-                            "Approval mode · global dashboard setting",
+                            stringResource(R.string.chat_approval_global),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -612,10 +691,13 @@ fun ChatScreen(
                         DropdownMenuItem(
                             text = {
                                 Column {
-                                    Text("YOLO")
+                                    Text(stringResource(R.string.chat_yolo))
                                     Text(
-                                        if (active?.yolo == true) "On · approvals bypassed for this session"
-                                        else "Off · prompts remain enabled",
+                                        if (active?.yolo == true) {
+                                            stringResource(R.string.chat_yolo_on)
+                                        } else {
+                                            stringResource(R.string.chat_yolo_off)
+                                        },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -635,7 +717,7 @@ fun ChatScreen(
                         )
                         if (!sessionReady) {
                             Text(
-                                "Reasoning and YOLO unlock after Hermes assigns a live session.",
+                                stringResource(R.string.chat_unlock_hint),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -643,7 +725,10 @@ fun ChatScreen(
                         }
                     }
                     IconButton(onClick = { vm.toggleSessionRail() }) {
-                        Icon(Icons.Filled.History, contentDescription = "Sessions")
+                        Icon(
+                            Icons.Filled.History,
+                            contentDescription = stringResource(R.string.chat_sessions),
+                        )
                     }
                 },
                 windowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout),
@@ -680,7 +765,10 @@ fun ChatScreen(
                                     },
                                     supportingContent = {
                                         Text(
-                                            "${cmd.category} · ${cmd.description}",
+                                            stringResource(
+                                                R.string.common_subtitle_separator,
+                                                "${cmd.category} · ${cmd.description}",
+                                            ),
                                             maxLines = 2,
                                             overflow = TextOverflow.Ellipsis,
                                         )
@@ -729,9 +817,15 @@ fun ChatScreen(
                                         }
                                         Text(
                                             when {
-                                                staged -> "${attachment.filename} · staged"
+                                                staged -> stringResource(
+                                                    R.string.chat_attachment_staged,
+                                                    attachment.filename,
+                                                )
                                                 attachment.status == ChatImageAttachmentStatus.ERROR ->
-                                                    "${attachment.filename} · retry"
+                                                    stringResource(
+                                                        R.string.chat_attachment_retry,
+                                                        attachment.filename,
+                                                    )
                                                 else -> attachment.filename
                                             },
                                             style = MaterialTheme.typography.labelMedium,
@@ -745,7 +839,10 @@ fun ChatScreen(
                                         ) {
                                             Icon(
                                                 Icons.Filled.Close,
-                                                contentDescription = "Remove ${attachment.filename}",
+                                                contentDescription = stringResource(
+                                                    R.string.chat_remove_attachment,
+                                                    attachment.filename,
+                                                ),
                                                 modifier = Modifier.size(16.dp),
                                             )
                                         }
@@ -762,7 +859,7 @@ fun ChatScreen(
                                 modifier = Modifier.padding(end = 6.dp),
                             ) {
                                 Text(
-                                    "${active.queuedPrompts.size} queued",
+                                    stringResource(R.string.chat_queued, active.queuedPrompts.size),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onTertiaryContainer,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
@@ -784,7 +881,7 @@ fun ChatScreen(
                                 },
                             placeholder = {
                                 Text(
-                                    "Message Hermes…",
+                                    stringResource(R.string.chat_message_placeholder),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -804,7 +901,10 @@ fun ChatScreen(
                                     it.status == ChatImageAttachmentStatus.UPLOADING
                                 },
                         ) {
-                            Icon(Icons.Filled.AttachFile, contentDescription = "Attach image")
+                            Icon(
+                                Icons.Filled.AttachFile,
+                                contentDescription = stringResource(R.string.chat_attach_image),
+                            )
                         }
                         IconButton(
                             onClick = {
@@ -822,7 +922,7 @@ fun ChatScreen(
                         ) {
                             Icon(
                                 if (ui.listening) Icons.Filled.MicOff else Icons.Filled.Mic,
-                                contentDescription = "Dictate",
+                                contentDescription = stringResource(R.string.chat_dictate),
                             )
                         }
                         FilledIconButton(
@@ -833,7 +933,10 @@ fun ChatScreen(
                                     it.status == ChatImageAttachmentStatus.UPLOADING
                                 },
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                            Icon(
+                                Icons.AutoMirrored.Filled.Send,
+                                contentDescription = stringResource(R.string.common_send),
+                            )
                         }
                     }
                 }
@@ -883,9 +986,9 @@ fun ChatScreen(
                     CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                     Text(
                         when (action.kind) {
-                            ChatSessionActionKind.REWIND -> "Creating branch…"
-                            ChatSessionActionKind.COMPACT -> "Compacting session…"
-                            ChatSessionActionKind.RENAME -> "Saving session title…"
+                            ChatSessionActionKind.REWIND -> stringResource(R.string.chat_action_rewind)
+                            ChatSessionActionKind.COMPACT -> stringResource(R.string.chat_action_compact)
+                            ChatSessionActionKind.RENAME -> stringResource(R.string.chat_action_rename)
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -920,9 +1023,9 @@ fun ChatScreen(
                     item {
                         Text(
                             if (transcriptMode == TranscriptMode.READING) {
-                                "No messages yet — say hello to Hermes."
+                                stringResource(R.string.chat_empty_reading)
                             } else {
-                                "Waiting for terminal output…"
+                                stringResource(R.string.chat_empty_terminal)
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -945,7 +1048,7 @@ fun ChatScreen(
                                         preview = line.text,
                                     )
                                 },
-                                onLongClickLabel = "Rewind to this message",
+                                onLongClickLabel = stringResource(R.string.chat_rewind_message),
                             ),
                         color = when (line.role) {
                             "user" -> MaterialTheme.colorScheme.primaryContainer
@@ -1026,7 +1129,7 @@ private fun SessionTabStrip(
                 modifier = Modifier.combinedClickable(
                     onClick = { onSelect(tab.id) },
                     onLongClick = { onRename(tab) },
-                    onLongClickLabel = "Rename agent",
+                    onLongClickLabel = stringResource(R.string.chat_rename_agent),
                 ),
             ) {
                 Row(
@@ -1053,7 +1156,7 @@ private fun SessionTabStrip(
                     if (tabs.size > 1) {
                         Icon(
                             Icons.Filled.Close,
-                            contentDescription = "Close ${tab.title}",
+                            contentDescription = stringResource(R.string.chat_close_agent, tab.title),
                             modifier = Modifier
                                 .size(18.dp)
                                 .clickable { onClose(tab.id) },
@@ -1063,7 +1166,7 @@ private fun SessionTabStrip(
             }
         }
         IconButton(onClick = onAdd) {
-            Icon(Icons.Filled.Add, contentDescription = "New agent")
+            Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.chat_new_agent))
         }
     }
 }
@@ -1088,10 +1191,13 @@ private fun WorkingIndicator(currentTool: ToolCallUi?) {
             color = MaterialTheme.colorScheme.primary,
         )
         val label = when {
-            currentTool == null -> "Working…"
-            currentTool.status == "RUNNING" -> "Running · ${currentTool.name}"
-            currentTool.status == "ERROR" -> "${currentTool.name} failed — continuing…"
-            else -> "${currentTool.name} done — thinking…"
+            currentTool == null -> stringResource(R.string.chat_working)
+            currentTool.status == "RUNNING" -> stringResource(R.string.chat_running, currentTool.name)
+            currentTool.status == "ERROR" -> stringResource(
+                R.string.chat_failed_continuing,
+                currentTool.name,
+            )
+            else -> stringResource(R.string.chat_done_thinking, currentTool.name)
         }
         Text(
             label,

@@ -28,4 +28,218 @@
     <string name="shortcut_activity_long">Activity feed</string>
     <string name="shortcut_manage_short">Manage</string>
     <string name="shortcut_manage_long">Manage Hermes</string>
+
+    <!-- Shared navigation and actions -->
+    <string name="nav_chat">Chat</string>
+    <string name="nav_activity">Activity</string>
+    <string name="nav_manage">Manage</string>
+    <string name="nav_you">You</string>
+    <string name="common_retry">Retry</string>
+    <string name="common_cancel">Cancel</string>
+    <string name="common_save">Save</string>
+    <string name="common_send">Send</string>
+    <string name="common_approve">Approve</string>
+    <string name="common_deny">Deny</string>
+    <string name="common_refresh">Refresh</string>
+    <string name="common_new_agent">New agent</string>
+    <string name="common_all_sessions">All sessions</string>
+    <string name="common_compact">Compact</string>
+    <string name="common_create_branch">Create branch</string>
+    <string name="common_close">Close</string>
+    <string name="common_default">default</string>
+    <string name="common_expand">Expand</string>
+    <string name="common_collapse">Collapse</string>
+    <string name="common_connections">Connections</string>
+    <string name="common_subtitle_separator">  ·  %1$s</string>
+    <string name="common_edit_session_title">Edit session title</string>
+    <string name="common_title">Title</string>
+    <string name="common_name">Name</string>
+    <string name="common_discard">Discard</string>
+    <string name="common_keep_editing">Keep editing</string>
+    <string name="profile_switch">Switch profile</string>
+    <string name="unsaved_changes_title">Discard unsaved changes?</string>
+    <string name="unsaved_changes_message">You have edits that are not saved. Leaving now will discard them.</string>
+
+    <!-- Chat -->
+    <string name="chat_microphone_permission_denied">Microphone permission denied</string>
+    <string name="chat_status_connecting">Connecting…</string>
+    <string name="chat_status_live">Live · %1$s</string>
+    <string name="chat_status_detail"> · %1$s</string>
+    <string name="chat_status_yolo"> · ⚡yolo</string>
+    <string name="chat_status_tokens"> · %1$d tok</string>
+    <string name="chat_status_cost"> · $%1$.4f</string>
+    <string name="chat_status_disconnected">Disconnected · tap to reconnect</string>
+    <string name="chat_choices">Choices: %1$s</string>
+    <string name="chat_secure_response">Secure response</string>
+    <string name="chat_response">Response</string>
+    <string name="chat_rename_agent">Rename agent</string>
+    <string name="chat_rewind_title">Rewind to this message?</string>
+    <string name="chat_rewind_body">This creates a new chat branch containing the conversation through this message. The current session stays open.
+
+%1$s</string>
+    <string name="chat_compact_title">Compact session?</string>
+    <string name="chat_compact_body">Hermes will summarize older context to reduce the context used by the session.</string>
+    <string name="chat_compact_session">Compact session</string>
+    <string name="chat_sessions">Sessions</string>
+    <string name="chat_open_suffix"> · open</string>
+    <string name="chat_session_metadata">%1$s · %2$s · %3$d msgs</string>
+    <string name="chat_cli_source">cli</string>
+    <string name="chat_unknown_model">?</string>
+    <string name="chat_branch_from">Branch from %1$s</string>
+    <string name="chat_edit_session_title_content_description">Edit session title</string>
+    <string name="chat_models">Models</string>
+    <string name="chat_model_fallback">model</string>
+    <string name="chat_no_model_options">No options from API — try /model in chat</string>
+    <string name="chat_title">Chat</string>
+    <string name="chat_interrupt">Interrupt (Ctrl-C)</string>
+    <string name="chat_terminal_view">Terminal view</string>
+    <string name="chat_reading_view">Reading view</string>
+    <string name="chat_session_actions">Session actions</string>
+    <string name="chat_agent_activity">Agent activity</string>
+    <string name="chat_change_model">Change model</string>
+    <string name="chat_steer_settings">Steer and trigger settings</string>
+    <string name="chat_pip">Open chat in picture-in-picture</string>
+    <string name="chat_steer_trigger">Steer / trigger</string>
+    <string name="chat_choose_model">Choose a model</string>
+    <string name="chat_reasoning_effort">Reasoning effort</string>
+    <string name="chat_approval_global">Approval mode · global dashboard setting</string>
+    <string name="chat_yolo">YOLO</string>
+    <string name="chat_yolo_on">On · approvals bypassed for this session</string>
+    <string name="chat_yolo_off">Off · prompts remain enabled</string>
+    <string name="chat_unlock_hint">Reasoning and YOLO unlock after Hermes assigns a live session.</string>
+    <string name="chat_attachment_staged">%1$s · staged</string>
+    <string name="chat_attachment_retry">%1$s · retry</string>
+    <string name="chat_remove_attachment">Remove %1$s</string>
+    <string name="chat_queued">%1$d queued</string>
+    <string name="chat_message_placeholder">Message Hermes…</string>
+    <string name="chat_attach_image">Attach image</string>
+    <string name="chat_dictate">Dictate</string>
+    <string name="chat_action_rewind">Creating branch…</string>
+    <string name="chat_action_compact">Compacting session…</string>
+    <string name="chat_action_rename">Saving session title…</string>
+    <string name="chat_empty_reading">No messages yet — say hello to Hermes.</string>
+    <string name="chat_empty_terminal">Waiting for terminal output…</string>
+    <string name="chat_rewind_message">Rewind to this message</string>
+    <string name="chat_close_agent">Close %1$s</string>
+    <string name="chat_new_agent">New agent</string>
+    <string name="chat_working">Working…</string>
+    <string name="chat_running">Running · %1$s</string>
+    <string name="chat_failed_continuing">%1$s failed — continuing…</string>
+    <string name="chat_done_thinking">%1$s done — thinking…</string>
+
+    <!-- You / settings -->
+    <string name="you_title">You</string>
+    <string name="you_version">Talaria %1$s</string>
+    <string name="you_active">Active: %1$s</string>
+    <string name="you_none">none</string>
+    <string name="you_not_connected">Not connected</string>
+    <string name="you_appearance">Appearance</string>
+    <string name="you_dynamic_color">Material You dynamic color</string>
+    <string name="you_theme">Theme</string>
+    <string name="theme_dark">Dark</string>
+    <string name="theme_system">System</string>
+    <string name="theme_light">Light</string>
+    <string name="you_language">Language</string>
+    <string name="language_system_default">System default</string>
+    <string name="language_english">English</string>
+    <string name="language_japanese">日本語</string>
+    <string name="language_simplified_chinese">中文</string>
+    <string name="language_traditional_chinese">繁體中文</string>
+    <string name="language_arabic">العربية</string>
+    <string name="you_notifications_voice">Notifications &amp; voice</string>
+    <string name="you_notifications">Notifications</string>
+    <string name="you_agent_permissions">Agent permission requests</string>
+    <string name="you_agent_completion">Agent task completion</string>
+    <string name="you_background_sync">Background sync (WorkManager)</string>
+    <string name="you_speak_responses">Speak responses (TTS)</string>
+    <string name="you_cloud_speech">Allow cloud speech recognition</string>
+    <string name="you_telemetry">Telemetry (off by default)</string>
+    <string name="you_privacy">Privacy</string>
+    <string name="you_local_first">Local-first · no accounts required</string>
+    <string name="you_api_baseline">Hermes API baseline: %1$s</string>
+    <string name="you_network_description">Network only contacts your configured Hermes endpoints. Default telemetry=%1$s.</string>
+    <string name="you_privacy_text">Talaria is a privacy-respecting client for self-hosted Hermes Agent.
+
+• Zero telemetry by default. Optional analytics never leave your device unless you enable a future opt-in (currently a no-op flag).
+• Credentials are stored with EncryptedSharedPreferences + Android Keystore.
+• Offline cache (Room) stays on-device; backups exclude secrets.
+• Network traffic only targets Hermes dashboard URLs you configure.
+• Certificate pinning is optional per connection profile.
+• Microphone audio for dictation prefers on-device recognition; cloud STT requires explicit opt-in.
+• Notifications are generated locally from your Hermes polls / chat events.
+
+See PRIVACY.md in the repository for the full statement.</string>
+
+    <!-- Manage home -->
+    <string name="manage_title">Manage</string>
+    <string name="manage_agents">Agents</string>
+    <string name="manage_capabilities">Capabilities</string>
+    <string name="manage_messaging">Messaging</string>
+    <string name="manage_system_section">System</string>
+    <string name="manage_status_title">Status</string>
+    <string name="manage_status_subtitle">Version, gateway, live sessions</string>
+    <string name="manage_sessions_title">Sessions</string>
+    <string name="manage_sessions_subtitle">Browse, search, resume, export</string>
+    <string name="manage_artifacts_title">Artifacts</string>
+    <string name="manage_artifacts_subtitle">Images and files from agent sessions</string>
+    <string name="manage_cron_title">Cron</string>
+    <string name="manage_cron_subtitle">Scheduled agent jobs</string>
+    <string name="manage_analytics_title">Analytics</string>
+    <string name="manage_analytics_subtitle">Token usage &amp; cost</string>
+    <string name="manage_config_title">Config</string>
+    <string name="manage_config_subtitle">Schema-driven config.yaml editor</string>
+    <string name="manage_api_keys_title">API Keys</string>
+    <string name="manage_api_keys_subtitle">.env secrets (catalog + redacted)</string>
+    <string name="manage_models_title">Models</string>
+    <string name="manage_models_subtitle">Providers &amp; active model</string>
+    <string name="manage_skills_title">Skills</string>
+    <string name="manage_skills_subtitle">Skills, toolsets &amp; Hub</string>
+    <string name="manage_mcp_title">MCP</string>
+    <string name="manage_mcp_subtitle">Model Context Protocol servers</string>
+    <string name="manage_channels_title">Channels</string>
+    <string name="manage_channels_subtitle">Messaging platforms</string>
+    <string name="manage_pairing_title">Pairing</string>
+    <string name="manage_pairing_subtitle">Approve messaging users</string>
+    <string name="manage_webhooks_title">Webhooks</string>
+    <string name="manage_webhooks_subtitle">Dynamic subscriptions</string>
+    <string name="manage_profiles_title">Profiles</string>
+    <string name="manage_profiles_subtitle">Isolated Hermes homes</string>
+    <string name="manage_files_title">Files</string>
+    <string name="manage_files_subtitle">Browse the host filesystem</string>
+    <string name="manage_review_title">Review</string>
+    <string name="manage_review_subtitle">Git status and working-tree diffs</string>
+    <string name="manage_memory_title">Memory</string>
+    <string name="manage_memory_subtitle">Providers &amp; retrieval</string>
+    <string name="manage_learning_title">Learning</string>
+    <string name="manage_learning_subtitle">Skills graph &amp; clusters</string>
+    <string name="manage_curator_title">Curator</string>
+    <string name="manage_curator_subtitle">Automatic session upkeep</string>
+    <string name="manage_logs_title">Logs</string>
+    <string name="manage_logs_subtitle">Agent / gateway / errors</string>
+    <string name="manage_terminal_title">Terminal</string>
+    <string name="manage_terminal_subtitle">Live host shell over PTY</string>
+    <string name="manage_system_title">System</string>
+    <string name="manage_system_subtitle">Host stats, doctor, portal</string>
+    <string name="manage_search_settings">Search settings</string>
+    <string name="manage_jump_to_setting">Jump to a setting…</string>
+    <string name="manage_no_matches">No matches</string>
+
+    <!-- Activity and connection surfaces -->
+    <string name="activity_title">Activity</string>
+    <string name="activity_filter_all">All</string>
+    <string name="activity_filter_pairing">Pairing</string>
+    <string name="activity_filter_cron">Cron</string>
+    <string name="activity_filter_gateway">Gateway</string>
+    <string name="activity_filter_chat">Chat</string>
+    <string name="activity_empty">No activity yet. Background sync will populate this feed.</string>
+    <string name="activity_no_filter_matches">No events for this filter.</string>
+    <string name="connection_title">Connections</string>
+    <string name="connection_server_url">Server URL</string>
+    <string name="connection_token">Token</string>
+    <string name="connection_add_profile">Add connection</string>
+    <string name="connection_test">Test connection</string>
+    <string name="connection_connected">Connected</string>
+    <string name="connection_disconnected">Disconnected</string>
+    <string name="connection_no_profiles">No connections yet</string>
+    <string name="connection_save">Save connection</string>
 </resources>

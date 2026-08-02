@@ -16,6 +16,8 @@
 package com.hermesgadget.talaria
 
 import android.app.Application
+import android.content.Context
+import com.hermesgadget.talaria.core.data.prefs.LocaleManager
 import com.hermesgadget.talaria.core.notifications.NotificationChannels
 import com.hermesgadget.talaria.di.AppContainer
 import com.hermesgadget.talaria.worker.SyncScheduler
@@ -28,9 +30,14 @@ class TalariaApp : Application() {
         super.onCreate()
         instance = this
         container = AppContainer(this)
+        container.localeManager.apply(this)
         NotificationChannels.ensure(this)
         SyncScheduler.ensurePeriodic(this)
         container.foregroundObserver.install()
+    }
+
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(LocaleManager.wrap(base))
     }
 
     companion object {

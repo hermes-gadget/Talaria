@@ -16,6 +16,7 @@
 
 package com.hermesgadget.talaria
 
+import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
@@ -39,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.view.WindowCompat
 import com.hermesgadget.talaria.core.data.prefs.ThemeMode
+import com.hermesgadget.talaria.core.data.prefs.LocaleManager
 import com.hermesgadget.talaria.feature.pip.PipChatIntent
 import com.hermesgadget.talaria.feature.pip.PipChatSnapshot
 import com.hermesgadget.talaria.feature.pip.PipModeState
@@ -52,6 +54,10 @@ class MainActivity : ComponentActivity() {
     private var pipModeState = PipModeState()
     private var pipChatRequested = false
     private var launchingPipActivity = false
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleManager.wrap(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(

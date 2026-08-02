@@ -60,6 +60,13 @@ data class PersistedAgentWatch(
 class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("talaria_settings", Context.MODE_PRIVATE)
 
+    /** Persisted BCP-47 app locale override; null means follow the system locale. */
+    var localeTag: String?
+        get() = prefs.getString(KEY_LOCALE_TAG, null)?.takeIf { it.isNotBlank() }
+        set(value) = prefs.edit {
+            if (value.isNullOrBlank()) remove(KEY_LOCALE_TAG) else putString(KEY_LOCALE_TAG, value)
+        }
+
     private fun readThemeMode(): ThemeMode = when (prefs.getString("theme_mode", ThemeMode.DARK.name)) {
         ThemeMode.LIGHT.name -> ThemeMode.LIGHT
         ThemeMode.SYSTEM.name -> ThemeMode.SYSTEM
@@ -244,4 +251,8 @@ class SettingsStore(context: Context) {
 
     fun setSyncFingerprint(profileId: String, category: String, values: Set<String>) =
         prefs.edit { putStringSet("sync_${category}_$profileId", values.toSet()) }
+
+    private companion object {
+        const val KEY_LOCALE_TAG = "app_locale"
+    }
 }

@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="nav_chat">聊天</string>
+    <string name="nav_activity">活動</string>
+    <string name="nav_manage">管理</string>
+    <string name="nav_you">我的</string>
+    <string name="common_retry">重試</string>
+    <string name="common_cancel">取消</string>
+    <string name="common_save">儲存</string>
+    <string name="common_send">傳送</string>
+    <string name="common_approve">核准</string>
+    <string name="common_deny">拒絕</string>
+    <string name="common_refresh">重新整理</string>
+    <string name="common_new_agent">新增代理程式</string>
+    <string name="common_all_sessions">所有工作階段</string>
+    <string name="common_compact">壓縮</string>
+    <string name="common_create_branch">建立分支</string>
+    <string name="common_close">關閉</string>
+    <string name="common_default">預設</string>
+    <string name="common_expand">展開</string>
+    <string name="common_collapse">收合</string>
+    <string name="common_connections">連線</string>
+    <string name="common_subtitle_separator">  ·  %1$s</string>
+    <string name="common_edit_session_title">編輯工作階段標題</string>
+    <string name="common_title">標題</string>
+    <string name="common_name">名稱</string>
+    <string name="common_discard">捨棄</string>
+    <string name="common_keep_editing">繼續編輯</string>
+    <string name="profile_switch">切換設定檔</string>
+    <string name="unsaved_changes_title">要捨棄未儲存的變更嗎？</string>
+    <string name="unsaved_changes_message">你有尚未儲存的編輯。現在離開將捨棄這些變更。</string>
+
+    <string name="chat_microphone_permission_denied">麥克風權限遭拒</string>
+    <string name="chat_status_connecting">連線中…</string>
+    <string name="chat_status_live">線上 · %1$s</string>
+    <string name="chat_status_detail"> · %1$s</string>
+    <string name="chat_status_yolo"> · ⚡YOLO</string>
+    <string name="chat_status_tokens"> · %1$d 個權杖</string>
+    <string name="chat_status_cost"> · $%1$.4f</string>
+    <string name="chat_status_disconnected">已中斷連線 · 點選以重新連線</string>
+    <string name="chat_choices">選項：%1$s</string>
+    <string name="chat_secure_response">安全回應</string>
+    <string name="chat_response">回應</string>
+    <string name="chat_rename_agent">重新命名代理程式</string>
+    <string name="chat_rewind_title">要回復到此訊息嗎？</string>
+    <string name="chat_rewind_body">這會建立一個包含截至此訊息對話的新聊天分支。目前的工作階段會保持開啟。
+
+%1$s</string>
+    <string name="chat_compact_title">壓縮工作階段？</string>
+    <string name="chat_compact_body">Hermes 會摘要較早的內容，以減少工作階段的內容使用量。</string>
+    <string name="chat_compact_session">壓縮工作階段</string>
+    <string name="chat_sessions">工作階段</string>
+    <string name="chat_open_suffix"> · 已開啟</string>
+    <string name="chat_session_metadata">%1$s · %2$s · %3$d 則訊息</string>
+    <string name="chat_cli_source">CLI</string>
+    <string name="chat_unknown_model">?</string>
+    <string name="chat_branch_from">來自 %1$s 的分支</string>
+    <string name="chat_edit_session_title_content_description">編輯工作階段標題</string>
+    <string name="chat_models">模型</string>
+    <string name="chat_model_fallback">模型</string>
+    <string name="chat_no_model_options">API 沒有可用選項 — 請在聊天中嘗試 /model</string>
+    <string name="chat_title">聊天</string>
+    <string name="chat_interrupt">中斷 (Ctrl-C)</string>
+    <string name="chat_terminal_view">終端機檢視</string>
+    <string name="chat_reading_view">閱讀檢視</string>
+    <string name="chat_session_actions">工作階段操作</string>
+    <string name="chat_agent_activity">代理程式活動</string>
+    <string name="chat_change_model">變更模型</string>
+    <string name="chat_steer_settings">引導與觸發設定</string>
+    <string name="chat_pip">以子母畫面開啟聊天</string>
+    <string name="chat_steer_trigger">引導 / 觸發</string>
+    <string name="chat_choose_model">選擇模型</string>
+    <string name="chat_reasoning_effort">推理強度</string>
+    <string name="chat_approval_global">核准模式 · 儀表板全域設定</string>
+    <string name="chat_yolo">YOLO</string>
+    <string name="chat_yolo_on">開啟 · 此工作階段略過核准</string>
+    <string name="chat_yolo_off">關閉 · 保留提示</string>
+    <string name="chat_unlock_hint">Hermes 指派即時工作階段後，推理和 YOLO 才會啟用。</string>
+    <string name="chat_attachment_staged">%1$s · 已暫存</string>
+    <string name="chat_attachment_retry">%1$s · 重試</string>
+    <string name="chat_remove_attachment">移除 %1$s</string>
+    <string name="chat_queued">已排入 %1$d 則</string>
+    <string name="chat_message_placeholder">傳送訊息給 Hermes…</string>
+    <string name="chat_attach_image">附加圖片</string>
+    <string name="chat_dictate">聽寫</string>
+    <string name="chat_action_rewind">正在建立分支…</string>
+    <string name="chat_action_compact">正在壓縮工作階段…</string>
+    <string name="chat_action_rename">正在儲存工作階段標題…</string>
+    <string name="chat_empty_reading">尚無訊息 — 向 Hermes 打個招呼吧。</string>
+    <string name="chat_empty_terminal">正在等待終端機輸出…</string>
+    <string name="chat_rewind_message">回復到此訊息</string>
+    <string name="chat_close_agent">關閉 %1$s</string>
+    <string name="chat_new_agent">新增代理程式</string>
+    <string name="chat_working">處理中…</string>
+    <string name="chat_running">執行中 · %1$s</string>
+    <string name="chat_failed_continuing">%1$s 失敗 — 繼續執行…</string>
+    <string name="chat_done_thinking">%1$s 完成 — 思考中…</string>
+
+    <string name="you_title">我的</string>
+    <string name="you_version">Talaria %1$s</string>
+    <string name="you_active">目前：%1$s</string>
+    <string name="you_none">無</string>
+    <string name="you_not_connected">未連線</string>
+    <string name="you_appearance">外觀</string>
+    <string name="you_dynamic_color">Material You 動態色彩</string>
+    <string name="you_theme">主題</string>
+    <string name="theme_dark">深色</string>
+    <string name="theme_system">系統</string>
+    <string name="theme_light">淺色</string>
+    <string name="you_language">語言</string>
+    <string name="language_system_default">跟隨系統</string>
+    <string name="language_english">English</string>
+    <string name="language_japanese">日本語</string>
+    <string name="language_simplified_chinese">中文</string>
+    <string name="language_traditional_chinese">繁體中文</string>
+    <string name="language_arabic">العربية</string>
+    <string name="you_notifications_voice">通知與語音</string>
+    <string name="you_notifications">通知</string>
+    <string name="you_agent_permissions">代理程式權限要求</string>
+    <string name="you_agent_completion">代理程式工作完成</string>
+    <string name="you_background_sync">背景同步 (WorkManager)</string>
+    <string name="you_speak_responses">朗讀回應 (TTS)</string>
+    <string name="you_cloud_speech">允許雲端語音辨識</string>
+    <string name="you_telemetry">遙測（預設關閉）</string>
+    <string name="you_privacy">隱私權</string>
+    <string name="you_local_first">本機優先 · 不需要帳戶</string>
+    <string name="you_api_baseline">Hermes API 基準：%1$s</string>
+    <string name="you_network_description">網路只會連線到你設定的 Hermes 端點。預設遙測=%1$s。</string>
+    <string name="you_privacy_text">Talaria 是適用於自我託管 Hermes Agent 的隱私導向用戶端。
+
+• 預設不使用遙測。除非啟用未來的選擇加入功能，否則選用的分析資料不會離開裝置。
+• 憑證儲存在 EncryptedSharedPreferences 與 Android Keystore 中。
+• 離線快取 (Room) 保留在裝置上；備份不包含機密。
+• 網路流量只會傳送到你設定的 Hermes 儀表板 URL。
+• 每個連線都可選擇是否啟用憑證釘選。
+• 聽寫優先使用裝置端辨識；雲端 STT 需要明確選擇加入。
+• 通知會根據 Hermes 輪詢或聊天事件在本機產生。
+
+完整說明請參閱儲存庫中的 PRIVACY.md。</string>
+
+    <string name="manage_title">管理</string>
+    <string name="manage_agents">代理程式</string>
+    <string name="manage_capabilities">功能</string>
+    <string name="manage_messaging">訊息</string>
+    <string name="manage_system_section">系統</string>
+    <string name="manage_status_title">狀態</string>
+    <string name="manage_status_subtitle">版本、閘道、即時工作階段</string>
+    <string name="manage_sessions_title">工作階段</string>
+    <string name="manage_sessions_subtitle">瀏覽、搜尋、恢復、匯出</string>
+    <string name="manage_artifacts_title">成品</string>
+    <string name="manage_artifacts_subtitle">代理程式工作階段中的圖片和檔案</string>
+    <string name="manage_cron_title">Cron</string>
+    <string name="manage_cron_subtitle">已排程的代理程式工作</string>
+    <string name="manage_analytics_title">分析</string>
+    <string name="manage_analytics_subtitle">權杖用量與成本</string>
+    <string name="manage_config_title">設定</string>
+    <string name="manage_config_subtitle">由結構描述驅動的 config.yaml 編輯器</string>
+    <string name="manage_api_keys_title">API 金鑰</string>
+    <string name="manage_api_keys_subtitle">.env 機密（目錄與遮罩）</string>
+    <string name="manage_models_title">模型</string>
+    <string name="manage_models_subtitle">提供者與目前模型</string>
+    <string name="manage_skills_title">技能</string>
+    <string name="manage_skills_subtitle">技能、工具組與 Hub</string>
+    <string name="manage_mcp_title">MCP</string>
+    <string name="manage_mcp_subtitle">Model Context Protocol 伺服器</string>
+    <string name="manage_channels_title">頻道</string>
+    <string name="manage_channels_subtitle">訊息平台</string>
+    <string name="manage_pairing_title">配對</string>
+    <string name="manage_pairing_subtitle">核准訊息使用者</string>
+    <string name="manage_webhooks_title">Webhooks</string>
+    <string name="manage_webhooks_subtitle">動態訂閱</string>
+    <string name="manage_profiles_title">設定檔</string>
+    <string name="manage_profiles_subtitle">隔離的 Hermes 主目錄</string>
+    <string name="manage_files_title">檔案</string>
+    <string name="manage_files_subtitle">瀏覽主機檔案系統</string>
+    <string name="manage_review_title">檢閱</string>
+    <string name="manage_review_subtitle">Git 狀態與工作樹差異</string>
+    <string name="manage_memory_title">記憶</string>
+    <string name="manage_memory_subtitle">提供者與擷取</string>
+    <string name="manage_learning_title">學習</string>
+    <string name="manage_learning_subtitle">技能圖與叢集</string>
+    <string name="manage_curator_title">策展器</string>
+    <string name="manage_curator_subtitle">自動維護工作階段</string>
+    <string name="manage_logs_title">記錄</string>
+    <string name="manage_logs_subtitle">代理程式 / 閘道 / 錯誤</string>
+    <string name="manage_terminal_title">終端機</string>
+    <string name="manage_terminal_subtitle">透過 PTY 使用即時主機 Shell</string>
+    <string name="manage_system_title">系統</string>
+    <string name="manage_system_subtitle">主機統計、診斷、入口網站</string>
+    <string name="manage_search_settings">搜尋設定</string>
+    <string name="manage_jump_to_setting">跳至設定…</string>
+    <string name="manage_no_matches">沒有相符項目</string>
+
+    <string name="activity_title">活動</string>
+    <string name="activity_filter_all">全部</string>
+    <string name="activity_filter_pairing">配對</string>
+    <string name="activity_filter_cron">Cron</string>
+    <string name="activity_filter_gateway">閘道</string>
+    <string name="activity_filter_chat">聊天</string>
+    <string name="activity_empty">尚無活動。背景同步會填入此動態。</string>
+    <string name="activity_no_filter_matches">此篩選條件沒有事件。</string>
+    <string name="connection_title">連線</string>
+    <string name="connection_server_url">伺服器 URL</string>
+    <string name="connection_token">權杖</string>
+    <string name="connection_add_profile">新增連線</string>
+    <string name="connection_test">測試連線</string>
+    <string name="connection_connected">已連線</string>
+    <string name="connection_disconnected">已中斷連線</string>
+    <string name="connection_no_profiles">尚無連線</string>
+    <string name="connection_save">儲存連線</string>
+</resources>
