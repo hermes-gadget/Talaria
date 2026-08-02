@@ -707,4 +707,22 @@ interface HermesApi {
         @Path("provider_id") providerId: String,
         @Path("session_id") sessionId: String,
     ): JsonElement
+
+    // --- Multi-profile streaming ---
+
+    /** Explicit registry call; unlike the legacy method this is named by its use. */
+    @GET("api/profiles")
+    suspend fun getProfilesForMultiProfile(): ProfilesResponse
+
+    /**
+     * Fetch one Hermes management profile without relying on the active-profile
+     * interceptor. The endpoint returns either a sessions array or an envelope.
+     */
+    @GET("api/sessions")
+    suspend fun getSessionsForProfile(
+        @Query("profile") profile: String,
+        @Query("limit") limit: Int = 100,
+        @Query("offset") offset: Int = 0,
+        @Query("order") order: String = "recent",
+    ): JsonElement
 }
