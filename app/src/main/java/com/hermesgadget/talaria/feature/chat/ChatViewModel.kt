@@ -139,8 +139,12 @@ data class ChatUiState(
     val showSessionRail: Boolean = false,
     val showModelPicker: Boolean = false,
     val showSteerPopover: Boolean = false,
+    val showSessionActions: Boolean = false,
     val showSlashPalette: Boolean = false,
     val slashSuggestions: List<SlashCommand> = emptyList(),
+    /** Parent stored-session id keyed by child id; absent on older dashboards. */
+    val sessionBranchOrigins: Map<String, String> = emptyMap(),
+    val sessionControls: ChatSessionControlsState = ChatSessionControlsState(),
 ) {
     val active: ChatTab? get() = tabs.firstOrNull { it.id == activeTabId } ?: tabs.firstOrNull()
 }
@@ -300,14 +304,16 @@ class ChatViewModel(
     private fun persistChatState() {
         if (restoring) return
         val pid = container.connectionStore.activeProfile()?.scopeId() ?: return
+        // Runtime websocket ids are transient; durable ids keep resumed and branched
+        // tabs reopen on the same REST/PTY session after process recreation.
         val tabs = _ui.value.tabs.map { t ->
-            PersistedChatTab(sessionId = t.liveSessionId ?: t.resumeSessionId, title = t.title)
+            PersistedChatTab(sessionId = t.resumeSessionId ?: t.liveSessionId, title = t.title)
         }
         container.settingsStore.saveChatState(
             pid,
             PersistedChatState(
                 tabs = tabs,
-                activeSessionId = _ui.value.active?.let { it.liveSessionId ?: it.resumeSessionId },
+                activeSessionId = _ui.value.active?.let { it.resumeSessionId ?: it.liveSessionId },
             ),
         )
     }
@@ -334,7 +340,9 @@ class ChatViewModel(
         old?.session?.close()
         old?.eventClient?.dispose()
 
-        val resume = tab.liveSessionId ?: tab.resumeSessionId
+        // The sidecar may expose a runtime id that is not accepted by the PTY
+        // resume route; keep the durable branch id first when reconnecting.
+        val resume = tab.resumeSessionId ?: tab.liveSessionId
         // A re-created gateway session may share the durable id but not its
         // in-memory image queue. Force any unsent images through attach_bytes again.
         pendingImages[tabId]?.values?.forEach { it.attachedSessionId = null }
@@ -493,7 +501,22 @@ class ChatViewModel(
             hermesRepository.refreshSessions().onSuccess { list ->
                 _ui.update { it.copy(sessions = list.take(40)) }
             }
+            refreshSessionBranchOrigins()
         }
+    }
+
+    /**
+     * SessionSummary predates branch lineage, so keep the optional parent field
+     * in the chat feature's raw projection. Older gateways simply produce an
+     * empty map and the rail remains a normal flat session list.
+     */
+    private suspend fun refreshSessionBranchOrigins() {
+        val raw = runCatching {
+            withContext(Dispatchers.IO) {
+                container.clientFactory.api().getSessions(limit = 50, offset = 0)
+            }
+        }.getOrNull() ?: return
+        _ui.update { it.copy(sessionBranchOrigins = parseSessionBranchOrigins(raw)) }
     }
 
     fun toggleSessionRail(show: Boolean = !_ui.value.showSessionRail) {
@@ -514,6 +537,275 @@ class ChatViewModel(
 
     fun toggleSteerPopover(show: Boolean = !_ui.value.showSteerPopover) {
         _ui.update { it.copy(showSteerPopover = show) }
+    }
+
+    fun toggleSessionActions(show: Boolean = !_ui.value.showSessionActions) {
+        _ui.update { it.copy(showSessionActions = show) }
+    }
+
+    /** Opens the confirmation dialog only; the branch RPC starts after confirmation. */
+    fun requestRewind(messageCount: Int, preview: String) {
+        val tab = _ui.value.active ?: return
+        val sessionId = tab.liveSessionId ?: tab.resumeSessionId ?: return
+        if (messageCount <= 0) return
+        if (tab.working) {
+            setSessionActionFailure(ChatSessionActionKind.REWIND, "Stop the current turn before branching")
+            return
+        }
+        _ui.update {
+            it.copy(
+                sessionControls = ChatSessionControlsReducer.requestRewind(
+                    state = it.sessionControls,
+                    tabId = tab.id,
+                    sessionId = sessionId,
+                    messageCount = messageCount,
+                    preview = preview,
+                ),
+            )
+        }
+    }
+
+    /** Opens the confirmation dialog only; compaction starts after confirmation. */
+    fun requestCompactSession() {
+        val tab = _ui.value.active ?: return
+        val sessionId = tab.liveSessionId ?: tab.resumeSessionId ?: return
+        if (tab.working) {
+            setSessionActionFailure(ChatSessionActionKind.COMPACT, "Stop the current turn before compacting")
+            return
+        }
+        _ui.update {
+            it.copy(
+                sessionControls = ChatSessionControlsReducer.requestCompact(
+                    state = it.sessionControls,
+                    tabId = tab.id,
+                    sessionId = sessionId,
+                ),
+            )
+        }
+    }
+
+    /** Opens the title editor for an active or rail-listed stored session. */
+    fun requestSessionTitleEdit(sessionId: String? = null) {
+        val active = _ui.value.active
+        val targetId = sessionId
+            ?: active?.resumeSessionId
+            ?: active?.liveSessionId
+            ?: return
+        val tab = _ui.value.tabs.firstOrNull {
+            it.resumeSessionId == targetId || it.liveSessionId == targetId
+        }
+        val existingTitle = _ui.value.sessions.firstOrNull { it.id == targetId }?.title
+            ?: tab?.title
+            ?: ""
+        _ui.update {
+            it.copy(
+                sessionControls = ChatSessionControlsReducer.requestTitleEdit(
+                    state = it.sessionControls,
+                    sessionId = targetId,
+                    tabId = tab?.id,
+                    initialTitle = existingTitle,
+                ),
+            )
+        }
+    }
+
+    fun dismissSessionDialog() {
+        _ui.update {
+            it.copy(sessionControls = ChatSessionControlsReducer.dismissDialog(it.sessionControls))
+        }
+    }
+
+    /** Confirms either destructive session action currently shown by the dialog. */
+    fun confirmSessionDialog() {
+        val dialog = _ui.value.sessionControls.dialog ?: return
+        when (dialog) {
+            is ChatSessionDialog.Rewind -> {
+                _ui.update {
+                    it.copy(
+                        sessionControls = ChatSessionControlsReducer.begin(
+                            it.sessionControls,
+                            ChatSessionActionKind.REWIND,
+                        ),
+                    )
+                }
+                branchSession(dialog)
+            }
+            is ChatSessionDialog.Compact -> {
+                _ui.update {
+                    it.copy(
+                        sessionControls = ChatSessionControlsReducer.begin(
+                            it.sessionControls,
+                            ChatSessionActionKind.COMPACT,
+                        ),
+                    )
+                }
+                compactSession(dialog)
+            }
+            is ChatSessionDialog.EditTitle -> Unit
+        }
+    }
+
+    fun confirmSessionTitle(title: String) {
+        val dialog = _ui.value.sessionControls.dialog as? ChatSessionDialog.EditTitle ?: return
+        val trimmed = title.trim()
+        if (trimmed.isEmpty()) {
+            setSessionActionFailure(ChatSessionActionKind.RENAME, "Session title cannot be blank")
+            return
+        }
+        _ui.update {
+            it.copy(
+                sessionControls = ChatSessionControlsReducer.begin(
+                    it.sessionControls,
+                    ChatSessionActionKind.RENAME,
+                ),
+            )
+        }
+        viewModelScope.launch {
+            hermesRepository.renameSession(dialog.sessionId, trimmed)
+                .onSuccess {
+                    dialog.tabId?.let { tabId -> updateTab(tabId) { it.copy(title = trimmed) } }
+                    _ui.update {
+                        it.copy(
+                            sessionControls = ChatSessionControlsReducer.succeed(
+                                it.sessionControls,
+                                ChatSessionActionKind.RENAME,
+                                "Session title updated",
+                            ),
+                        )
+                    }
+                    refreshSessions()
+                }
+                .onFailure { failure ->
+                    setSessionActionFailure(
+                        ChatSessionActionKind.RENAME,
+                        failure.message ?: "Could not update the session title",
+                    )
+                }
+        }
+    }
+
+    private fun branchSession(request: ChatSessionDialog.Rewind) {
+        val runtime = runtimes[request.tabId]
+        if (runtime == null) {
+            setSessionActionFailure(ChatSessionActionKind.REWIND, "The chat connection is no longer active")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val root = runtime.eventClient.requestRpc(
+                    "session.branch",
+                    buildJsonObject {
+                        put("session_id", request.sessionId)
+                        put("count", request.messageCount)
+                    },
+                ) as? JsonObject ?: error("Hermes did not return a branch")
+                val storedSessionId = root["stored_session_id"]?.jsonPrimitive?.contentOrNull
+                    ?.takeIf { it.isNotBlank() }
+                    ?: root["session_id"]?.jsonPrimitive?.contentOrNull
+                        ?.takeIf { it.isNotBlank() }
+                    ?: error("Hermes did not return the new branch session id")
+                val title = root["title"]?.jsonPrimitive?.contentOrNull
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "Branch"
+                val parent = root["parent"]?.jsonPrimitive?.contentOrNull
+                    ?.takeIf { it.isNotBlank() }
+                    ?: _ui.value.sessions.firstOrNull { it.id == request.sessionId }?.id
+                    ?: request.sessionId
+                _ui.update {
+                    it.copy(sessionBranchOrigins = it.sessionBranchOrigins + (storedSessionId to parent))
+                }
+                // Branching creates a live child but leaves the parent tab intact.
+                // The stored id is the resumable chat route; the RPC session_id is
+                // only the gateway's in-memory runtime id.
+                newSession(resume = storedSessionId, titleOverride = title)
+                _ui.update {
+                    it.copy(
+                        sessionControls = ChatSessionControlsReducer.succeed(
+                            it.sessionControls,
+                            ChatSessionActionKind.REWIND,
+                            "Opened branch from ${request.preview.take(48)}",
+                        ),
+                    )
+                }
+                refreshSessions()
+            } catch (failure: Throwable) {
+                setSessionActionFailure(
+                    ChatSessionActionKind.REWIND,
+                    failure.message ?: "Could not branch this session",
+                )
+            }
+        }
+    }
+
+    private fun compactSession(request: ChatSessionDialog.Compact) {
+        val runtime = runtimes[request.tabId]
+        if (runtime == null) {
+            setSessionActionFailure(ChatSessionActionKind.COMPACT, "The chat connection is no longer active")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val root = runtime.eventClient.requestRpc(
+                    "session.compress",
+                    buildJsonObject { put("session_id", request.sessionId) },
+                ) as? JsonObject ?: error("Hermes did not return a compaction result")
+                val messages = parseSessionActionMessages(root, request.sessionId)
+                val storedSessionId = (root["info"] as? JsonObject)
+                    ?.get("stored_session_id")
+                    ?.jsonPrimitive
+                    ?.contentOrNull
+                    ?.takeIf { it.isNotBlank() }
+                if (storedSessionId != null) {
+                    updateTab(request.tabId) { it.copy(resumeSessionId = storedSessionId) }
+                }
+                if (messages != null) {
+                    updateTab(request.tabId) {
+                        it.copy(
+                            readingMessages = messages,
+                            working = false,
+                            tools = emptyList(),
+                            error = null,
+                        )
+                    }
+                }
+                val status = root["status"]?.jsonPrimitive?.contentOrNull
+                val message = when {
+                    root["lock_held"]?.jsonPrimitive?.booleanOrNull == true ->
+                        root["message"]?.jsonPrimitive?.contentOrNull
+                            ?: "Session compaction is already in progress"
+                    status == "aborted" -> "Session compaction was aborted"
+                    status == "compressed" -> "Session compacted"
+                    else -> root["message"]?.jsonPrimitive?.contentOrNull ?: "Session compacted"
+                }
+                _ui.update {
+                    it.copy(
+                        sessionControls = ChatSessionControlsReducer.succeed(
+                            it.sessionControls,
+                            ChatSessionActionKind.COMPACT,
+                            message,
+                        ),
+                    )
+                }
+                refreshSessions()
+            } catch (failure: Throwable) {
+                setSessionActionFailure(
+                    ChatSessionActionKind.COMPACT,
+                    failure.message ?: "Could not compact this session",
+                )
+            }
+        }
+    }
+
+    private fun setSessionActionFailure(kind: ChatSessionActionKind, message: String) {
+        _ui.update {
+            it.copy(
+                sessionControls = ChatSessionControlsReducer.fail(
+                    it.sessionControls,
+                    kind,
+                    message,
+                ),
+            )
+        }
     }
 
     fun selectModel(option: ModelOption) {
@@ -675,7 +967,7 @@ class ChatViewModel(
         if (mode == TranscriptMode.TERMINAL && _ui.value.active?.working == true) return
         _ui.update { it.copy(transcriptMode = mode) }
         val tab = _ui.value.active ?: return
-        val resume = tab.liveSessionId ?: tab.resumeSessionId
+        val resume = tab.resumeSessionId ?: tab.liveSessionId
         if (mode == TranscriptMode.READING && !resume.isNullOrBlank()) loadReading(tab.id, resume)
     }
 
@@ -1133,7 +1425,8 @@ class ChatViewModel(
             while (runtimes.containsKey(tabId)) {
                 val id = discoverSessionForTab(tabId)
                 if (id != null) {
-                    if (id != _ui.value.tabs.firstOrNull { it.id == tabId }?.liveSessionId) {
+                    val tab = _ui.value.tabs.firstOrNull { it.id == tabId }
+                    if (tab?.liveSessionId == null && tab?.resumeSessionId != id) {
                         bindSession(tabId, id)
                         // A tab just claimed its session — snapshot so a cold start
                         // resumes this thread (and every sibling) with its title.
@@ -1153,8 +1446,8 @@ class ChatViewModel(
      */
     private suspend fun discoverSessionForTab(tabId: String): String? {
         val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return null
-        tab.liveSessionId?.let { return it }
         tab.resumeSessionId?.let { return it }
+        tab.liveSessionId?.let { return it }
         val rt = runtimes[tabId] ?: return null
         if (!tab.hasSent || !rt.baselineReady) return null
         val list = hermesRepository.refreshSessions().getOrNull().orEmpty()
@@ -1180,7 +1473,7 @@ class ChatViewModel(
                     // A slower response for the pre-compression/pre-switch id
                     // must not overwrite the transcript after bindSession has
                     // re-anchored this tab to a newer live session.
-                    if ((tab.liveSessionId ?: tab.resumeSessionId) != sessionId) {
+                    if (tab.liveSessionId != sessionId && tab.resumeSessionId != sessionId) {
                         return@updateTab tab
                     }
                     // Never let a transient/empty server read wipe optimistic messages;
@@ -1343,15 +1636,18 @@ class ChatViewModel(
                     )
                 }
             }
-            is HermesSideEvent.SessionInfo -> updateTab(tabId) {
-                it.copy(
-                    modelLabel = event.model ?: it.modelLabel,
-                    modelConnected = it.modelConnected ?: true,
-                    provider = event.provider ?: it.provider,
-                    reasoningEffort = event.reasoningEffort ?: it.reasoningEffort,
-                    approvalMode = event.approvalMode ?: it.approvalMode,
-                    yolo = event.yolo ?: it.yolo,
-                )
+            is HermesSideEvent.SessionInfo -> {
+                bindSession(tabId, event.sessionId)
+                updateTab(tabId) {
+                    it.copy(
+                        modelLabel = event.model ?: it.modelLabel,
+                        modelConnected = it.modelConnected ?: true,
+                        provider = event.provider ?: it.provider,
+                        reasoningEffort = event.reasoningEffort ?: it.reasoningEffort,
+                        approvalMode = event.approvalMode ?: it.approvalMode,
+                        yolo = event.yolo ?: it.yolo,
+                    )
+                }
             }
             is HermesSideEvent.Usage -> updateTab(tabId) {
                 it.copy(

@@ -1,34 +1,66 @@
-# Provider onboarding
+# Composer UX implementation summary
 
-Implemented guided provider onboarding in the Connect flow.
+## What changed
 
-## Included
+- Added a per-tab composer queue. Text submitted during an active turn is retained, counted in the composer row, and drained FIFO after the authoritative `message.complete` event (with the reading-mode transcript fallback).
+- Added per-session input history with ↑/↓ navigation, draft restoration, a 50-entry cap, and SharedPreferences/JSON persistence following the existing settings pattern.
+- Added a chat-header steer/trigger popover for model selection, reasoning effort, approval mode, and YOLO. The model action reuses the existing model picker; session-only controls explain and remain disabled until Hermes assigns a session.
+- Added pure queue/history unit coverage.
 
-- Provider catalog loading with active provider/model display. The client tries `GET /api/providers` first and falls back to `/api/model/options` for Hermes v0.19.1.
-- Custom OpenAI-compatible endpoint listing, local validation, server validation, save/update, activate, remove, API-key input, model, context length, model discovery, and default-provider controls.
-- Provider credential validation through `POST /api/providers/validate` with inline reachable/accepted/rejected results.
-- Credential-pool listing with redacted server previews, add, confirmed replace/edit, and confirmed removal.
-- Provider OAuth catalog and user-started device-code/PKCE flows: authorization URL opening, user-code display, code paste, and status polling. External/unavailable OAuth flows degrade to API-key entry.
-- Existing dashboard connection URL, authentication, TLS pin, doctor, saved-profile, browser OIDC, and connect/continue actions remain intact.
-- Serializable provider models and unit tests for provider-list parsing and custom-endpoint validation.
+## Files
 
-## Live contract notes
+- `app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt`
+- `app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatScreen.kt`
+- `app/src/main/java/com/hermesgadget/talaria/feature/chat/ComposerInputState.kt`
+- `app/src/test/java/com/hermesgadget/talaria/feature/chat/ComposerInputStateTest.kt`
 
-The dashboard at `127.0.0.1:9119` (Hermes v0.19.1) currently exposes:
+## Dashboard paths investigated
 
-- `/api/providers` and `/api/providers/credential-pool` as 404s;
-- provider discovery through `/api/model/options`;
-- custom endpoints at `/api/providers/custom-endpoints` with GET/POST plus endpoint validate/activate/delete routes;
-- credential pools at `/api/credentials/pool` with GET/POST/DELETE;
-- read-only OAuth catalog at `GET /api/providers/oauth`, with device-code, PKCE, and external entries.
-
-The implementation follows those live routes and keeps the newer `/api/providers` catalog probe as a graceful compatibility path.
+- `GET /api/status`, `/api/model/info`, `/api/model/options`, `/api/config`, and `/api/config/schema`.
+- WebSocket `ws://127.0.0.1:9119/api/ws?token=local&profile=default`, including `commands.catalog` and `config.set`.
+- The wired RPC keys are `reasoning` and `yolo` per session, and `approval_mode` globally; model selection continues to use the existing `model` config path.
+- `session.info` state is consumed from sidecar events; direct `session.info` and `model.info` request RPCs are not exposed by the live v0.19.1 gateway.
 
 ## Verification
 
+- Command: `./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon`
+- Result: passed (`BUILD SUCCESSFUL`, 30 actionable tasks).
+
+## Leftovers
+
+- Approval mode is global in the current Hermes server, so the popover labels it accordingly. No requested server-side control was found to be unsupported; reasoning and YOLO are disabled only while a tab has no active/resumable session.
+
+## Chat rewind implementation
+
+Branch: `feature/chat-rewind`
+
+### What changed
+
+- Added long-press rewind confirmation to the reading transcript. The confirmed
+  action calls Hermes websocket RPC `session.branch`, opens the returned durable
+  branch session in a new chat tab, and retains optional parent lineage in the
+  session rail.
+- Added header overflow actions for confirmed `session.compress` compaction and
+  REST-backed session title editing through the existing `PATCH /api/sessions/{id}`
+  repository method.
+- Preserved queue/history/steer behavior and the existing IME padding/navigation
+  behavior. Added ViewModel-owned session action state/reducer tests.
+
+### API verification
+
+The live dashboard at `127.0.0.1:9119` reports Hermes `v0.19.1`. Its OpenAPI
+surface exposes session title PATCH but not REST `/branch` or `/compact` routes;
+the connected gateway RPC methods are `session.branch` and `session.compress`.
+The sessions response exposes `parent_session_id`, which is projected without
+changing the shared `SessionSummary` model.
+
+### Verification
+
+Passed on 2026-08-02:
+
 ```text
 JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon
-BUILD SUCCESSFUL
 ```
 
-Branch: `feature/provider-onboarding`.
+The build reported only existing warnings in unrelated artifact/learning/markdown
+code and the existing cron test opt-in warnings.
