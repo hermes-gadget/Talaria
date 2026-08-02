@@ -1,6 +1,7 @@
 /* Copyright 2026 Talaria contributors; Licensed under the Apache License, Version 2.0. */
 package com.hermesgadget.talaria.feature.manage.artifacts
 
+import android.app.Application
 import android.net.Uri
 import com.hermesgadget.talaria.domain.model.FsDataUrl
 import com.hermesgadget.talaria.domain.model.FsTextFile
@@ -16,7 +17,12 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], application = Application::class)
 class ArtifactsViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
@@ -140,7 +146,7 @@ class ArtifactsViewModelTest {
     fun `share request is exposed once and can be consumed`() = runTest {
         val artifact = artifact(ArtifactKind.TEXT, "/tmp/notes.md")
         val request = ArtifactShareRequest(
-            uri = Uri.parse("content://talaria/artifact-1"),
+            uri = Uri.EMPTY,
             mimeType = "text/plain",
             subject = "Hermes artifact notes.md",
         )
