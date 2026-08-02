@@ -1,0 +1,390 @@
+/*
+ * Copyright 2026 Talaria contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.hermesgadget.talaria.feature.voice
+
+import android.content.Context
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import com.hermesgadget.talaria.TalariaApp
+import com.hermesgadget.talaria.core.network.HermesApi
+import com.hermesgadget.talaria.core.voice.SpeechCoordinator
+import com.hermesgadget.talaria.core.voice.SttEvent
+import com.hermesgadget.talaria.domain.model.VoiceCapability
+import com.hermesgadget.talaria.domain.model.VoiceCapabilities
+import com.hermesgadget.talaria.domain.model.VoiceHistoryItem
+import com.hermesgadget.talaria.domain.model.VoiceHistoryKind
+import com.hermesgadget.talaria.domain.model.VoiceSpeakRequest
+import com.hermesgadget.talaria.domain.model.VoiceTranscriptionRequest
+import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import retrofit2.HttpException
+
+class VoiceViewModel(
+    private val api: HermesApi,
+    context: Context,
+    private val speech: SpeechCoordinator,
+    private val profileProvider: () -> String? = { null },
+) : ViewModel() {
+    private val appContext = context.applicationContext
+    private val recorder = VoiceRecorder(appContext)
+    private val audioPlayer = VoiceAudioPlayer(appContext)
+    private val _ui = MutableStateFlow(
+        VoiceUiState(
+            androidSpeechAvailable = speech.isAvailable(),
+            microphonePermissionGranted = speech.hasMicPermission(),
+        ),
+    )
+    val ui: StateFlow<VoiceUiState> = _ui.asStateFlow()
+
+    private var fallbackJob: Job? = null
+
+    fun refreshCapabilities() {
+        val current = _ui.value
+        if (current.checkingCapabilities || current.phase in setOf(
+                VoicePhase.RECORDING,
+                VoicePhase.TRANSCRIBING,
+                VoicePhase.PLAYING,
+            )
+        ) return
+
+        _ui.update { it.copy(checkingCapabilities = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val capabilities = VoiceCapabilities.fromOpenApiPaths(openApiPaths(api.getOpenApi()))
+                _ui.update { state ->
+                    state.copy(
+                        phase = VoiceStateMachine.reduce(
+                            state.phase,
+                            if (capabilities.isComplete) VoiceEvent.ServerAvailable
+                            else VoiceEvent.ServerUnavailable,
+                        ),
+                        capabilityChecked = true,
+                        checkingCapabilities = false,
+                        capabilities = capabilities,
+                        error = null,
+                    )
+                }
+            } catch (error: Throwable) {
+                _ui.update { state ->
+                    state.copy(
+                        phase = VoiceStateMachine.reduce(state.phase, VoiceEvent.ServerUnavailable),
+                        capabilityChecked = true,
+                        checkingCapabilities = false,
+                        capabilities = VoiceCapabilities(),
+                        error = "Could not inspect Hermes voice capabilities: ${messageFor(error)}",
+                    )
+                }
+            }
+        }
+    }
+
+    fun updateMicrophonePermission(granted: Boolean) {
+        _ui.update {
+            it.copy(
+                microphonePermissionGranted = granted,
+                error = if (granted) it.error else "Microphone permission denied",
+            )
+        }
+    }
+
+    fun startRecording() {
+        val state = _ui.value
+        if (!state.capabilities.isComplete || state.phase != VoicePhase.IDLE) return
+        if (!speech.hasMicPermission()) {
+            updateMicrophonePermission(false)
+            return
+        }
+
+        recorder.start()
+            .onSuccess {
+                _ui.update { it.copy(
+                    phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.StartRecording),
+                    error = null,
+                    partialText = "",
+                ) }
+            }
+            .onFailure { error ->
+                _ui.update { it.copy(error = messageFor(error, "Could not start recording")) }
+            }
+    }
+
+    fun stopRecordingAndTranscribe() {
+        if (_ui.value.phase != VoicePhase.RECORDING || _ui.value.fallbackListening) return
+
+        val recorded = recorder.stop()
+        if (recorded.isFailure) {
+            _ui.update {
+                it.copy(
+                    phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.TranscriptionFinished),
+                    error = messageFor(recorded.exceptionOrNull(), "Could not save recording"),
+                )
+            }
+            return
+        }
+
+        _ui.update { it.copy(
+            phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.RecordingFinished),
+            error = null,
+        ) }
+        val audio = recorded.getOrThrow()
+        viewModelScope.launch {
+            try {
+                val dataUrl = withContext(Dispatchers.IO) {
+                    try {
+                        val encoded = java.util.Base64.getEncoder().encodeToString(audio.file.readBytes())
+                        "data:${audio.mimeType};base64,$encoded"
+                    } finally {
+                        audio.file.delete()
+                    }
+                }
+                val response = api.transcribeAudio(
+                    VoiceTranscriptionRequest(dataUrl = dataUrl, mimeType = audio.mimeType),
+                    profile = profileProvider(),
+                )
+                val transcript = response.transcript.trim()
+                if (!response.ok || transcript.isBlank()) {
+                    throw IllegalStateException(response.error ?: "Hermes returned no transcript")
+                }
+                _ui.update { state ->
+                    state.copy(
+                        text = transcript,
+                        partialText = "",
+                        history = addHistory(state.history, transcript, VoiceHistoryKind.SERVER_TRANSCRIPTION),
+                    )
+                }
+                _ui.update { it.copy(
+                    phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.TranscriptionFinished),
+                    error = null,
+                ) }
+            } catch (error: Throwable) {
+                _ui.update { it.copy(
+                    phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.TranscriptionFinished),
+                    error = messageFor(error, "Server transcription failed"),
+                ) }
+                if (error is HttpException && error.code() == 404) {
+                    markCapabilityMissing(VoiceCapability.SERVER_STT, "Hermes no longer exposes server STT")
+                }
+            }
+        }
+    }
+
+    fun startOnDeviceDictation() {
+        val state = _ui.value
+        if (!state.androidSpeechAvailable || state.phase !in setOf(VoicePhase.IDLE, VoicePhase.UNAVAILABLE)) {
+            _ui.update { it.copy(error = "On-device speech recognition is unavailable on this device") }
+            return
+        }
+        if (!speech.hasMicPermission()) {
+            updateMicrophonePermission(false)
+            return
+        }
+
+        fallbackJob?.cancel()
+        _ui.update { it.copy(
+            phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.StartRecording),
+            fallbackListening = true,
+            partialText = "",
+            error = null,
+        ) }
+        fallbackJob = viewModelScope.launch {
+            try {
+                speech.listen(continuous = false).collect { event ->
+                    when (event) {
+                        is SttEvent.Partial -> _ui.update { it.copy(partialText = event.text) }
+                        is SttEvent.Final -> {
+                            val text = event.text.trim()
+                            if (text.isNotBlank()) {
+                                _ui.update { state ->
+                                    state.copy(
+                                        text = text,
+                                        partialText = "",
+                                        history = addHistory(state.history, text, VoiceHistoryKind.ON_DEVICE_DICTATION),
+                                    )
+                                }
+                            }
+                            _ui.update { it.copy(
+                                phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.TranscriptionFinished),
+                                fallbackListening = false,
+                            ) }
+                        }
+                        is SttEvent.Error -> {
+                            _ui.update { it.copy(error = event.message) }
+                            _ui.update { state ->
+                                state.copy(
+                                    phase = VoiceStateMachine.reduce(state.phase, VoiceEvent.TranscriptionFinished),
+                                    fallbackListening = false,
+                                    partialText = "",
+                                )
+                            }
+                        }
+                        else -> Unit
+                    }
+                }
+            } finally {
+                _ui.update { state ->
+                    state.copy(
+                        phase = if (state.phase == VoicePhase.RECORDING) {
+                            VoiceStateMachine.reduce(state.phase, VoiceEvent.TranscriptionFinished)
+                        } else state.phase,
+                        fallbackListening = false,
+                    )
+                }
+            }
+        }
+    }
+
+    fun stopOnDeviceDictation() {
+        fallbackJob?.cancel()
+        fallbackJob = null
+        _ui.update { state ->
+            state.copy(
+                phase = if (state.phase == VoicePhase.RECORDING) {
+                    VoiceStateMachine.reduce(state.phase, VoiceEvent.TranscriptionFinished)
+                } else state.phase,
+                fallbackListening = false,
+                partialText = "",
+            )
+        }
+    }
+
+    fun updateText(text: String) {
+        _ui.update { it.copy(text = text, error = null) }
+    }
+
+    fun selectHistory(item: VoiceHistoryItem) {
+        updateText(item.text)
+    }
+
+    fun speakText() {
+        val state = _ui.value
+        val text = state.text.trim()
+        if (!state.capabilities.serverTts || state.phase != VoicePhase.IDLE) return
+        if (text.isBlank()) {
+            _ui.update { it.copy(error = "Enter text to speak") }
+            return
+        }
+
+        _ui.update { it.copy(
+            phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.StartPlayback),
+            error = null,
+        ) }
+        viewModelScope.launch {
+            try {
+                val response = api.speakText(
+                    VoiceSpeakRequest(text),
+                    profile = profileProvider(),
+                )
+                if (!response.ok || response.dataUrl.isBlank()) {
+                    throw IllegalStateException(response.error ?: "Hermes returned no audio")
+                }
+                _ui.update { current ->
+                    current.copy(history = addHistory(current.history, text, VoiceHistoryKind.SERVER_SPEECH))
+                }
+                audioPlayer.play(
+                    response.dataUrl,
+                    onCompleted = { finishPlayback() },
+                    onError = { error -> finishPlayback(error) },
+                )
+            } catch (error: Throwable) {
+                finishPlayback(messageFor(error, "Server speech synthesis failed"))
+                if (error is HttpException && error.code() == 404) {
+                    markCapabilityMissing(VoiceCapability.SERVER_TTS, "Hermes no longer exposes server TTS")
+                }
+            }
+        }
+    }
+
+    fun stopPlayback() {
+        if (_ui.value.phase != VoicePhase.PLAYING) return
+        audioPlayer.stop()
+        finishPlayback()
+    }
+
+    private fun finishPlayback(error: String? = null) {
+        _ui.update { state ->
+            state.copy(
+                phase = VoiceStateMachine.reduce(state.phase, VoiceEvent.PlaybackFinished),
+                error = error,
+            )
+        }
+    }
+
+    private fun markCapabilityMissing(capability: VoiceCapability, message: String) {
+        _ui.update { state ->
+            val capabilities = when (capability) {
+                VoiceCapability.SERVER_STT -> state.capabilities.copy(serverStt = false)
+                VoiceCapability.SERVER_TTS -> state.capabilities.copy(serverTts = false)
+            }
+            state.copy(
+                phase = VoiceStateMachine.reduce(state.phase, VoiceEvent.ServerUnavailable),
+                capabilityChecked = true,
+                capabilities = capabilities,
+                error = message,
+            )
+        }
+    }
+
+    private fun addHistory(
+        current: List<VoiceHistoryItem>,
+        text: String,
+        kind: VoiceHistoryKind,
+    ): List<VoiceHistoryItem> = (listOf(
+        VoiceHistoryItem(text = text, kind = kind, timestampMs = System.currentTimeMillis()),
+    ) + current).take(MAX_HISTORY)
+
+    override fun onCleared() {
+        fallbackJob?.cancel()
+        recorder.cancel()
+        audioPlayer.stop()
+        super.onCleared()
+    }
+
+    private fun openApiPaths(root: JsonObject): Set<String> =
+        root["paths"]?.jsonObject?.keys.orEmpty()
+
+    private fun messageFor(error: Throwable?, fallback: String = "Voice request failed"): String =
+        error?.message?.takeIf { it.isNotBlank() } ?: fallback
+
+    companion object {
+        private const val MAX_HISTORY = 6
+
+        fun factory(): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                val container = TalariaApp.instance.container
+                return VoiceViewModel(
+                    api = container.clientFactory.api(),
+                    context = TalariaApp.instance,
+                    speech = container.speechCoordinator,
+                    profileProvider = {
+                        container.connectionStore.activeProfile()?.effectiveManagementProfile()
+                    },
+                ) as T
+            }
+        }
+    }
+}
