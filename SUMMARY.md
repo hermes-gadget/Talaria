@@ -1,3 +1,25 @@
+# Managed files implementation (ROADMAP #1 + #19)
+
+## Tasks
+
+- Replaced the text-only `/api/fs` browser with managed `/api/files` listing, read, upload, download, mkdir, and delete flows, plus `/api/media` image previews.
+- Added SAF upload/download, inline data-URL uploads for small files, streaming multipart uploads for larger files, progress UI, text overwrite, folder creation, delete confirmations, and sharing.
+- Applied progressive disclosure with `CollapsibleSection` and overflow menus; all new Files strings are in `strings_files.xml`.
+
+## Files changed
+
+- `app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesScreen.kt`
+- `app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesViewModel.kt`
+- `app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesPreview.kt`
+- `app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesShare.kt`
+- `app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesTransfer.kt`
+- `app/src/main/res/values/strings_files.xml`
+
+## Verification
+
+- Command: `./gradlew :app:compileDebugKotlin --no-daemon --max-workers=1 -Dorg.gradle.jvmargs=-Xmx768m -q`
+- Result: failed after 9m38s because the shared VM exhausted memory during Kotlin compilation (`OutOfMemoryError: GC overhead limit exceeded`; Gradle reported “Not enough memory to run compilation”). No retry was made per task instruction.
+
 # Composer UX implementation summary
 
 ## What changed

@@ -16,7 +16,9 @@
 package com.hermesgadget.talaria.feature.manage.files
 
 import android.content.Intent
-import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -40,11 +42,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -55,7 +63,6 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -67,6 +74,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -75,7 +83,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.hermesgadget.talaria.domain.model.FsEntry
+import com.hermesgadget.talaria.R
+import com.hermesgadget.talaria.domain.model.ManagedFileEntry
+import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
@@ -87,6 +97,26 @@ fun FilesScreen(vm: FilesViewModel = viewModel(factory = FilesViewModel.factory(
     val ui by vm.ui.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    var actionsExpanded by remember { mutableStateOf(false) }
+    var previewActionsExpanded by remember { mutableStateOf(false) }
+    var createFolderDialog by remember { mutableStateOf(false) }
+    var deleteTarget by remember { mutableStateOf<ManagedFileEntry?>(null) }
+    var folderName by remember { mutableStateOf("") }
+
+    val uploadLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        uri?.let { vm.prepareUpload(it, context.contentResolver) }
+    }
+    val downloadLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("*/*"),
+    ) { uri: Uri? ->
+        if (uri == null) vm.cancelDownload()
+        else vm.saveDownload(uri, context.contentResolver)
+    }
+
+    val shareChooserTitle = stringResource(R.string.files_share_chooser)
+    val shareFailureFallback = stringResource(R.string.files_error_share)
 
     // A Files destination can stay alive in the navigation back stack. Refresh when
     // it becomes visible again, but never keep a network loop running off-screen.
@@ -97,29 +127,97 @@ fun FilesScreen(vm: FilesViewModel = viewModel(factory = FilesViewModel.factory(
         }
     }
 
+    val readyDownload = ui.downloadState as? FileDownloadState.Ready
+    LaunchedEffect(readyDownload) {
+        readyDownload?.let { downloadLauncher.launch(it.displayName) }
+    }
+
     LaunchedEffect(ui.sharePayload) {
         val payload = ui.sharePayload ?: return@LaunchedEffect
         runCatching {
             val intent = buildFileShareIntent(context, payload)
-            context.startActivity(Intent.createChooser(intent, "Share file"))
+            context.startActivity(Intent.createChooser(intent, shareChooserTitle))
         }.onFailure { error ->
-            vm.shareFailed(error.message ?: "Could not share file")
+            vm.shareFailed(error.message ?: shareFailureFallback)
         }
         vm.clearSharePayload()
     }
 
-    if (ui.confirmSave) {
+    ui.uploadCandidate?.let { candidate ->
+        var overwrite by remember(candidate.uri) { mutableStateOf(false) }
         AlertDialog(
-            onDismissRequest = vm::cancelSave,
-            title = { Text("Overwrite file?") },
+            onDismissRequest = vm::cancelUploadSelection,
+            title = { Text(stringResource(R.string.files_upload_title)) },
             text = {
-                Text("This writes the edited text to the Hermes host. The current remote contents are checked before saving.")
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.files_upload_destination, candidate.targetPath))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = overwrite, onCheckedChange = { overwrite = it })
+                        Text(stringResource(R.string.files_overwrite_existing))
+                    }
+                }
             },
             confirmButton = {
-                TextButton(onClick = vm::confirmSave) { Text("Overwrite") }
+                TextButton(onClick = { vm.confirmUpload(overwrite) }) {
+                    Text(stringResource(R.string.files_upload_confirm))
+                }
             },
             dismissButton = {
-                TextButton(onClick = vm::cancelSave) { Text("Cancel") }
+                TextButton(onClick = vm::cancelUploadSelection) {
+                    Text(stringResource(R.string.files_cancel))
+                }
+            },
+        )
+    }
+
+    if (createFolderDialog) {
+        AlertDialog(
+            onDismissRequest = { createFolderDialog = false },
+            title = { Text(stringResource(R.string.files_create_folder_title)) },
+            text = {
+                OutlinedTextField(
+                    value = folderName,
+                    onValueChange = { folderName = it },
+                    label = { Text(stringResource(R.string.files_folder_name)) },
+                    singleLine = true,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = folderName.isNotBlank() && !ui.actionLoading,
+                    onClick = {
+                        createFolderDialog = false
+                        vm.createDirectory(folderName)
+                        folderName = ""
+                    },
+                ) { Text(stringResource(R.string.files_create)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { createFolderDialog = false }) {
+                    Text(stringResource(R.string.files_cancel))
+                }
+            },
+        )
+    }
+
+    deleteTarget?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text(stringResource(R.string.files_delete_title)) },
+            text = { Text(stringResource(R.string.files_delete_message, entry.name)) },
+            confirmButton = {
+                TextButton(
+                    enabled = !ui.actionLoading,
+                    onClick = {
+                        deleteTarget = null
+                        vm.delete(entry)
+                    },
+                ) { Text(stringResource(R.string.files_delete)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) {
+                    Text(stringResource(R.string.files_cancel))
+                }
             },
         )
     }
@@ -129,33 +227,84 @@ fun FilesScreen(vm: FilesViewModel = viewModel(factory = FilesViewModel.factory(
             onDismissRequest = vm::closePreview,
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         ) {
-            val type = ui.previewType
+            val type = ui.previewType ?: FilePreviewType.BINARY
             val mimeType = ui.previewMimeType
-                ?: file.mimeType
-                ?: if (type == FilePreviewType.TEXT) "text/plain" else "application/octet-stream"
-            val byteSize = file.byteSize.takeIf { it > 0 }
-                ?: ui.previewBytes?.size?.toLong()
-                ?: 0L
+                ?.takeIf { it.isNotBlank() }
+                ?: file.mimeType.takeIf { it.isNotBlank() }
+                ?: stringResource(R.string.files_binary_mime)
+            val byteSize = file.size.takeIf { it > 0L } ?: ui.previewBytes?.size?.toLong() ?: 0L
+            val displayName = file.name.takeIf { it.isNotBlank() }
+                ?: stringResource(R.string.files_file)
 
-            Text(
-                file.path.substringAfterLast('/').ifBlank { "File" },
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
-            Text(
-                buildString {
-                    append(formatBytes(byteSize))
-                    append(" · ")
-                    append(mimeType)
-                    if (file.truncated) append(" · truncated")
-                    if (type == FilePreviewType.BINARY || file.binary || type == FilePreviewType.IMAGE) {
-                        append(" · read-only")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 8.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        displayName,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        stringResource(
+                            R.string.files_file_metadata,
+                            formattedBytes(byteSize),
+                            mimeType,
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Box {
+                    IconButton(onClick = { previewActionsExpanded = true }) {
+                        Icon(
+                            Icons.Filled.MoreVert,
+                            contentDescription = stringResource(R.string.files_more),
+                        )
                     }
-                },
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            )
+                    DropdownMenu(
+                        expanded = previewActionsExpanded,
+                        onDismissRequest = { previewActionsExpanded = false },
+                    ) {
+                        if (type == FilePreviewType.TEXT && !ui.editing && !file.binary) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.files_edit)) },
+                                onClick = {
+                                    previewActionsExpanded = false
+                                    vm.beginEdit()
+                                },
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.files_download)) },
+                            onClick = {
+                                previewActionsExpanded = false
+                                vm.downloadPreview()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    if (ui.shareLoading) {
+                                        stringResource(R.string.files_preparing)
+                                    } else {
+                                        stringResource(R.string.files_share)
+                                    },
+                                )
+                            },
+                            onClick = {
+                                previewActionsExpanded = false
+                                vm.sharePreview()
+                            },
+                            enabled = !ui.previewLoading && !ui.shareLoading,
+                        )
+                    }
+                }
+            }
 
             if (ui.previewLoading) {
                 Column(
@@ -166,7 +315,10 @@ fun FilesScreen(vm: FilesViewModel = viewModel(factory = FilesViewModel.factory(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     CircularProgressIndicator()
-                    Text("Loading preview…", modifier = Modifier.padding(top = 12.dp))
+                    Text(
+                        stringResource(R.string.files_preview_loading),
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
                 }
             } else {
                 when (type) {
@@ -174,29 +326,27 @@ fun FilesScreen(vm: FilesViewModel = viewModel(factory = FilesViewModel.factory(
                         ui.previewBytes?.let { bytes ->
                             ZoomableImagePreview(
                                 bytes = bytes,
-                                contentDescription = file.path.substringAfterLast('/'),
+                                contentDescription = file.name,
                             )
                         } ?: Text(
-                            "Image preview unavailable.",
+                            stringResource(R.string.files_image_preview_unavailable),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(16.dp),
                         )
                     }
 
-                    FilePreviewType.BINARY -> {
-                        Text(
-                            "Binary file — read-only.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(16.dp),
-                        )
-                    }
+                    FilePreviewType.BINARY -> Text(
+                        stringResource(R.string.files_binary_read_only),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(16.dp),
+                    )
 
                     FilePreviewType.TEXT -> {
                         if (ui.editing) {
                             OutlinedTextField(
                                 value = ui.editDraft,
                                 onValueChange = vm::updateDraft,
-                                label = { Text("File contents") },
+                                label = { Text(stringResource(R.string.files_file_contents)) },
                                 textStyle = MaterialTheme.typography.bodySmall.copy(
                                     fontFamily = FontFamily.Monospace,
                                 ),
@@ -212,10 +362,16 @@ fun FilesScreen(vm: FilesViewModel = viewModel(factory = FilesViewModel.factory(
                                 horizontalArrangement = Arrangement.End,
                             ) {
                                 TextButton(onClick = vm::cancelEdit, enabled = !ui.saving) {
-                                    Text("Cancel")
+                                    Text(stringResource(R.string.files_cancel))
                                 }
                                 Button(onClick = vm::saveEdit, enabled = !ui.saving) {
-                                    Text(if (ui.saving) "Saving…" else "Save")
+                                    Text(
+                                        if (ui.saving) {
+                                            stringResource(R.string.files_saving)
+                                        } else {
+                                            stringResource(R.string.files_save)
+                                        },
+                                    )
                                 }
                             }
                         } else {
@@ -229,17 +385,8 @@ fun FilesScreen(vm: FilesViewModel = viewModel(factory = FilesViewModel.factory(
                                     .padding(16.dp)
                                     .verticalScroll(rememberScrollState()),
                             )
-                            if (file.truncated) {
-                                Text(
-                                    "Editing is disabled because only a preview was downloaded.",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 16.dp),
-                                )
-                            }
                         }
                     }
-
-                    null -> Unit
                 }
             }
 
@@ -257,65 +404,127 @@ fun FilesScreen(vm: FilesViewModel = viewModel(factory = FilesViewModel.factory(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
             }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                if (type == FilePreviewType.TEXT && !ui.editing && !file.binary && !file.truncated) {
-                    TextButton(onClick = vm::beginEdit) { Text("Edit") }
-                }
-                TextButton(
-                    onClick = vm::sharePreview,
-                    enabled = !ui.previewLoading && !ui.shareLoading,
-                ) {
-                    Text(if (ui.shareLoading) "Preparing…" else "Share")
-                }
-            }
             Spacer(Modifier.height(24.dp))
         }
     }
 
     ScreenScaffold(
-        title = "Files",
-        subtitle = ui.branch.takeIf { it.isNotBlank() }?.let { "branch $it" } ?: "host filesystem",
+        title = stringResource(R.string.files_title),
+        subtitle = stringResource(R.string.files_subtitle),
         showProfileSwitcher = true,
-        actions = { TextButton(onClick = vm::refresh) { Text("Refresh") } },
+        actions = {
+            Box {
+                IconButton(onClick = { actionsExpanded = true }) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = stringResource(R.string.files_more),
+                    )
+                }
+                DropdownMenu(
+                    expanded = actionsExpanded,
+                    onDismissRequest = { actionsExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.files_refresh)) },
+                        onClick = {
+                            actionsExpanded = false
+                            vm.refresh()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.files_upload)) },
+                        onClick = {
+                            actionsExpanded = false
+                            uploadLauncher.launch(arrayOf("*/*"))
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.files_new_folder)) },
+                        onClick = {
+                            actionsExpanded = false
+                            folderName = ""
+                            createFolderDialog = true
+                        },
+                    )
+                }
+            }
+        },
     ) {
         PullToRefreshBox(
             isRefreshing = ui.loading,
             onRefresh = vm::refresh,
             modifier = Modifier.fillMaxSize(),
         ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // Path bar with cwd shortcut + up affordance.
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    ui.path.ifBlank { "/" },
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp),
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+
+                CollapsibleSection(
+                    title = stringResource(R.string.files_location_section),
+                    collapsible = true,
                 ) {
-                    Icon(
-                        Icons.Filled.ArrowUpward,
-                        contentDescription = "Parent directory",
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clickable { vm.up() }
-                            .padding(4.dp),
-                    )
-                    Spacer(Modifier.size(4.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        IconButton(
+                            onClick = vm::up,
+                            enabled = ui.canChangePath && ui.parent != null,
+                        ) {
+                            Icon(
+                                Icons.Filled.ArrowUpward,
+                                contentDescription = stringResource(R.string.files_parent_directory),
+                            )
+                        }
+                        Text(
+                            ui.path.ifBlank { "/" },
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (ui.root != null && ui.root != ui.path) {
+                            TextButton(onClick = { vm.open(ui.root) }) {
+                                Text(stringResource(R.string.files_root))
+                            }
+                        }
+                    }
+                }
+
+                ui.actionError?.let {
                     Text(
-                        ui.path.ifBlank { "/" },
-                        style = MaterialTheme.typography.labelLarge,
-                        maxLines = 1,
-                        modifier = Modifier
-                            .weight(1f)
-                            .horizontalScroll(rememberScrollState()),
+                        it,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 16.dp),
                     )
-                    if (ui.path != ui.cwd && ui.cwd.isNotBlank()) {
-                        TextButton(onClick = { vm.open(ui.cwd) }) { Text("cwd") }
+                }
+                ui.error?.let {
+                    Text(
+                        it,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
+
+                if (ui.uploadState !is FileUploadState.Idle ||
+                    ui.downloadState !is FileDownloadState.Idle
+                ) {
+                    CollapsibleSection(
+                        title = stringResource(R.string.files_activity_section),
+                        collapsible = false,
+                    ) {
+                        TransferStatus(ui)
                     }
                 }
 
@@ -340,16 +549,24 @@ fun FilesScreen(vm: FilesViewModel = viewModel(factory = FilesViewModel.factory(
                         if (ui.entries.isEmpty()) {
                             item {
                                 Text(
-                                    "Empty directory",
+                                    stringResource(R.string.files_empty_directory),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(16.dp),
                                 )
                             }
                         }
-                        items(ui.entries, key = { it.path }) { entry ->
-                            FileRow(entry) {
-                                if (entry.isDirectory) vm.open(entry.path) else vm.openFile(entry)
-                            }
+                        items(
+                            items = ui.entries,
+                            key = { entry -> "${entry.path}:${entry.name}" },
+                        ) { entry ->
+                            ManagedFileRow(
+                                entry = entry,
+                                onOpen = {
+                                    if (entry.isDirectory) vm.open(entry.path) else vm.openFile(entry)
+                                },
+                                onDownload = { vm.download(entry) },
+                                onDelete = { deleteTarget = entry },
+                            )
                         }
                     }
                 }
@@ -359,21 +576,86 @@ fun FilesScreen(vm: FilesViewModel = viewModel(factory = FilesViewModel.factory(
 }
 
 @Composable
+private fun TransferStatus(ui: FilesUiState) {
+    when (val upload = ui.uploadState) {
+        FileUploadState.Idle -> Unit
+        is FileUploadState.Running -> {
+            Text(
+                stringResource(
+                    if (upload.phase == FileTransferPhase.PREPARING) {
+                        R.string.files_upload_preparing
+                    } else {
+                        R.string.files_uploading
+                    },
+                    upload.displayName,
+                ),
+            )
+            TransferProgress(upload.bytesSent, upload.totalBytes)
+        }
+        is FileUploadState.Complete -> Text(
+            stringResource(R.string.files_upload_complete, upload.displayName),
+        )
+        is FileUploadState.Failed -> Text(upload.message, color = MaterialTheme.colorScheme.error)
+    }
+
+    when (val download = ui.downloadState) {
+        FileDownloadState.Idle -> Unit
+        is FileDownloadState.Downloading -> {
+            Text(stringResource(R.string.files_downloading, download.displayName))
+            TransferProgress(download.bytesCopied, download.totalBytes)
+        }
+        is FileDownloadState.Ready -> Text(
+            stringResource(R.string.files_download_ready, download.displayName),
+        )
+        is FileDownloadState.Saving -> {
+            Text(stringResource(R.string.files_saving_download, download.displayName))
+            TransferProgress(download.bytesCopied, download.totalBytes)
+        }
+        is FileDownloadState.Complete -> Text(
+            stringResource(R.string.files_download_complete, download.displayName),
+        )
+        is FileDownloadState.Failed -> Text(download.message, color = MaterialTheme.colorScheme.error)
+    }
+}
+
+@Composable
+private fun TransferProgress(bytes: Long, total: Long) {
+    val fraction = (bytes.toFloat() / total.toFloat()).coerceIn(0f, 1f).takeIf { total > 0L }
+    if (fraction == null) {
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    } else {
+        LinearProgressIndicator(
+            progress = fraction,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            stringResource(
+                R.string.files_transfer_progress,
+                formattedBytes(bytes),
+                formattedBytes(total),
+            ),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
 private fun ZoomableImagePreview(bytes: ByteArray, contentDescription: String) {
     val bitmap = remember(bytes) {
-        runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
+        runCatching { android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
             .getOrNull()
     }
     if (bitmap == null) {
         Text(
-            "The image could not be decoded on this device.",
+            stringResource(R.string.files_image_decode_error),
             color = MaterialTheme.colorScheme.error,
             modifier = Modifier.padding(16.dp),
         )
         return
     }
 
-    var scale by remember(bytes) { mutableFloatStateOf(1f) }
+    var scale by remember(bytes) { androidx.compose.runtime.mutableFloatStateOf(1f) }
     var offset by remember(bytes) { mutableStateOf(Offset.Zero) }
     Box(
         modifier = Modifier
@@ -404,36 +686,108 @@ private fun ZoomableImagePreview(bytes: ByteArray, contentDescription: String) {
 }
 
 @Composable
-private fun FileRow(entry: FsEntry, onClick: () -> Unit) {
+private fun ManagedFileRow(
+    entry: ManagedFileEntry,
+    onOpen: () -> Unit,
+    onDownload: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var menuExpanded by remember(entry.path) { mutableStateOf(false) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 4.dp, vertical = 10.dp),
+            .clickable(onClick = onOpen)
+            .padding(start = 8.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
     ) {
         Icon(
             if (entry.isDirectory) Icons.Filled.Folder else Icons.AutoMirrored.Filled.InsertDriveFile,
-            contentDescription = null,
+            contentDescription = stringResource(
+                if (entry.isDirectory) R.string.files_folder else R.string.files_file,
+            ),
             tint = if (entry.isDirectory) {
                 MaterialTheme.colorScheme.primary
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(22.dp),
         )
-        Text(
-            entry.name,
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                entry.name.ifBlank { entry.path.substringAfterLast('/') },
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val details = if (entry.isDirectory) {
+                stringResource(R.string.files_folder)
+            } else {
+                val size = entry.size?.takeIf { it >= 0L }
+                val formattedSize = if (size != null) formattedBytes(size) else null
+                listOfNotNull(
+                    formattedSize,
+                    entry.mimeType?.takeIf { it.isNotBlank() },
+                ).joinToString(" · ")
+            }
+            if (details.isNotBlank()) {
+                Text(
+                    details,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Box {
+            IconButton(onClick = { menuExpanded = true }) {
+                Icon(
+                    Icons.Filled.MoreVert,
+                    contentDescription = stringResource(R.string.files_more),
+                )
+            }
+            DropdownMenu(
+                expanded = menuExpanded,
+                onDismissRequest = { menuExpanded = false },
+            ) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(
+                                if (entry.isDirectory) R.string.files_open else R.string.files_preview,
+                            ),
+                        )
+                    },
+                    onClick = {
+                        menuExpanded = false
+                        onOpen()
+                    },
+                )
+                if (!entry.isDirectory) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.files_download)) },
+                        onClick = {
+                            menuExpanded = false
+                            onDownload()
+                        },
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.files_delete)) },
+                    onClick = {
+                        menuExpanded = false
+                        onDelete()
+                    },
+                )
+            }
+        }
     }
 }
 
-private fun formatBytes(bytes: Long): String = when {
-    bytes < 1024 -> "$bytes B"
-    bytes < 1024 * 1024 -> "${bytes / 1024} KB"
-    else -> "${bytes / (1024 * 1024)} MB"
+@Composable
+private fun formattedBytes(bytes: Long): String = when {
+    bytes < 1024L -> stringResource(R.string.files_size_bytes, bytes)
+    bytes < 1024L * 1024L -> stringResource(R.string.files_size_kilobytes, bytes / 1024L)
+    else -> stringResource(R.string.files_size_megabytes, bytes / (1024L * 1024L))
 }

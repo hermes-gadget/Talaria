@@ -96,5 +96,9 @@ internal fun parseDataUrl(dataUrl: String): ParsedDataUrl {
     return ParsedDataUrl(mimeType = mimeType, bytes = bytes)
 }
 
+internal fun dataUrlFor(bytes: ByteArray, mimeType: String): String =
+    "data:${mimeType.substringBefore(';').ifBlank { "application/octet-stream" }};base64," +
+        Base64.getEncoder().encodeToString(bytes)
+
 private fun fileExtension(fileName: String): String =
     fileName.substringAfterLast('.', missingDelimiterValue = "").lowercase()
