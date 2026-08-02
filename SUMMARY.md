@@ -62,3 +62,19 @@ JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testD
 ```
 
 No third-party dependencies were added. No services were restarted, and nothing was pushed.
+
+## ROADMAP #5 — Memory provider configuration, setup, and OAuth
+
+Implemented the memory provider configuration workflow in the Talaria Android app.
+
+- Added feature-local parsing for provider config schemas, typed field kinds/options, and OAuth status responses.
+- Added provider config loading with `surface=declared`, draft editing, secret-safe updates, and `{ "values": ... }` request bodies.
+- Added provider setup execution and refresh handling.
+- Added OAuth capability probing, browser-flow start, 1.5-second status polling, cancellation, and a 120-second timeout.
+- Reworked `MemoryScreen` to render generic text, secret, select, boolean, number, and JSON fields from the server schema.
+- Added progressive disclosure with `CollapsibleSection` for providers, field groups, OAuth, and built-in memory files.
+- Added all new English UI copy under the `memory_` prefix in `strings_memory.xml`.
+
+Verification: the required constrained compile was attempted with `--no-daemon --max-workers=1`. Kotlin reached `:app:kspDebugKotlin`, but the shared VM terminated it with `OutOfMemoryError: GC overhead limit exceeded`; this is noted per the task instructions.
+
+Only the memory feature files, `strings_memory.xml`, and this required summary were changed. No forbidden client, model, navigation, catalog, shared component, manifest, Gradle, locale, or CI files were modified.
