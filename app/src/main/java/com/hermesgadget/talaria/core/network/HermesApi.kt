@@ -712,7 +712,6 @@ interface HermesApi {
         @Path("session_id") sessionId: String,
     ): JsonElement
 
-<<<<<<< HEAD
     // --- Multi-profile streaming ---
 
     /** Explicit registry call; unlike the legacy method this is named by its use. */

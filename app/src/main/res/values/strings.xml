@@ -217,6 +217,10 @@ See PRIVACY.md in the repository for the full statement.</string>
     <string name="manage_logs_title">Logs</string>
     <string name="manage_logs_subtitle">Agent / gateway / errors</string>
     <string name="manage_terminal_title">Terminal</string>
+    <string name="manage_command_center_title">Command Center</string>
+    <string name="manage_command_center_subtitle">Status, logs, usage &amp; maintenance</string>
+    <string name="manage_themes_title">Themes</string>
+    <string name="manage_themes_subtitle">Preset palettes &amp; server sync</string>
     <string name="manage_terminal_subtitle">Live host shell over PTY</string>
     <string name="manage_system_title">System</string>
     <string name="manage_system_subtitle">Host stats, doctor, portal</string>

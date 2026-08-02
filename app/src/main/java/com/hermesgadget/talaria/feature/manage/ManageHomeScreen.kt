@@ -102,7 +102,7 @@ private val manageSections = listOf(
         R.string.manage_agents,
         listOf(
             ManageItem(R.string.manage_status_title, R.string.manage_status_subtitle, Routes.STATUS, Icons.Filled.MonitorHeart),
-            ManageItem("Command Center", "Status, logs, usage & maintenance", Routes.COMMAND_CENTER, Icons.Filled.Dashboard),
+            ManageItem(R.string.manage_command_center_title, R.string.manage_command_center_subtitle, Routes.COMMAND_CENTER, Icons.Filled.Dashboard),
             ManageItem(R.string.manage_sessions_title, R.string.manage_sessions_subtitle, Routes.SESSIONS, Icons.Filled.Forum),
             ManageItem(R.string.manage_artifacts_title, R.string.manage_artifacts_subtitle, Routes.ARTIFACTS, Icons.Filled.Folder),
             ManageItem(R.string.manage_cron_title, R.string.manage_cron_subtitle, Routes.CRON, Icons.Filled.Schedule),
@@ -138,7 +138,7 @@ private val manageSections = listOf(
             ManageItem(R.string.manage_curator_title, R.string.manage_curator_subtitle, Routes.CURATOR, Icons.Filled.CleaningServices),
             ManageItem(R.string.manage_logs_title, R.string.manage_logs_subtitle, Routes.LOGS, Icons.AutoMirrored.Filled.Article),
             ManageItem(R.string.manage_terminal_title, R.string.manage_terminal_subtitle, Routes.TERMINAL, Icons.Filled.Terminal),
-            ManageItem("Themes", "Preset palettes & server sync", Routes.THEMES, Icons.Filled.Palette),
+            ManageItem(R.string.manage_themes_title, R.string.manage_themes_subtitle, Routes.THEMES, Icons.Filled.Palette),
             ManageItem(R.string.manage_system_title, R.string.manage_system_subtitle, Routes.SYSTEM, Icons.Filled.Dns),
         ),
     ),
