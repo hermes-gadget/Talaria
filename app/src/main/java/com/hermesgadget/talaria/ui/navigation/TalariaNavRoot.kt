@@ -66,6 +66,7 @@ import com.hermesgadget.talaria.feature.manage.logs.LogsScreen
 import com.hermesgadget.talaria.feature.manage.mcp.McpScreen
 import com.hermesgadget.talaria.feature.manage.pairing.PairingScreen
 import com.hermesgadget.talaria.feature.manage.profiles.ProfilesScreen
+import com.hermesgadget.talaria.feature.manage.review.ReviewScreen
 import com.hermesgadget.talaria.feature.manage.sessions.SessionDetailScreen
 import com.hermesgadget.talaria.feature.manage.sessions.SessionsScreen
 import com.hermesgadget.talaria.feature.manage.skills.SkillsScreen
@@ -342,6 +343,7 @@ fun TalariaNavRoot(
                 composable(Routes.MEMORY) { MemoryScreen() }
                 composable(Routes.CURATOR) { CuratorScreen() }
                 composable(Routes.FILES) { FilesScreen() }
+                composable(Routes.REVIEW) { ReviewScreen(onOpenFile = { _ -> navController.navigate(Routes.FILES) }) }
                 composable(Routes.MODELS) { ModelsScreen() }
                 composable(Routes.LEARNING) { LearningScreen() }
                 composable(Routes.ARTIFACTS) {

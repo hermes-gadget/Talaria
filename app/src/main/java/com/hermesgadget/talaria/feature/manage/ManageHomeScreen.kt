@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Forum
@@ -117,6 +118,7 @@ private val manageSections = listOf(
         listOf(
             ManageItem("Profiles", "Isolated Hermes homes", Routes.PROFILES, Icons.Filled.SwitchAccount),
             ManageItem("Files", "Browse the host filesystem", Routes.FILES, Icons.Filled.Folder),
+            ManageItem("Review", "Git status and working-tree diffs", Routes.REVIEW, Icons.Filled.Code),
             ManageItem("Memory", "Providers & retrieval", Routes.MEMORY, Icons.Filled.Psychology),
             ManageItem("Learning", "Skills graph & clusters", Routes.LEARNING, Icons.Filled.Insights),
             ManageItem("Curator", "Automatic session upkeep", Routes.CURATOR, Icons.Filled.CleaningServices),

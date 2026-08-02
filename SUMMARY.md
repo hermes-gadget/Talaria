@@ -29,3 +29,16 @@
 ## Leftovers
 
 - Approval mode is global in the current Hermes server, so the popover labels it accordingly. No requested server-side control was found to be unsupported; reasoning and YOLO are disabled only while a tab has no active/resumable session.
+
+---
+
+# Git review pane
+
+Implemented the small-screen Review destination on `feature/git-review`.
+
+- Added typed `/api/git/*` Retrofit coverage in one marked Git review section. The live v0.19.1 OpenAPI exposes branch switching as `POST /api/git/branch/switch`; `/api/git/switch` was checked and is not a POST route.
+- Added workspace status, branch/base-branch browsing, confirmed branch switching, changed-file review, working-tree text reads, client-side unified-diff rendering, copy-path, and Files-pane navigation.
+- Added unit coverage for line diffs, unified patch rendering, live branch response decoding, and detached-branch parsing.
+- Kept changes within the requested feature/navigation/API/model scope plus this summary.
+
+Verification: `JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon` passed (`BUILD SUCCESSFUL`; 123 tests completed).

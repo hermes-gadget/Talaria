@@ -52,6 +52,7 @@ object Routes {
     const val MEMORY = "memory"
     const val CURATOR = "curator"
     const val FILES = "files"
+    const val REVIEW = "review"
     const val MODELS = "models"
     const val LEARNING = "learning"
     const val SETTINGS = "settings"
