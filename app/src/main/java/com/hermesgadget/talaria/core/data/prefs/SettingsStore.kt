@@ -20,6 +20,8 @@ package com.hermesgadget.talaria.core.data.prefs
 import android.content.Context
 import androidx.core.content.edit
 import com.hermesgadget.talaria.core.network.JsonConfig
+import com.hermesgadget.talaria.core.notifications.QuietHoursPolicy
+import com.hermesgadget.talaria.core.notifications.QuietHoursSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -101,6 +103,28 @@ class SettingsStore(context: Context) {
     var notifyTaskCompletions: Boolean
         get() = prefs.getBoolean("notify_task_completions", true)
         set(value) = prefs.edit { putBoolean("notify_task_completions", value) }
+
+    var quietHoursEnabled: Boolean
+        get() = prefs.getBoolean("notification_quiet_hours_enabled", false)
+        set(value) = prefs.edit { putBoolean("notification_quiet_hours_enabled", value) }
+
+    var quietHoursStartMinutes: Int
+        get() = prefs.getInt("notification_quiet_hours_start", QuietHoursPolicy.DEFAULT_START_MINUTES)
+        set(value) = prefs.edit { putInt("notification_quiet_hours_start", value) }
+
+    var quietHoursEndMinutes: Int
+        get() = prefs.getInt("notification_quiet_hours_end", QuietHoursPolicy.DEFAULT_END_MINUTES)
+        set(value) = prefs.edit { putInt("notification_quiet_hours_end", value) }
+
+    var perAgentChannelsEnabled: Boolean
+        get() = prefs.getBoolean("notification_per_agent_channels", true)
+        set(value) = prefs.edit { putBoolean("notification_per_agent_channels", value) }
+
+    fun quietHoursSettings(): QuietHoursSettings = QuietHoursSettings(
+        enabled = quietHoursEnabled,
+        startMinutes = quietHoursStartMinutes,
+        endMinutes = quietHoursEndMinutes,
+    )
 
     var notificationPermissionRequested: Boolean
         get() = prefs.getBoolean("notification_permission_requested", false)

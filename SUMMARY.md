@@ -1,36 +1,3 @@
-# Command Center implementation summary
-
-## What changed
-
-- Added a Manage > Command Center destination with Gateway, Logs, Usage, and Maintenance sections.
-- Gateway combines `/api/status` and `/api/system/stats`; logs tail `agent`, `gateway`, and `errors`; usage normalizes current and legacy analytics shapes.
-- Added pull-to-refresh, loading/error states, per-section graceful degradation, level-colored compact log rows, and System links for doctor, backup, and restart.
-- Added log-line and usage-summary parser unit tests. Existing HermesApi/repository endpoints already covered the live v0.19.1 contract, so no API additions were necessary.
-
-## Files
-
-- `app/src/main/java/com/hermesgadget/talaria/feature/manage/commandcenter/CommandCenterModels.kt`
-- `app/src/main/java/com/hermesgadget/talaria/feature/manage/commandcenter/CommandCenterViewModel.kt`
-- `app/src/main/java/com/hermesgadget/talaria/feature/manage/commandcenter/CommandCenterScreen.kt`
-- `app/src/test/java/com/hermesgadget/talaria/feature/manage/commandcenter/CommandCenterModelsTest.kt`
-- `app/src/main/java/com/hermesgadget/talaria/feature/manage/ManageHomeScreen.kt`
-- `app/src/main/java/com/hermesgadget/talaria/ui/navigation/Routes.kt`
-- `app/src/main/java/com/hermesgadget/talaria/ui/navigation/TalariaNavRoot.kt`
-
-## Live endpoint checks
-
-- `GET /api/status` — 200
-- `GET /api/system/stats` — 200
-- `GET /api/logs?file=agent|gateway|errors` — 200
-- `GET /api/analytics/usage?days=7` — 200
-- `/api/system` and `/api/usage` are not present; the Command Center uses the verified replacements. Maintenance routes are present in OpenAPI and remain behind the existing System screen to avoid accidental side effects during verification.
-
-## Verification
-
-- Passed: `JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon` (`BUILD SUCCESSFUL`, 30 actionable tasks).
-
----
-
 # Composer UX implementation summary
 
 ## What changed
@@ -74,11 +41,23 @@ Branch: `feature/widget-pip`
 
 Verification: `JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon` — passed.
 
-## Themes parity wave
+## Notification parity
 
-- Branch: `feature/themes`
-- Added six data-driven presets: Dark (default), Light, Solarized, Nord, Dracula, and Gruvbox. Each exposes complete dark/light Material 3 schemes plus a monochrome accent variant.
-- Added the Manage → Themes destination with instant preset selection, `theme_preset` persistence, live swatch previews, and process-local server color overrides.
-- Backend probe (Hermes v0.19.1, read-only): `GET /api/skin` returned 404. `GET /api/config` returned `dashboard.theme = mono` and `display.skin = default`, but no supported `primary`, `accent`, or `background` fields. The UI therefore keeps “Sync from server” disabled with an explanatory note while retaining a config parser/mapping path for compatible servers.
-- Added unit coverage for preset lookup/completeness and SettingsStore persistence round-trip.
-- Verification: `JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon` passed.
+Implemented on branch `feature/notifications`:
+
+- Added persisted quiet-hours enable/start/end settings with overnight and all-day window evaluation.
+- Agent notifications now use silent, low-priority delivery while quiet hours are active.
+- Added four stable per-agent Android channel slots plus an `Other agents` fallback, with a toggle to retain the legacy shared channels.
+- Added `NotificationSettingsScreen` and `NotificationSettingsViewModel`, including the active-window indicator, channel assignments, time pickers, and test-notification action.
+- Added one Notification settings row from You and wired `Routes.SETTINGS`.
+- Added unit coverage for quiet-hours boundaries and channel mapping.
+
+### Notification verification
+
+Command:
+
+```text
+JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon
+```
+
+`compileDebugKotlin` passed. The unit-test task ran 154 tests; one unrelated pre-existing `ArtifactExtractionTest` failed with `StackOverflowError` in recursive JSON primitive parsing.

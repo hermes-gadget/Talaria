@@ -80,6 +80,7 @@ import com.hermesgadget.talaria.feature.manage.models.ModelsScreen
 import com.hermesgadget.talaria.feature.manage.system.SystemScreen
 import com.hermesgadget.talaria.feature.manage.webhooks.WebhooksScreen
 import com.hermesgadget.talaria.feature.settings.ThemeScreen
+import com.hermesgadget.talaria.feature.settings.NotificationSettingsScreen
 import com.hermesgadget.talaria.feature.terminal.TerminalScreen
 import com.hermesgadget.talaria.feature.you.YouScreen
 import com.hermesgadget.talaria.domain.model.scopeId
@@ -309,8 +310,10 @@ fun TalariaNavRoot(
                 composable(TopDest.You.route) {
                     YouScreen(
                         onConnect = { navController.navigate(Routes.CONNECT) },
+                        onOpenNotificationSettings = { navController.navigate(Routes.SETTINGS) },
                     )
                 }
+                composable(Routes.SETTINGS) { NotificationSettingsScreen() }
                 composable(Routes.STATUS) {
                     StatusScreen(onOpenSession = { navController.navigate(Routes.sessionDetail(it)) })
                 }
