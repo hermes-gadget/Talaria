@@ -29,6 +29,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -45,14 +46,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.domain.model.AnalyticsUsage
+import com.hermesgadget.talaria.domain.model.EgressStatusResponse
+import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -63,14 +69,23 @@ import kotlinx.serialization.json.longOrNull
 @Composable
 fun AnalyticsScreen() {
     val repo = TalariaApp.instance.container.hermesRepository
+    val api = TalariaApp.instance.container.clientFactory.api()
     var data by remember { mutableStateOf<AnalyticsUsage?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
+    var modelRows by remember { mutableStateOf<List<AnalyticsModelRow>>(emptyList()) }
+    var modelsLoading by remember { mutableStateOf(true) }
+    var modelsError by remember { mutableStateOf<String?>(null) }
+    var egressStatus by remember { mutableStateOf<EgressStatusResponse?>(null) }
+    var egressLoading by remember { mutableStateOf(true) }
+    var egressError by remember { mutableStateOf<String?>(null) }
     var days by remember { mutableIntStateOf(30) }
     val scope = rememberCoroutineScope()
 
     fun reload() = scope.launch {
         loading = true
+        modelsLoading = true
+        egressLoading = true
         repo.getAnalytics(days)
             .onSuccess {
                 data = it
@@ -81,6 +96,20 @@ fun AnalyticsScreen() {
                 error = it.message
                 loading = false
             }
+        runCatching { api.getAnalyticsModels() }
+            .onSuccess {
+                modelRows = parseAnalyticsModels(it)
+                modelsError = null
+            }
+            .onFailure { modelsError = it.message }
+        modelsLoading = false
+        runCatching { api.getEgressStatus() }
+            .onSuccess {
+                egressStatus = it
+                egressError = null
+            }
+            .onFailure { egressError = it.message }
+        egressLoading = false
     }
     LaunchedEffect(days) { reload() }
 
@@ -114,63 +143,94 @@ fun AnalyticsScreen() {
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TotalCard("Sessions", sessions?.toString() ?: "—", Modifier.weight(1f))
-                        TotalCard("Cost", cost?.let { "$%.2f".format(it) } ?: "—", Modifier.weight(1f))
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TotalCard(
-                            "Input",
-                            formatTokens(inputTokens),
-                            Modifier.weight(1f),
-                        )
-                        TotalCard(
-                            "Output",
-                            formatTokens(outputTokens),
-                            Modifier.weight(1f),
-                        )
-                    }
-                    val bars = parseDailyBars(a.daily)
-                    if (bars.isNotEmpty()) {
-                        Text("Daily", style = MaterialTheme.typography.titleMedium)
-                        val max = bars.maxOf { it.value }.coerceAtLeast(1.0)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(120.dp),
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                            verticalAlignment = Alignment.Bottom,
-                        ) {
-                            bars.forEach { bar ->
-                                val frac = (bar.value / max).toFloat().coerceIn(0.02f, 1f)
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxHeight(frac)
-                                        .background(
-                                            MaterialTheme.colorScheme.primary,
-                                            MaterialTheme.shapes.extraSmall,
-                                        ),
-                                )
-                            }
+                    CollapsibleSection(stringResource(R.string.minor_analytics_overview)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TotalCard("Sessions", sessions?.toString() ?: "—", Modifier.weight(1f))
+                            TotalCard("Cost", cost?.let { "$%.2f".format(it) } ?: "—", Modifier.weight(1f))
                         }
-                        Text(
-                            "${bars.size} days · max ${formatTokens(bars.maxOf { it.value.toLong() })}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        Text(
-                            "No usage yet for this window.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TotalCard(
+                                "Input",
+                                formatTokens(inputTokens),
+                                Modifier.weight(1f),
+                            )
+                            TotalCard(
+                                "Output",
+                                formatTokens(outputTokens),
+                                Modifier.weight(1f),
+                            )
+                        }
                     }
-                    val modelLines = parseModelBreakdown(a.by_model ?: a.models)
-                    if (modelLines.isNotEmpty()) {
-                        Text("By model / provider", style = MaterialTheme.typography.titleMedium)
-                        modelLines.forEach { line ->
-                            Text(line, style = MaterialTheme.typography.bodyMedium)
+                    CollapsibleSection(
+                        title = stringResource(R.string.minor_analytics_daily_usage),
+                        collapsible = true,
+                    ) {
+                        val bars = parseDailyBars(a.daily)
+                        if (bars.isNotEmpty()) {
+                            val max = bars.maxOf { it.value }.coerceAtLeast(1.0)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(120.dp),
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                verticalAlignment = Alignment.Bottom,
+                            ) {
+                                bars.forEach { bar ->
+                                    val frac = (bar.value / max).toFloat().coerceIn(0.02f, 1f)
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight(frac)
+                                            .background(
+                                                MaterialTheme.colorScheme.primary,
+                                                MaterialTheme.shapes.extraSmall,
+                                            ),
+                                    )
+                                }
+                            }
+                            Text(
+                                "${bars.size} days · max ${formatTokens(bars.maxOf { it.value.toLong() })}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            Text(
+                                "No usage yet for this window.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    CollapsibleSection(
+                        title = stringResource(R.string.minor_analytics_per_model),
+                        collapsible = true,
+                    ) {
+                        when {
+                            modelsLoading -> LinearProgressIndicator(Modifier.fillMaxWidth())
+                            modelsError != null -> Text(
+                                modelsError!!,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            modelRows.isEmpty() -> Text(
+                                stringResource(R.string.minor_analytics_no_models),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            else -> modelRows.forEach { row -> AnalyticsModelCard(row) }
+                        }
+                    }
+                    CollapsibleSection(
+                        title = stringResource(R.string.minor_analytics_connectivity),
+                        collapsible = true,
+                    ) {
+                        when {
+                            egressLoading -> LinearProgressIndicator(Modifier.fillMaxWidth())
+                            egressError != null -> Text(
+                                egressError!!,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            else -> EgressStatusCard(egressStatus)
                         }
                     }
                 }
@@ -179,28 +239,125 @@ fun AnalyticsScreen() {
     }
 }
 
-private fun parseModelBreakdown(models: kotlinx.serialization.json.JsonElement?): List<String> {
-    if (models == null) return emptyList()
-    return when (models) {
-        is kotlinx.serialization.json.JsonArray -> models.mapNotNull { el ->
-            val obj = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull el.toString()
-            val name = obj["name"]?.toString()?.trim('"')
-                ?: obj["model"]?.toString()?.trim('"')
-                ?: obj["provider"]?.toString()?.trim('"')
-                ?: "model"
-            val tokens = obj["tokens"]?.jsonPrimitive?.longOrNull
-                ?: obj["total_tokens"]?.jsonPrimitive?.longOrNull
-                ?: ((obj["input_tokens"]?.jsonPrimitive?.longOrNull ?: 0L) +
-                    (obj["output_tokens"]?.jsonPrimitive?.longOrNull ?: 0L))
-            val cost = obj["cost"]?.jsonPrimitive?.doubleOrNull
-                ?: obj["actual_cost"]?.jsonPrimitive?.doubleOrNull?.takeIf { it > 0.0 }
-                ?: obj["estimated_cost"]?.jsonPrimitive?.doubleOrNull
-            listOfNotNull(name, tokens?.let { "$it tok" }, cost?.let { "\$$it" }).joinToString(" · ")
+private data class AnalyticsModelRow(
+    val model: String,
+    val provider: String?,
+    val inputTokens: Long,
+    val outputTokens: Long,
+    val cacheReadTokens: Long,
+    val sessions: Long,
+    val estimatedCost: Double,
+    val actualCost: Double,
+    val apiCalls: Long,
+    val toolCalls: Long,
+)
+
+private fun parseAnalyticsModels(root: JsonElement): List<AnalyticsModelRow> {
+    val elements = when (root) {
+        is JsonArray -> root
+        is JsonObject -> root["models"] as? JsonArray ?: JsonArray(emptyList())
+        else -> JsonArray(emptyList())
+    }
+    return elements.mapNotNull { element ->
+        val obj = element as? JsonObject ?: return@mapNotNull null
+        val model = obj.stringValue("model", "name") ?: return@mapNotNull null
+        AnalyticsModelRow(
+            model = model,
+            provider = obj.stringValue("provider", "billing_provider"),
+            inputTokens = obj.longValue("input_tokens"),
+            outputTokens = obj.longValue("output_tokens"),
+            cacheReadTokens = obj.longValue("cache_read_tokens"),
+            sessions = obj.longValue("sessions", "session_count"),
+            estimatedCost = obj.doubleValue("estimated_cost"),
+            actualCost = obj.doubleValue("actual_cost"),
+            apiCalls = obj.longValue("api_calls"),
+            toolCalls = obj.longValue("tool_calls"),
+        )
+    }
+}
+
+private fun JsonObject.stringValue(vararg keys: String): String? = keys.firstNotNullOfOrNull { key ->
+    (this[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+}
+
+private fun JsonObject.longValue(vararg keys: String): Long = keys.firstNotNullOfOrNull { key ->
+    val primitive = this[key] as? JsonPrimitive ?: return@firstNotNullOfOrNull null
+    primitive.longOrNull ?: primitive.doubleOrNull?.toLong()
+} ?: 0L
+
+private fun JsonObject.doubleValue(vararg keys: String): Double = keys.firstNotNullOfOrNull { key ->
+    val primitive = this[key] as? JsonPrimitive ?: return@firstNotNullOfOrNull null
+    primitive.doubleOrNull ?: primitive.longOrNull?.toDouble()
+} ?: 0.0
+
+@Composable
+private fun AnalyticsModelCard(row: AnalyticsModelRow) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        ),
+        shape = MaterialTheme.shapes.small,
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(row.model, style = MaterialTheme.typography.titleSmall)
+            row.provider?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                listOf(
+                    stringResource(R.string.minor_analytics_input, formatTokens(row.inputTokens)),
+                    stringResource(R.string.minor_analytics_output, formatTokens(row.outputTokens)),
+                ).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (row.cacheReadTokens > 0L) {
+                Text(
+                    stringResource(R.string.minor_analytics_cache, formatTokens(row.cacheReadTokens)),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Text(
+                listOf(
+                    stringResource(R.string.minor_analytics_sessions, row.sessions),
+                    stringResource(
+                        R.string.minor_analytics_cost,
+                        formatCost(row.actualCost.takeIf { it > 0.0 } ?: row.estimatedCost),
+                    ),
+                ).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                stringResource(R.string.minor_analytics_calls, row.apiCalls, row.toolCalls),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
-        is kotlinx.serialization.json.JsonObject -> models.entries.map { (k, v) ->
-            "$k: $v"
-        }
-        else -> listOf(models.toString())
+    }
+}
+
+@Composable
+private fun EgressStatusCard(status: EgressStatusResponse?) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        ),
+        shape = MaterialTheme.shapes.small,
+    ) {
+        Text(
+            text = status?.text?.takeIf { it.isNotBlank() }
+                ?: stringResource(R.string.minor_analytics_egress_empty),
+            modifier = Modifier.padding(12.dp),
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
 
@@ -234,6 +391,8 @@ private fun formatTokens(n: Long?): String {
         else -> n.toString()
     }
 }
+
+private fun formatCost(cost: Double): String = "$%.2f".format(cost)
 
 private fun parseDailyBars(daily: kotlinx.serialization.json.JsonElement?): List<DailyBar> {
     if (daily == null) return emptyList()

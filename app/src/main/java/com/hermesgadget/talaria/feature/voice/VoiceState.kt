@@ -19,6 +19,12 @@ package com.hermesgadget.talaria.feature.voice
 import com.hermesgadget.talaria.domain.model.VoiceCapabilities
 import com.hermesgadget.talaria.domain.model.VoiceHistoryItem
 
+data class ElevenLabsVoice(
+    val voiceId: String,
+    val name: String,
+    val label: String,
+)
+
 enum class VoicePhase {
     IDLE,
     RECORDING,
@@ -79,5 +85,9 @@ data class VoiceUiState(
     val partialText: String = "",
     val fallbackListening: Boolean = false,
     val history: List<VoiceHistoryItem> = emptyList(),
+    val elevenLabsLoading: Boolean = false,
+    val elevenLabsAvailable: Boolean? = null,
+    val elevenLabsVoices: List<ElevenLabsVoice> = emptyList(),
+    val elevenLabsError: String? = null,
     val error: String? = null,
 )

@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -41,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.hermesgadget.talaria.R
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesgadget.talaria.core.util.formatHermesTimestamp
@@ -48,6 +48,7 @@ import com.hermesgadget.talaria.domain.model.AutomationBlueprint
 import com.hermesgadget.talaria.domain.model.CronDeliveryTarget
 import com.hermesgadget.talaria.domain.model.CronRun
 import com.hermesgadget.talaria.domain.model.ManageCronJob
+import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
@@ -84,70 +85,81 @@ fun CronScreen(vm: CronViewModel = viewModel(factory = CronViewModel.factory()))
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     item {
-                        CreateCronCard(
-                            name = name,
-                            prompt = prompt,
-                            schedule = schedule,
-                            delivery = delivery,
-                            deliveryTargets = state.deliveryTargets,
-                            deliveryMenuOpen = deliveryMenuOpen,
-                            onNameChange = { name = it },
-                            onPromptChange = { prompt = it },
-                            onScheduleChange = { schedule = it },
-                            onDeliveryChange = { delivery = it; deliveryMenuOpen = false },
-                            onDeliveryMenuChange = { deliveryMenuOpen = it },
-                            onCreate = {
-                                vm.create(prompt, schedule, name, delivery)
-                                if (prompt.isNotBlank() && schedule.isNotBlank()) {
-                                    prompt = ""
-                                    name = ""
-                                }
-                            },
-                        )
+                        CollapsibleSection(
+                            title = androidx.compose.ui.res.stringResource(R.string.minor_cron_create_section),
+                            collapsible = true,
+                        ) {
+                            CreateCronCard(
+                                name = name,
+                                prompt = prompt,
+                                schedule = schedule,
+                                delivery = delivery,
+                                deliveryTargets = state.deliveryTargets,
+                                deliveryMenuOpen = deliveryMenuOpen,
+                                onNameChange = { name = it },
+                                onPromptChange = { prompt = it },
+                                onScheduleChange = { schedule = it },
+                                onDeliveryChange = { delivery = it; deliveryMenuOpen = false },
+                                onDeliveryMenuChange = { deliveryMenuOpen = it },
+                                onCreate = {
+                                    vm.create(prompt, schedule, name, delivery)
+                                    if (prompt.isNotBlank() && schedule.isNotBlank()) {
+                                        prompt = ""
+                                        name = ""
+                                    }
+                                },
+                            )
+                        }
                     }
                     state.message?.let { message ->
                         item { Text(message, color = MaterialTheme.colorScheme.error) }
                     }
-                    if (state.jobs.isEmpty()) {
-                        item {
-                            Text(
-                                "No scheduled jobs",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(vertical = 12.dp),
-                            )
+                    item {
+                        CollapsibleSection(
+                            title = androidx.compose.ui.res.stringResource(R.string.minor_cron_jobs_section),
+                        ) {
+                            if (state.jobs.isEmpty()) {
+                                Text(
+                                    "No scheduled jobs",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 12.dp),
+                                )
+                            } else {
+                                state.jobs.forEach { job ->
+                                    CronJobCard(
+                                        job = job,
+                                        runs = state.runs[job.id].orEmpty(),
+                                        runsExpanded = job.id in state.expandedJobs,
+                                        runsBusy = state.busyJobId == job.id,
+                                        busy = state.busy,
+                                        onEdit = { editJob = job },
+                                        onPause = { vm.pause(job.id) },
+                                        onResume = { vm.resume(job.id) },
+                                        onTrigger = { vm.trigger(job.id) },
+                                        onFireNow = { vm.fireNow(job.id) },
+                                        onToggleRuns = { vm.toggleRuns(job.id) },
+                                        onDelete = { deleteJob = job },
+                                    )
+                                }
+                            }
                         }
-                    }
-                    items(state.jobs, key = { it.id }) { job ->
-                        CronJobCard(
-                            job = job,
-                            runs = state.runs[job.id].orEmpty(),
-                            runsExpanded = job.id in state.expandedJobs,
-                            runsBusy = state.busyJobId == job.id,
-                            busy = state.busy,
-                            onEdit = { editJob = job },
-                            onPause = { vm.pause(job.id) },
-                            onResume = { vm.resume(job.id) },
-                            onTrigger = { vm.trigger(job.id) },
-                            onToggleRuns = { vm.toggleRuns(job.id) },
-                            onDelete = { deleteJob = job },
-                        )
                     }
                     if (state.blueprints.isNotEmpty()) {
                         item {
-                            Text(
-                                "Blueprints",
-                                style = MaterialTheme.typography.titleLarge,
-                                modifier = Modifier.padding(top = 12.dp),
-                            )
-                            Text(
-                                "Start a scheduled job from a reusable automation template.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        items(state.blueprints, key = { it.key }) { blueprint ->
-                            BlueprintCard(blueprint = blueprint, busy = state.busy) { values ->
-                                vm.instantiateBlueprint(blueprint.key, values)
+                            CollapsibleSection(
+                                title = androidx.compose.ui.res.stringResource(R.string.minor_cron_blueprints_section),
+                                collapsible = true,
+                            ) {
+                                Text(
+                                    "Start a scheduled job from a reusable automation template.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                state.blueprints.forEach { blueprint ->
+                                    BlueprintCard(blueprint = blueprint, busy = state.busy) { values ->
+                                        vm.instantiateBlueprint(blueprint.key, values)
+                                    }
+                                }
                             }
                         }
                     }
@@ -295,6 +307,7 @@ private fun CronJobCard(
     onPause: () -> Unit,
     onResume: () -> Unit,
     onTrigger: () -> Unit,
+    onFireNow: () -> Unit,
     onToggleRuns: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -332,6 +345,9 @@ private fun CronJobCard(
                     TextButton(onClick = onPause, enabled = !busy) { Text("Pause") }
                 }
                 TextButton(onClick = onTrigger, enabled = !busy) { Text("Run") }
+                TextButton(onClick = onFireNow, enabled = !busy) {
+                    Text(androidx.compose.ui.res.stringResource(R.string.minor_cron_fire_now))
+                }
                 TextButton(onClick = onToggleRuns, enabled = !busy) {
                     Text(if (runsExpanded) "Hide runs" else "Runs")
                 }

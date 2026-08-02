@@ -53,6 +53,7 @@ interface CronGateway {
     suspend fun pause(jobId: String)
     suspend fun resume(jobId: String)
     suspend fun trigger(jobId: String)
+    suspend fun fireNow(jobId: String) = trigger(jobId)
     suspend fun delete(jobId: String)
     suspend fun instantiate(blueprint: String, values: Map<String, String>)
 }
@@ -116,6 +117,10 @@ class HermesCronGateway(
 
     override suspend fun trigger(jobId: String) {
         api.triggerCronRaw(jobId, profile())
+    }
+
+    override suspend fun fireNow(jobId: String) {
+        api.fireCronJob(buildJsonObject { put("job_id", jobId) })
     }
 
     override suspend fun delete(jobId: String) {
@@ -229,6 +234,7 @@ class CronViewModel(
     fun pause(jobId: String) = mutate("Could not pause cron job") { gateway.pause(jobId) }
     fun resume(jobId: String) = mutate("Could not resume cron job") { gateway.resume(jobId) }
     fun trigger(jobId: String) = mutate("Could not run cron job") { gateway.trigger(jobId) }
+    fun fireNow(jobId: String) = mutate("Could not run cron job") { gateway.fireNow(jobId) }
     fun delete(jobId: String) = mutate("Could not delete cron job") { gateway.delete(jobId) }
 
     fun instantiateBlueprint(blueprint: String, values: Map<String, String>) {
