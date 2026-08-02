@@ -1813,7 +1813,13 @@ class ChatViewModel(
             loadMessagesForProfile(tabId, sessionId).onSuccess { msgs ->
                 val lines = msgs.mapIndexed { idx, m ->
                     ChatLine(id = "$sessionId-$idx", role = m.role ?: "assistant", text = m.content.orEmpty())
-                }.filter { it.text.isNotBlank() }
+                }.filter {
+                    it.text.isNotBlank() &&
+                        // Only user and assistant messages belong in the reading transcript.
+                        // Tool/system messages are internal machinery — they never appear in
+                        // ChatGPT-style UIs and just make the transcript look janky.
+                        it.role in setOf("user", "assistant")
+                }
                 val rt = runtimes[tabId] ?: return@onSuccess
                 var shouldDrainQueue = false
                 updateTab(tabId) { tab ->

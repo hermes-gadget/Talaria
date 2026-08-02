@@ -202,10 +202,12 @@ internal fun parseSessionActionMessages(root: JsonObject, sessionId: String): Li
         runCatching { JsonConfig.json.decodeFromJsonElement<SessionMessage>(element) }
             .getOrNull()
             ?.let { message ->
+                val role = message.role.orEmpty()
+                if (role !in setOf("user", "assistant")) return@let null
                 val text = message.content.orEmpty()
                 if (text.isBlank()) null else ChatLine(
                     id = "$sessionId-$index",
-                    role = message.role ?: "assistant",
+                    role = role,
                     text = text,
                 )
             }

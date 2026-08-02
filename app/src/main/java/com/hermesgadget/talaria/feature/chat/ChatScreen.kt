@@ -1214,13 +1214,11 @@ fun ChatScreen(
                                 },
                                 onLongClickLabel = stringResource(R.string.chat_message_actions),
                             ),
-                        color = when (line.role) {
-                            "user" -> MaterialTheme.colorScheme.primaryContainer
-                            "tool" -> MaterialTheme.colorScheme.tertiaryContainer
-                            "system" -> MaterialTheme.colorScheme.surfaceVariant
-                            else -> MaterialTheme.colorScheme.surfaceContainerHigh
-                        },
-                        shape = MaterialTheme.shapes.medium,
+                        color = if (mine)
+                            MaterialTheme.colorScheme.primaryContainer
+                        else
+                            MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shape = MaterialTheme.shapes.large,
                     ) {
                         if (transcriptMode == TranscriptMode.READING || line.role == "assistant") {
                             SimpleMarkdownText(

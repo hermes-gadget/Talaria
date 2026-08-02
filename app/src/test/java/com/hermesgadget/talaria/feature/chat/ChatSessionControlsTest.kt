@@ -133,4 +133,26 @@ class ChatSessionControlsTest {
         val edit = ChatSessionControlsReducer.requestMessageEdit(actions, target)
         assertEquals(target, (edit.dialog as ChatSessionDialog.EditMessage).target)
     }
+
+    @Test
+    fun parseSessionActionMessagesExcludesToolAndSystemRoles() {
+        val root = Json.parseToJsonElement(
+            """
+            {
+                "messages": [
+                    {"role": "user", "content": "hello"},
+                    {"role": "assistant", "content": "hi there"},
+                    {"role": "tool", "content": "edit_file done"},
+                    {"role": "system", "content": "system note"}
+                ]
+            }
+            """,
+        )
+        val lines = parseSessionActionMessages(root as kotlinx.serialization.json.JsonObject, "s1")
+        assertEquals(2, lines!!.size)
+        assertEquals("user", lines[0].role)
+        assertEquals("hello", lines[0].text)
+        assertEquals("assistant", lines[1].role)
+        assertEquals("hi there", lines[1].text)
+    }
 }
