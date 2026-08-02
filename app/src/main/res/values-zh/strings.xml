@@ -67,7 +67,7 @@
     <string name="chat_agent_activity">代理活动</string>
     <string name="chat_change_model">更换模型</string>
     <string name="chat_steer_settings">引导与触发设置</string>
-    <string name="chat_pip">以画中画打开聊天</string>
+    <string name="chat_pip">画中画</string>
     <string name="chat_steer_trigger">引导 / 触发</string>
     <string name="chat_choose_model">选择模型</string>
     <string name="chat_reasoning_effort">推理强度</string>
@@ -114,15 +114,18 @@
     <string name="language_simplified_chinese">中文</string>
     <string name="language_traditional_chinese">繁體中文</string>
     <string name="language_arabic">العربية</string>
-    <string name="you_notifications_voice">通知和语音</string>
     <string name="you_notifications">通知</string>
+    <string name="you_notifications_enable">启用通知</string>
+    <string name="you_notification_settings">通知设置</string>
+    <string name="you_notification_settings_subtitle">提醒、免打扰时段和渠道</string>
+    <string name="you_voice_speech">语音</string>
+    <string name="you_data_privacy">数据与隐私</string>
     <string name="you_agent_permissions">代理权限请求</string>
     <string name="you_agent_completion">代理任务完成</string>
     <string name="you_background_sync">后台同步 (WorkManager)</string>
     <string name="you_speak_responses">朗读响应 (TTS)</string>
     <string name="you_cloud_speech">允许云端语音识别</string>
     <string name="you_telemetry">遥测（默认关闭）</string>
-    <string name="you_privacy">隐私</string>
     <string name="you_local_first">本地优先 · 无需账户</string>
     <string name="you_api_baseline">Hermes API 基线：%1$s</string>
     <string name="you_network_description">网络只连接你配置的 Hermes 端点。默认遥测=%1$s。</string>
@@ -142,6 +145,7 @@
     <string name="manage_agents">代理</string>
     <string name="manage_capabilities">能力</string>
     <string name="manage_messaging">消息</string>
+    <string name="manage_workspace">工作区</string>
     <string name="manage_system_section">系统</string>
     <string name="manage_status_title">状态</string>
     <string name="manage_status_subtitle">版本、网关、实时会话</string>

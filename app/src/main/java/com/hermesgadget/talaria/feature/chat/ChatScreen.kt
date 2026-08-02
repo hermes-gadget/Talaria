@@ -60,6 +60,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Hub
@@ -67,7 +68,6 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureInPictureAlt
-import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Tune
@@ -77,6 +77,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -526,6 +527,11 @@ fun ChatScreen(
                 },
                 actions = {
                     val reading = transcriptMode == TranscriptMode.READING
+                    val sessionReady = active?.liveSessionId != null || active?.resumeSessionId != null
+                    val sessionActionRunning = ui.sessionControls.action is ChatSessionActionState.Running
+                    // Three visible actions at most. The first slot is contextual:
+                    // interrupt while a turn is running, transcript-mode toggle
+                    // while idle. Everything else lives in the overflow menu.
                     if (active?.working == true && active.connected) {
                         IconButton(onClick = { vm.sendInterrupt() }) {
                             Icon(
@@ -533,8 +539,7 @@ fun ChatScreen(
                                 contentDescription = stringResource(R.string.chat_interrupt),
                             )
                         }
-                    }
-                    if (active?.working != true) {
+                    } else {
                         IconButton(onClick = {
                             vm.setTranscriptMode(
                                 if (reading) TranscriptMode.TERMINAL else TranscriptMode.READING,
@@ -548,8 +553,18 @@ fun ChatScreen(
                             )
                         }
                     }
-                    val sessionReady = active?.liveSessionId != null || active?.resumeSessionId != null
-                    val sessionActionRunning = ui.sessionControls.action is ChatSessionActionState.Running
+                    IconButton(onClick = { vm.toggleSessionRail() }) {
+                        Icon(
+                            Icons.Filled.History,
+                            contentDescription = stringResource(R.string.chat_sessions),
+                        )
+                    }
+                    IconButton(onClick = { vm.toggleSteerPopover() }) {
+                        Icon(
+                            Icons.Filled.Tune,
+                            contentDescription = stringResource(R.string.chat_steer_settings),
+                        )
+                    }
                     IconButton(onClick = { vm.toggleSessionActions() }) {
                         Icon(
                             Icons.Filled.MoreVert,
@@ -561,7 +576,46 @@ fun ChatScreen(
                         onDismissRequest = { vm.toggleSessionActions(false) },
                     ) {
                         DropdownMenuItem(
+                            text = { Text(stringResource(R.string.chat_agent_activity)) },
+                            leadingIcon = { Icon(Icons.Filled.Hub, contentDescription = null) },
+                            onClick = {
+                                vm.toggleSessionActions(false)
+                                monitorOpen = !monitorOpen
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.chat_pip)) },
+                            leadingIcon = {
+                                Icon(Icons.Filled.PictureInPictureAlt, contentDescription = null)
+                            },
+                            onClick = {
+                                vm.toggleSessionActions(false)
+                                val tab = active ?: return@DropdownMenuItem
+                                val messages = (tab.readingMessages.ifEmpty { tab.lines })
+                                    .filter { it.text.isNotBlank() }
+                                    .takeLast(24)
+                                    .map { PipChatMessage(role = it.role, text = it.text) }
+                                val snapshot = PipChatSnapshot(
+                                    title = tab.title,
+                                    messages = messages,
+                                    streamingText = tab.streamingText.takeIf {
+                                        tab.assistantStreaming && it.isNotBlank()
+                                    }.orEmpty(),
+                                )
+                                if (context is MainActivity) {
+                                    context.openPipChat(snapshot)
+                                } else {
+                                    context.startActivity(PipChatIntent.create(context, snapshot))
+                                }
+                            },
+                            enabled = active != null,
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
                             text = { Text(stringResource(R.string.chat_compact_session)) },
+                            leadingIcon = {
+                                Icon(Icons.Filled.Compress, contentDescription = null)
+                            },
                             onClick = {
                                 vm.toggleSessionActions(false)
                                 vm.requestCompactSession()
@@ -570,56 +624,12 @@ fun ChatScreen(
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.common_edit_session_title)) },
+                            leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
                             onClick = {
                                 vm.toggleSessionActions(false)
                                 vm.requestSessionTitleEdit()
                             },
                             enabled = sessionReady && !sessionActionRunning,
-                        )
-                    }
-                    IconButton(onClick = { monitorOpen = !monitorOpen }) {
-                        Icon(
-                            Icons.Filled.Hub,
-                            contentDescription = stringResource(R.string.chat_agent_activity),
-                        )
-                    }
-                    IconButton(onClick = { vm.toggleModelPicker() }) {
-                        Icon(
-                            Icons.Filled.SmartToy,
-                            contentDescription = stringResource(R.string.chat_change_model),
-                        )
-                    }
-                    IconButton(onClick = { vm.toggleSteerPopover() }) {
-                        Icon(
-                            Icons.Filled.Tune,
-                            contentDescription = stringResource(R.string.chat_steer_settings),
-                        )
-                    }
-                    IconButton(
-                        onClick = {
-                            val tab = active ?: return@IconButton
-                            val messages = (tab.readingMessages.ifEmpty { tab.lines })
-                                .filter { it.text.isNotBlank() }
-                                .takeLast(24)
-                                .map { PipChatMessage(role = it.role, text = it.text) }
-                            val snapshot = PipChatSnapshot(
-                                title = tab.title,
-                                messages = messages,
-                                streamingText = tab.streamingText.takeIf {
-                                    tab.assistantStreaming && it.isNotBlank()
-                                }.orEmpty(),
-                            )
-                            if (context is MainActivity) {
-                                context.openPipChat(snapshot)
-                            } else {
-                                context.startActivity(PipChatIntent.create(context, snapshot))
-                            }
-                        },
-                        enabled = active != null,
-                    ) {
-                        Icon(
-                            Icons.Filled.PictureInPictureAlt,
-                            contentDescription = stringResource(R.string.chat_pip),
                         )
                     }
                     DropdownMenu(
@@ -723,12 +733,6 @@ fun ChatScreen(
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
                         }
-                    }
-                    IconButton(onClick = { vm.toggleSessionRail() }) {
-                        Icon(
-                            Icons.Filled.History,
-                            contentDescription = stringResource(R.string.chat_sessions),
-                        )
                     }
                 },
                 windowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout),

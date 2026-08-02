@@ -67,7 +67,7 @@
     <string name="chat_agent_activity">代理程式活動</string>
     <string name="chat_change_model">變更模型</string>
     <string name="chat_steer_settings">引導與觸發設定</string>
-    <string name="chat_pip">以子母畫面開啟聊天</string>
+    <string name="chat_pip">子母畫面</string>
     <string name="chat_steer_trigger">引導 / 觸發</string>
     <string name="chat_choose_model">選擇模型</string>
     <string name="chat_reasoning_effort">推理強度</string>
@@ -114,15 +114,18 @@
     <string name="language_simplified_chinese">中文</string>
     <string name="language_traditional_chinese">繁體中文</string>
     <string name="language_arabic">العربية</string>
-    <string name="you_notifications_voice">通知與語音</string>
     <string name="you_notifications">通知</string>
+    <string name="you_notifications_enable">啟用通知</string>
+    <string name="you_notification_settings">通知設定</string>
+    <string name="you_notification_settings_subtitle">提醒、勿擾時段與頻道</string>
+    <string name="you_voice_speech">語音</string>
+    <string name="you_data_privacy">資料與隱私</string>
     <string name="you_agent_permissions">代理程式權限要求</string>
     <string name="you_agent_completion">代理程式工作完成</string>
     <string name="you_background_sync">背景同步 (WorkManager)</string>
     <string name="you_speak_responses">朗讀回應 (TTS)</string>
     <string name="you_cloud_speech">允許雲端語音辨識</string>
     <string name="you_telemetry">遙測（預設關閉）</string>
-    <string name="you_privacy">隱私權</string>
     <string name="you_local_first">本機優先 · 不需要帳戶</string>
     <string name="you_api_baseline">Hermes API 基準：%1$s</string>
     <string name="you_network_description">網路只會連線到你設定的 Hermes 端點。預設遙測=%1$s。</string>
@@ -142,6 +145,7 @@
     <string name="manage_agents">代理程式</string>
     <string name="manage_capabilities">功能</string>
     <string name="manage_messaging">訊息</string>
+    <string name="manage_workspace">工作區</string>
     <string name="manage_system_section">系統</string>
     <string name="manage_status_title">狀態</string>
     <string name="manage_status_subtitle">版本、閘道、即時工作階段</string>

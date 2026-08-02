@@ -67,7 +67,7 @@
     <string name="chat_agent_activity">نشاط الوكيل</string>
     <string name="chat_change_model">تغيير النموذج</string>
     <string name="chat_steer_settings">إعدادات التوجيه والمشغّل</string>
-    <string name="chat_pip">فتح الدردشة بصورة داخل صورة</string>
+    <string name="chat_pip">صورة داخل صورة</string>
     <string name="chat_steer_trigger">التوجيه / المشغّل</string>
     <string name="chat_choose_model">اختيار نموذج</string>
     <string name="chat_reasoning_effort">جهد الاستدلال</string>
@@ -114,15 +114,18 @@
     <string name="language_simplified_chinese">中文</string>
     <string name="language_traditional_chinese">繁體中文</string>
     <string name="language_arabic">العربية</string>
-    <string name="you_notifications_voice">الإشعارات والصوت</string>
     <string name="you_notifications">الإشعارات</string>
+    <string name="you_notifications_enable">تفعيل الإشعارات</string>
+    <string name="you_notification_settings">إعدادات الإشعارات</string>
+    <string name="you_notification_settings_subtitle">التنبيهات وساعات الهدوء والقنوات</string>
+    <string name="you_voice_speech">الصوت والنطق</string>
+    <string name="you_data_privacy">البيانات والخصوصية</string>
     <string name="you_agent_permissions">طلبات أذونات الوكيل</string>
     <string name="you_agent_completion">إكمال مهمة الوكيل</string>
     <string name="you_background_sync">المزامنة في الخلفية (WorkManager)</string>
     <string name="you_speak_responses">نطق الردود (TTS)</string>
     <string name="you_cloud_speech">السماح بالتعرّف على الكلام سحابيًا</string>
     <string name="you_telemetry">القياس عن بُعد (متوقف افتراضيًا)</string>
-    <string name="you_privacy">الخصوصية</string>
     <string name="you_local_first">محلي أولًا · لا حسابات مطلوبة</string>
     <string name="you_api_baseline">خط أساس Hermes API: %1$s</string>
     <string name="you_network_description">تتصل الشبكة فقط بنقاط Hermes التي ضبطتها. القياس الافتراضي=%1$s.</string>
@@ -142,6 +145,7 @@
     <string name="manage_agents">الوكلاء</string>
     <string name="manage_capabilities">الإمكانات</string>
     <string name="manage_messaging">المراسلة</string>
+    <string name="manage_workspace">مساحة العمل</string>
     <string name="manage_system_section">النظام</string>
     <string name="manage_status_title">الحالة</string>
     <string name="manage_status_subtitle">الإصدار والبوابة والجلسات المباشرة</string>

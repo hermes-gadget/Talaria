@@ -16,7 +16,6 @@
 
 package com.hermesgadget.talaria.feature.manage
 
-import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -32,32 +31,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Insights
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.SmartToy
-import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.Campaign
-import androidx.compose.material.icons.filled.CleaningServices
-import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.Dashboard
-import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Forum
-import androidx.compose.material.icons.filled.Hub
-import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.MonitorHeart
-import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.Psychology
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.SwitchAccount
-import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Webhook
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -76,20 +51,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
-import com.hermesgadget.talaria.R
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
-import com.hermesgadget.talaria.ui.navigation.Routes
 import com.hermesgadget.talaria.ui.theme.LocalSpacing
-
-private data class ManageItem(
-    @StringRes val titleRes: Int,
-    @StringRes val subtitleRes: Int,
-    val route: String,
-    val icon: ImageVector,
-)
-
-private data class ManageSection(@StringRes val titleRes: Int, val items: List<ManageItem>)
 
 private data class LocalizedManageItem(
     val section: String,
@@ -98,57 +64,13 @@ private data class LocalizedManageItem(
     val subtitle: String,
 )
 
-private val manageSections = listOf(
-    ManageSection(
-        R.string.manage_agents,
-        listOf(
-            ManageItem(R.string.manage_status_title, R.string.manage_status_subtitle, Routes.STATUS, Icons.Filled.MonitorHeart),
-            ManageItem(R.string.manage_command_center_title, R.string.manage_command_center_subtitle, Routes.COMMAND_CENTER, Icons.Filled.Dashboard),
-            ManageItem(R.string.manage_sessions_title, R.string.manage_sessions_subtitle, Routes.SESSIONS, Icons.Filled.Forum),
-            ManageItem(R.string.manage_artifacts_title, R.string.manage_artifacts_subtitle, Routes.ARTIFACTS, Icons.Filled.Folder),
-            ManageItem(R.string.manage_cron_title, R.string.manage_cron_subtitle, Routes.CRON, Icons.Filled.Schedule),
-            ManageItem(R.string.manage_analytics_title, R.string.manage_analytics_subtitle, Routes.ANALYTICS, Icons.Filled.BarChart),
-        ),
-    ),
-    ManageSection(
-        R.string.manage_capabilities,
-        listOf(
-            ManageItem(R.string.manage_config_title, R.string.manage_config_subtitle, Routes.CONFIG, Icons.Filled.Tune),
-            ManageItem(R.string.manage_api_keys_title, R.string.manage_api_keys_subtitle, Routes.API_KEYS, Icons.Filled.Key),
-            ManageItem(R.string.manage_models_title, R.string.manage_models_subtitle, Routes.MODELS, Icons.Filled.SmartToy),
-            ManageItem(R.string.manage_skills_title, R.string.manage_skills_subtitle, Routes.SKILLS, Icons.Filled.AutoAwesome),
-            ManageItem(R.string.manage_mcp_title, R.string.manage_mcp_subtitle, Routes.MCP, Icons.Filled.Hub),
-        ),
-    ),
-    ManageSection(
-        R.string.manage_messaging,
-        listOf(
-            ManageItem(R.string.manage_channels_title, R.string.manage_channels_subtitle, Routes.CHANNELS, Icons.Filled.Campaign),
-            ManageItem(R.string.manage_pairing_title, R.string.manage_pairing_subtitle, Routes.PAIRING, Icons.Filled.Link),
-            ManageItem(R.string.manage_webhooks_title, R.string.manage_webhooks_subtitle, Routes.WEBHOOKS, Icons.Filled.Webhook),
-        ),
-    ),
-    ManageSection(
-        R.string.manage_system_section,
-        listOf(
-            ManageItem(R.string.manage_profiles_title, R.string.manage_profiles_subtitle, Routes.PROFILES, Icons.Filled.SwitchAccount),
-            ManageItem(R.string.manage_files_title, R.string.manage_files_subtitle, Routes.FILES, Icons.Filled.Folder),
-            ManageItem(R.string.manage_review_title, R.string.manage_review_subtitle, Routes.REVIEW, Icons.Filled.Code),
-            ManageItem(R.string.manage_memory_title, R.string.manage_memory_subtitle, Routes.MEMORY, Icons.Filled.Psychology),
-            ManageItem(R.string.manage_learning_title, R.string.manage_learning_subtitle, Routes.LEARNING, Icons.Filled.Insights),
-            ManageItem(R.string.manage_curator_title, R.string.manage_curator_subtitle, Routes.CURATOR, Icons.Filled.CleaningServices),
-            ManageItem(R.string.manage_logs_title, R.string.manage_logs_subtitle, Routes.LOGS, Icons.AutoMirrored.Filled.Article),
-            ManageItem(R.string.manage_terminal_title, R.string.manage_terminal_subtitle, Routes.TERMINAL, Icons.Filled.Terminal),
-            ManageItem(R.string.manage_themes_title, R.string.manage_themes_subtitle, Routes.THEMES, Icons.Filled.Palette),
-            ManageItem(R.string.manage_voice_title, R.string.manage_voice_subtitle, Routes.VOICE, Icons.Filled.Mic),
-            ManageItem(R.string.manage_system_title, R.string.manage_system_subtitle, Routes.SYSTEM, Icons.Filled.Dns),
-        ),
-    ),
-)
-
+/**
+ * Manage home: one row per category. Categories open a sub-list
+ * ([ManageSectionScreen]); the search action reaches any destination directly.
+ */
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-fun ManageHomeScreen(onOpen: (String) -> Unit) {
+fun ManageHomeScreen(onOpen: (String) -> Unit, onOpenSection: (String) -> Unit) {
     val spacing = LocalSpacing.current
     var paletteOpen by remember { mutableStateOf(false) }
 
@@ -175,29 +97,59 @@ fun ManageHomeScreen(onOpen: (String) -> Unit) {
         },
     ) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(spacing.xs)) {
-            manageSections.forEach { section ->
-                item(key = "h-${section.titleRes}") {
-                    Text(
-                        stringResource(section.titleRes),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(
-                            start = spacing.xs,
-                            top = spacing.md,
-                            bottom = spacing.xs,
-                        ),
-                    )
-                }
-                items(section.items, key = { it.route }) { item ->
-                    ManageRow(item, onClick = { onOpen(item.route) })
-                }
+            items(manageSections, key = { it.id }) { section ->
+                // The preview line doubles as the section's description, so the
+                // extra navigation level still shows what lives behind each row.
+                val preview = section.items
+                    .map { stringResource(it.titleRes) }
+                    .joinToString(" · ")
+                NavigationRow(
+                    icon = section.icon,
+                    title = stringResource(section.titleRes),
+                    subtitle = preview,
+                    onClick = { onOpenSection(section.id) },
+                )
+            }
+        }
+    }
+}
+
+/** The drill-down list for a single Manage category. */
+@Composable
+fun ManageSectionScreen(sectionId: String?, onOpen: (String) -> Unit) {
+    val spacing = LocalSpacing.current
+    val section = manageSection(sectionId)
+    if (section == null) {
+        ScreenScaffold(stringResource(R.string.manage_title)) {
+            Text(
+                stringResource(R.string.manage_no_matches),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        return
+    }
+    ScreenScaffold(stringResource(section.titleRes), showProfileSwitcher = true) {
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(spacing.xs)) {
+            items(section.items, key = { it.route }) { item ->
+                NavigationRow(
+                    icon = item.icon,
+                    title = stringResource(item.titleRes),
+                    subtitle = stringResource(item.subtitleRes),
+                    onClick = { onOpen(item.route) },
+                )
             }
         }
     }
 }
 
 @Composable
-private fun ManageRow(item: ManageItem, onClick: () -> Unit) {
+private fun NavigationRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
     val spacing = LocalSpacing.current
     Surface(
         onClick = onClick,
@@ -219,7 +171,7 @@ private fun ManageRow(item: ManageItem, onClick: () -> Unit) {
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    item.icon,
+                    icon,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onPrimaryContainer,
                     modifier = Modifier.size(19.dp),
@@ -230,11 +182,13 @@ private fun ManageRow(item: ManageItem, onClick: () -> Unit) {
                     .weight(1f)
                     .padding(horizontal = spacing.md),
             ) {
-                Text(stringResource(item.titleRes), style = MaterialTheme.typography.titleSmall)
+                Text(title, style = MaterialTheme.typography.titleSmall)
                 Text(
-                    stringResource(item.subtitleRes),
+                    subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             Icon(
@@ -249,7 +203,7 @@ private fun ManageRow(item: ManageItem, onClick: () -> Unit) {
 /**
  * Quick-jump command palette (roadmap 15.7). A searchable, fuzzy-filtered list of
  * every Manage destination so users can reach any settings screen in two taps
- * instead of scrolling the grouped menu.
+ * instead of walking the category tree.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
