@@ -27,6 +27,20 @@ import com.hermesgadget.talaria.domain.model.FsCwd
 import com.hermesgadget.talaria.domain.model.FsDataUrl
 import com.hermesgadget.talaria.domain.model.FsListResponse
 import com.hermesgadget.talaria.domain.model.FsTextFile
+import com.hermesgadget.talaria.domain.model.GitBaseBranchesResponse
+import com.hermesgadget.talaria.domain.model.GitBranchSwitchRequest
+import com.hermesgadget.talaria.domain.model.GitBranchSwitchResponse
+import com.hermesgadget.talaria.domain.model.GitBranchesResponse
+import com.hermesgadget.talaria.domain.model.GitCommitRequest
+import com.hermesgadget.talaria.domain.model.GitDiffResponse
+import com.hermesgadget.talaria.domain.model.GitFileRequest
+import com.hermesgadget.talaria.domain.model.GitPathRequest
+import com.hermesgadget.talaria.domain.model.GitReviewListResponse
+import com.hermesgadget.talaria.domain.model.GitRevParseResponse
+import com.hermesgadget.talaria.domain.model.GitStatus
+import com.hermesgadget.talaria.domain.model.GitWorktreeAddRequest
+import com.hermesgadget.talaria.domain.model.GitWorktreeRemoveRequest
+import com.hermesgadget.talaria.domain.model.GitWorktreesResponse
 import com.hermesgadget.talaria.domain.model.LearningGraph
 import com.hermesgadget.talaria.domain.model.LearningNodeDetail
 import com.hermesgadget.talaria.domain.model.ActionStatus
@@ -492,4 +506,79 @@ interface HermesApi {
         @Body body: JsonObject,
         @Query("profile") profile: String? = null,
     ): JsonElement
+
+    // --- Git review (Desktop parity §1.5 / §9.8) ---
+
+    @GET("api/git/status")
+    suspend fun gitStatus(@Query("path") path: String): GitStatus
+
+    @GET("api/git/worktrees")
+    suspend fun gitWorktrees(@Query("path") path: String): GitWorktreesResponse
+
+    @GET("api/git/branches")
+    suspend fun gitBranches(@Query("path") path: String): GitBranchesResponse
+
+    @GET("api/git/base-branches")
+    suspend fun gitBaseBranches(@Query("path") path: String): GitBaseBranchesResponse
+
+    @GET("api/git/review/list")
+    suspend fun gitReviewList(
+        @Query("path") path: String,
+        @Query("scope") scope: String = "uncommitted",
+        @Query("base") base: String? = null,
+    ): GitReviewListResponse
+
+    @GET("api/git/review/diff")
+    suspend fun gitReviewDiff(
+        @Query("path") path: String,
+        @Query("file") file: String,
+        @Query("scope") scope: String = "uncommitted",
+        @Query("base") base: String? = null,
+        @Query("staged") staged: Boolean = false,
+    ): GitDiffResponse
+
+    @GET("api/git/file-diff")
+    suspend fun gitFileDiff(
+        @Query("path") path: String,
+        @Query("file") file: String,
+    ): GitDiffResponse
+
+    @GET("api/git/review/commit-context")
+    suspend fun gitCommitContext(@Query("path") path: String): JsonElement
+
+    @GET("api/git/review/rev-parse")
+    suspend fun gitRevParse(
+        @Query("path") path: String,
+        @Query("ref") ref: String? = null,
+    ): GitRevParseResponse
+
+    @GET("api/git/review/ship-info")
+    suspend fun gitShipInfo(@Query("path") path: String): JsonElement
+
+    @POST("api/git/review/stage")
+    suspend fun gitStage(@Body body: GitFileRequest): JsonElement
+
+    @POST("api/git/review/unstage")
+    suspend fun gitUnstage(@Body body: GitFileRequest): JsonElement
+
+    @POST("api/git/review/revert")
+    suspend fun gitRevert(@Body body: GitFileRequest): JsonElement
+
+    @POST("api/git/review/commit")
+    suspend fun gitCommit(@Body body: GitCommitRequest): JsonElement
+
+    @POST("api/git/review/push")
+    suspend fun gitPush(@Body body: GitPathRequest): JsonElement
+
+    @POST("api/git/review/create-pr")
+    suspend fun gitCreatePr(@Body body: GitPathRequest): JsonElement
+
+    @POST("api/git/worktree/add")
+    suspend fun gitWorktreeAdd(@Body body: GitWorktreeAddRequest): JsonElement
+
+    @POST("api/git/worktree/remove")
+    suspend fun gitWorktreeRemove(@Body body: GitWorktreeRemoveRequest): JsonElement
+
+    @POST("api/git/branch/switch")
+    suspend fun gitBranchSwitch(@Body body: GitBranchSwitchRequest): GitBranchSwitchResponse
 }

@@ -30,21 +30,15 @@
 
 - Approval mode is global in the current Hermes server, so the popover labels it accordingly. No requested server-side control was found to be unsupported; reasoning and YOLO are disabled only while a tab has no active/resumable session.
 
-# Terminal pane
+---
 
-- Created branch `feature/terminal-pane` from the detached `main` checkout.
-- Added a standalone Compose terminal screen and nav-scoped `TerminalViewModel` under `feature/terminal/`.
-- Reused the existing `/api/pty` transport and same-channel `HermesEventClient`; terminal output is bounded, selectable, monospace, and ANSI-stripped while preserving line breaks.
-- Added command input with ↑/↓ history, clear, reconnect, and explicit disconnect actions. Dead PTYs reconnect when the screen resumes; explicit disconnect suppresses that auto-reconnect.
-- Added unit tests for output buffering/ANSI stripping and command history.
-- Added the Manage entry and `terminal` navigation route. No core, chat, connection, widget, manifest, or unrelated manage files were changed.
+# Git review pane
 
-## Terminal verification
+Implemented the small-screen Review destination on `feature/git-review`.
 
-Passed:
+- Added typed `/api/git/*` Retrofit coverage in one marked Git review section. The live v0.19.1 OpenAPI exposes branch switching as `POST /api/git/branch/switch`; `/api/git/switch` was checked and is not a POST route.
+- Added workspace status, branch/base-branch browsing, confirmed branch switching, changed-file review, working-tree text reads, client-side unified-diff rendering, copy-path, and Files-pane navigation.
+- Added unit coverage for line diffs, unified patch rendering, live branch response decoding, and detached-branch parsing.
+- Kept changes within the requested feature/navigation/API/model scope plus this summary.
 
-```text
-JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon
-```
-
-No services were restarted, and nothing was pushed or opened as a PR.
+Verification: `JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon` passed (`BUILD SUCCESSFUL`; 123 tests completed).
