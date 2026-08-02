@@ -21,6 +21,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -66,6 +67,33 @@ import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 
+private enum class OpsConfirmation(
+    @StringRes val titleRes: Int,
+    @StringRes val messageRes: Int,
+    @StringRes val confirmRes: Int,
+) {
+    PRUNE_CHECKPOINTS(
+        R.string.system_ops_prune_title,
+        R.string.system_ops_prune_message,
+        R.string.system_ops_prune_confirm,
+    ),
+    CONFIG_MIGRATE(
+        R.string.system_ops_config_migrate_title,
+        R.string.system_ops_config_migrate_message,
+        R.string.system_ops_config_migrate_confirm,
+    ),
+    DUMP(
+        R.string.system_ops_dump_title,
+        R.string.system_ops_dump_message,
+        R.string.system_ops_dump_confirm,
+    ),
+    PROMPT_SIZE(
+        R.string.system_ops_prompt_size_title,
+        R.string.system_ops_prompt_size_message,
+        R.string.system_ops_prompt_size_confirm,
+    ),
+}
+
 @Composable
 fun SystemScreen() {
     val context = LocalContext.current
@@ -74,6 +102,9 @@ fun SystemScreen() {
 
     var importConfirmation by remember { mutableStateOf<ImportUiState.Ready?>(null) }
     var deleteConfirmation by remember { mutableStateOf<OpsHookEntry?>(null) }
+    var applyUpdateConfirmation by remember { mutableStateOf(false) }
+    var drainConfirmation by remember { mutableStateOf(false) }
+    var opsConfirmation by remember { mutableStateOf<OpsConfirmation?>(null) }
     var hookEvent by remember { mutableStateOf("") }
     var hookCommand by remember { mutableStateOf("") }
     var hookMatcher by remember { mutableStateOf("") }
@@ -136,6 +167,68 @@ fun SystemScreen() {
             },
             dismissButton = {
                 TextButton(onClick = { deleteConfirmation = null }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (applyUpdateConfirmation) {
+        AlertDialog(
+            onDismissRequest = { applyUpdateConfirmation = false },
+            title = { Text(stringResource(R.string.system_apply_update_title)) },
+            text = { Text(stringResource(R.string.system_apply_update_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    applyUpdateConfirmation = false
+                    vm.applyHermesUpdate()
+                }) { Text(stringResource(R.string.system_apply_update_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { applyUpdateConfirmation = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+        )
+    }
+
+    if (drainConfirmation) {
+        AlertDialog(
+            onDismissRequest = { drainConfirmation = false },
+            title = { Text(stringResource(R.string.system_drain_gateway_title)) },
+            text = { Text(stringResource(R.string.system_drain_gateway_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    drainConfirmation = false
+                    vm.drainGateway()
+                }) { Text(stringResource(R.string.system_drain_gateway_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { drainConfirmation = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+        )
+    }
+
+    opsConfirmation?.let { confirmation ->
+        AlertDialog(
+            onDismissRequest = { opsConfirmation = null },
+            title = { Text(stringResource(confirmation.titleRes)) },
+            text = { Text(stringResource(confirmation.messageRes)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    opsConfirmation = null
+                    when (confirmation) {
+                        OpsConfirmation.PRUNE_CHECKPOINTS -> vm.pruneOpsCheckpoints()
+                        OpsConfirmation.CONFIG_MIGRATE -> vm.runConfigMigrate()
+                        OpsConfirmation.DUMP -> vm.runOpsDump()
+                        OpsConfirmation.PROMPT_SIZE -> vm.runOpsPromptSize()
+                    }
+                }) { Text(stringResource(confirmation.confirmRes)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { opsConfirmation = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
             },
         )
     }
@@ -405,8 +498,85 @@ fun SystemScreen() {
                     }
 
                     CollapsibleSection("Update check", collapsible = true) {
-                        OutlinedButton(onClick = { vm.checkUpdate() }) { Text("Check for updates") }
+                        OutlinedButton(
+                            enabled = !ui.updateBusy,
+                            onClick = { vm.checkUpdate() },
+                        ) { Text(stringResource(R.string.system_check_for_updates)) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                enabled = !ui.updateBusy,
+                                onClick = { applyUpdateConfirmation = true },
+                            ) { Text(stringResource(R.string.system_apply_update)) }
+                            OutlinedButton(
+                                enabled = !ui.updateBusy,
+                                onClick = { drainConfirmation = true },
+                            ) { Text(stringResource(R.string.system_drain_gateway)) }
+                        }
                         ui.update?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        ui.updateAction?.let {
+                            Text(
+                                "${stringResource(R.string.system_update_apply_result)}: $it",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        ui.gatewayDrain?.let {
+                            Text(
+                                "${stringResource(R.string.system_gateway_drain_result)}: $it",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+
+                    CollapsibleSection(
+                        stringResource(R.string.system_ops_depth_title),
+                        collapsible = true,
+                    ) {
+                        Text(
+                            stringResource(R.string.system_ops_depth_description),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                enabled = !ui.opsCheckpointsLoading,
+                                onClick = { vm.getOpsCheckpoints() },
+                            ) { Text(stringResource(R.string.system_ops_refresh_checkpoints)) }
+                            OutlinedButton(
+                                enabled = !ui.opsBusy,
+                                onClick = { opsConfirmation = OpsConfirmation.PRUNE_CHECKPOINTS },
+                            ) { Text(stringResource(R.string.system_ops_prune_checkpoints)) }
+                        }
+                        when {
+                            ui.opsCheckpointsLoading -> Text(
+                                stringResource(R.string.system_ops_checkpoints_loading),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            ui.opsCheckpoints != null -> Text(
+                                ui.opsCheckpoints!!,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        ui.opsError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                enabled = !ui.opsBusy,
+                                onClick = { opsConfirmation = OpsConfirmation.CONFIG_MIGRATE },
+                            ) { Text(stringResource(R.string.system_ops_config_migrate)) }
+                            OutlinedButton(
+                                enabled = !ui.opsBusy,
+                                onClick = { opsConfirmation = OpsConfirmation.DUMP },
+                            ) { Text(stringResource(R.string.system_ops_dump)) }
+                            OutlinedButton(
+                                enabled = !ui.opsBusy,
+                                onClick = { opsConfirmation = OpsConfirmation.PROMPT_SIZE },
+                            ) { Text(stringResource(R.string.system_ops_prompt_size)) }
+                        }
+                        ui.opsResult?.let {
+                            Text(
+                                stringResource(R.string.system_ops_last_result),
+                                style = MaterialTheme.typography.titleSmall,
+                            )
+                            Text(it, style = MaterialTheme.typography.bodySmall)
+                        }
                     }
 
                     CollapsibleSection("Portal", collapsible = true) {

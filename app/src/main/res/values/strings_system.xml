@@ -1,4 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Strings owned by the system feature wave. English only; locale files are translated by the i18n pass. -->
+    <string name="system_check_for_updates">Check for updates</string>
+    <string name="system_apply_update">Apply update</string>
+    <string name="system_drain_gateway">Drain gateway</string>
+    <string name="system_apply_update_title">Apply Hermes update?</string>
+    <string name="system_apply_update_message">Ask Hermes to update itself. This may restart or replace the running gateway and cannot be undone.</string>
+    <string name="system_apply_update_confirm">Apply update</string>
+    <string name="system_drain_gateway_title">Drain gateway?</string>
+    <string name="system_drain_gateway_message">Stop accepting new gateway work and let active work finish before a restart?</string>
+    <string name="system_drain_gateway_confirm">Drain</string>
+    <string name="system_update_apply_result">Apply result</string>
+    <string name="system_gateway_drain_result">Drain result</string>
+
+    <string name="system_ops_depth_title">Ops depth</string>
+    <string name="system_ops_depth_description">Inspect checkpoint storage and run advanced Hermes maintenance diagnostics.</string>
+    <string name="system_ops_refresh_checkpoints">Refresh checkpoints</string>
+    <string name="system_ops_prune_checkpoints">Prune checkpoints</string>
+    <string name="system_ops_checkpoints_loading">Loading checkpoints…</string>
+    <string name="system_ops_config_migrate">Migrate config</string>
+    <string name="system_ops_dump">Run support dump</string>
+    <string name="system_ops_prompt_size">Measure prompt size</string>
+    <string name="system_ops_last_result">Last operation</string>
+    <string name="system_ops_prune_title">Prune checkpoints?</string>
+    <string name="system_ops_prune_message">Delete old checkpoint data from the Hermes host? This cannot be undone.</string>
+    <string name="system_ops_prune_confirm">Prune</string>
+    <string name="system_ops_config_migrate_title">Migrate Hermes config?</string>
+    <string name="system_ops_config_migrate_message">Run the host configuration migration. This may change Hermes configuration files.</string>
+    <string name="system_ops_config_migrate_confirm">Migrate</string>
+    <string name="system_ops_dump_title">Run support dump?</string>
+    <string name="system_ops_dump_message">Run a diagnostic support dump on the Hermes host. This may take time and write diagnostic data.</string>
+    <string name="system_ops_dump_confirm">Run dump</string>
+    <string name="system_ops_prompt_size_title">Measure prompt size?</string>
+    <string name="system_ops_prompt_size_message">Start the Hermes prompt-size diagnostic operation on the host?</string>
+    <string name="system_ops_prompt_size_confirm">Measure</string>
 </resources>

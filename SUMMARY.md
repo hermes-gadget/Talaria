@@ -62,3 +62,16 @@ JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testD
 ```
 
 No third-party dependencies were added. No services were restarted, and nothing was pushed.
+
+## System update and ops-depth implementation
+
+- Added confirmed Update check actions for applying a Hermes update and draining the gateway.
+- Added the collapsible Ops depth section with checkpoint inventory, prune, config migration, support dump, and prompt-size actions. All update/drain and maintenance actions that can change or burden the host require confirmation dialogs.
+- Added an injectable `SystemGateway` boundary and unit coverage for `SystemViewModel` update, drain, checkpoint, maintenance, and failure state handling.
+- Added all new UI copy to `app/src/main/res/values/strings_system.xml` with `system_` names.
+
+### Verification
+
+- `git diff --check` passed.
+- The targeted unit-test task reached Kotlin compilation but could not complete because the shared VM hit `OutOfMemoryError: GC overhead limit exceeded`.
+- The prescribed final compile was retried once after the required wait with `--no-daemon --max-workers=1`; it failed with the same Kotlin-daemon memory error and no source compiler diagnostic. Per task instructions, the changes are being committed and pushed with this limitation recorded.
