@@ -44,6 +44,8 @@ import androidx.compose.material.icons.filled.Workspaces
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.ui.navigation.Routes
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.ViewKanban
 
 internal data class ManageItem(
     @StringRes val titleRes: Int,
@@ -132,6 +134,15 @@ internal val manageSections = listOf(
             ManageItem(R.string.manage_system_title, R.string.manage_system_subtitle, Routes.SYSTEM, Icons.Filled.Dns),
             ManageItem(R.string.manage_profiles_title, R.string.manage_profiles_subtitle, Routes.PROFILES, Icons.Filled.SwitchAccount),
             ManageItem(R.string.manage_logs_title, R.string.manage_logs_subtitle, Routes.LOGS, Icons.AutoMirrored.Filled.Article),
+        ),
+    ),
+    ManageSection(
+        id = "extensions",
+        titleRes = R.string.manage_extensions,
+        icon = Icons.Filled.Extension,
+        items = listOf(
+            ManageItem(R.string.manage_plugins_title, R.string.manage_plugins_subtitle, Routes.PLUGINS, Icons.Filled.Extension),
+            ManageItem(R.string.manage_kanban_title, R.string.manage_kanban_subtitle, Routes.KANBAN, Icons.Filled.ViewKanban),
         ),
     ),
 )

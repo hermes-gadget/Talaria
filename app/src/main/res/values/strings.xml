@@ -233,6 +233,11 @@ See PRIVACY.md in the repository for the full statement.</string>
     <string name="manage_search_settings">Search settings</string>
     <string name="manage_jump_to_setting">Jump to a setting…</string>
     <string name="manage_no_matches">No matches</string>
+    <string name="manage_extensions">Extensions</string>
+    <string name="manage_plugins_title">Plugins</string>
+    <string name="manage_plugins_subtitle">Dashboard &amp; agent plugins</string>
+    <string name="manage_kanban_title">Kanban</string>
+    <string name="manage_kanban_subtitle">Mission board &amp; tasks</string>
 
     <!-- Activity and connection surfaces -->
     <string name="activity_title">Activity</string>

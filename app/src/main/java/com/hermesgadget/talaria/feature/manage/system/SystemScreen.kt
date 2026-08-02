@@ -49,13 +49,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.R
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -154,7 +154,7 @@ fun SystemScreen() {
                     ui.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
                     ui.stats?.let { stats ->
-                        Section("Host") {
+                        CollapsibleSection("Host") {
                             Text("OS: ${stats.os ?: "—"}")
                             Text("Host: ${stats.hostname ?: "—"}")
                             Text("Python: ${stats.python_version ?: stats.python ?: "—"}")
@@ -167,7 +167,7 @@ fun SystemScreen() {
                         }
                     }
 
-                    Section("Gateway") {
+                    CollapsibleSection("Gateway") {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(enabled = !ui.busy, onClick = { vm.runGateway("start") }) { Text("Start") }
                             Button(enabled = !ui.busy, onClick = { vm.runGateway("stop") }) { Text("Stop") }
@@ -175,17 +175,17 @@ fun SystemScreen() {
                         }
                     }
 
-                    Section("Doctor", collapsible = true) {
+                    CollapsibleSection("Doctor", collapsible = true) {
                         OutlinedButton(onClick = { vm.runDoctor() }) { Text("Run doctor") }
                         ui.doctor?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
 
-                    Section("Security audit", collapsible = true) {
+                    CollapsibleSection("Security audit", collapsible = true) {
                         OutlinedButton(onClick = { vm.runSecurityAudit() }) { Text("Run audit") }
                         ui.audit?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
 
-                    Section("Backup", collapsible = true) {
+                    CollapsibleSection("Backup", collapsible = true) {
                         OutlinedButton(onClick = { vm.runBackup() }) { Text("Run backup") }
                         ui.backup?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                         OutlinedButton(
@@ -209,7 +209,7 @@ fun SystemScreen() {
                         }
                     }
 
-                    Section("Import backup", collapsible = true) {
+                    CollapsibleSection("Import backup", collapsible = true) {
                         Text(
                             "Select a Hermes backup ZIP or JSON export. The server may require a full backup ZIP for restore.",
                             style = MaterialTheme.typography.bodySmall,
@@ -257,7 +257,7 @@ fun SystemScreen() {
                         }
                     }
 
-                    Section("Hooks", collapsible = true) {
+                    CollapsibleSection("Hooks", collapsible = true) {
                         when (val state = ui.hooks) {
                             HooksUiState.Loading -> Text("Loading hooks…")
                             is HooksUiState.Failed -> {
@@ -339,7 +339,7 @@ fun SystemScreen() {
                         ui.hooksMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
 
-                    Section("Debug share", collapsible = true) {
+                    CollapsibleSection("Debug share", collapsible = true) {
                         Text(
                             "Capture a redacted report and logs, then share the generated output file and URLs.",
                             style = MaterialTheme.typography.bodySmall,
@@ -368,7 +368,7 @@ fun SystemScreen() {
 
                     // The section header is the show/hide control now, so the
                     // editor no longer carries its own nested toggle.
-                    Section("Raw YAML config", collapsible = true) {
+                    CollapsibleSection("Raw YAML config", collapsible = true) {
                         when (val state = ui.rawConfig) {
                             RawConfigUiState.Loading -> Text("Loading raw config…")
                             is RawConfigUiState.Unsupported -> Text(state.message)
@@ -404,12 +404,12 @@ fun SystemScreen() {
                         }
                     }
 
-                    Section("Update check", collapsible = true) {
+                    CollapsibleSection("Update check", collapsible = true) {
                         OutlinedButton(onClick = { vm.checkUpdate() }) { Text("Check for updates") }
                         ui.update?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
 
-                    Section("Portal", collapsible = true) {
+                    CollapsibleSection("Portal", collapsible = true) {
                         OutlinedButton(onClick = { vm.refreshPortal() }) { Text("Refresh portal") }
                         ui.portal?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
@@ -481,60 +481,4 @@ private fun formatUptime(seconds: Long): String {
         hours.takeIf { it > 0 }?.let { "${it}h" },
         "${minutes}m",
     ).joinToString(" ")
-}
-
-/**
- * A titled card. Maintenance groups pass [collapsible] so the screen opens as a
- * short list of headers instead of a wall of every form and button at once;
- * "Host" and "Gateway" stay open because they are the at-a-glance content.
- */
-@Composable
-private fun Section(
-    title: String,
-    collapsible: Boolean = false,
-    content: @Composable () -> Unit,
-) {
-    var expanded by rememberSaveable(title) { mutableStateOf(!collapsible) }
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-        ),
-        shape = MaterialTheme.shapes.medium,
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            if (collapsible) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { expanded = !expanded },
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(
-                        title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.secondary,
-                    )
-                    Icon(
-                        if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = stringResource(
-                            if (expanded) R.string.common_collapse else R.string.common_expand,
-                        ),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            } else {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.secondary,
-                )
-            }
-            if (expanded) content()
-        }
-    }
 }

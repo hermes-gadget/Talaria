@@ -43,6 +43,12 @@ import com.hermesgadget.talaria.domain.model.GitWorktreeRemoveRequest
 import com.hermesgadget.talaria.domain.model.GitWorktreesResponse
 import com.hermesgadget.talaria.domain.model.LearningGraph
 import com.hermesgadget.talaria.domain.model.LearningNodeDetail
+import com.hermesgadget.talaria.domain.model.ManagedFileEntry
+import com.hermesgadget.talaria.domain.model.ManagedFileReadResponse
+import com.hermesgadget.talaria.domain.model.ManagedFilesListResponse
+import com.hermesgadget.talaria.domain.model.MediaDataUrlResponse
+import com.hermesgadget.talaria.domain.model.EgressStatusResponse
+import com.hermesgadget.talaria.domain.model.TerminalBackendsResponse
 import com.hermesgadget.talaria.domain.model.ActionStatus
 import com.hermesgadget.talaria.domain.model.LogLinesResponse
 import com.hermesgadget.talaria.domain.model.McpServersResponse
@@ -747,4 +753,319 @@ interface HermesApi {
         @Body body: VoiceSpeakRequest,
         @Query("profile") profile: String? = null,
     ): VoiceSpeakResponse
+
+    // --- v0.6 backlog: managed files + media (ROADMAP item 1) ---
+
+    @GET("api/files")
+    suspend fun listManagedFiles(
+        @Query("path") path: String? = null,
+        @Query("profile") profile: String? = null,
+    ): ManagedFilesListResponse
+
+    @GET("api/files/read")
+    suspend fun readManagedFile(
+        @Query("path") path: String,
+        @Query("profile") profile: String? = null,
+    ): ManagedFileReadResponse
+
+    @Streaming
+    @GET("api/files/download")
+    suspend fun downloadManagedFile(@Query("path") path: String): ResponseBody
+
+    @POST("api/files/upload")
+    suspend fun uploadManagedFile(
+        @Body body: JsonObject,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
+
+    @Multipart
+    @POST("api/files/upload-stream")
+    suspend fun uploadManagedFileStream(
+        @Part("path") path: RequestBody,
+        @Part("overwrite") overwrite: RequestBody,
+        @Part file: MultipartBody.Part,
+    ): JsonElement
+
+    @POST("api/files/mkdir")
+    suspend fun createManagedDir(
+        @Body body: JsonObject,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
+
+    @DELETE("api/files")
+    suspend fun deleteManagedFile(
+        @Query("path") path: String,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
+
+    @GET("api/media")
+    suspend fun getMediaDataUrl(
+        @Query("path") path: String,
+        @Query("profile") profile: String? = null,
+    ): MediaDataUrlResponse
+
+    // --- v0.6 backlog: dashboard plugins + agent plugins (ROADMAP item 2) ---
+
+    @GET("api/dashboard/plugins")
+    suspend fun getDashboardPlugins(): JsonElement
+
+    @GET("api/dashboard/plugins/hub")
+    suspend fun getDashboardPluginsHub(): JsonElement
+
+    @GET("api/dashboard/plugins/rescan")
+    suspend fun rescanDashboardPlugins(): JsonElement
+
+    @POST("api/dashboard/plugins/{name}/visibility")
+    suspend fun setDashboardPluginVisibility(
+        @Path("name") name: String,
+        @Body body: JsonObject,
+    ): JsonElement
+
+    @PUT("api/dashboard/plugin-providers")
+    suspend fun putPluginProviders(@Body body: JsonObject): JsonElement
+
+    @POST("api/dashboard/agent-plugins/install")
+    suspend fun installAgentPlugin(@Body body: JsonObject): JsonElement
+
+    @POST("api/dashboard/agent-plugins/{name}/enable")
+    suspend fun enableAgentPlugin(@Path("name") name: String): JsonElement
+
+    @POST("api/dashboard/agent-plugins/{name}/disable")
+    suspend fun disableAgentPlugin(@Path("name") name: String): JsonElement
+
+    @POST("api/dashboard/agent-plugins/{name}/update")
+    suspend fun updateAgentPlugin(@Path("name") name: String): JsonElement
+
+    @DELETE("api/dashboard/agent-plugins/{name}")
+    suspend fun deleteAgentPlugin(@Path("name") name: String): JsonElement
+
+    // --- v0.6 backlog: Kanban board (ROADMAP item 2) ---
+
+    @GET("api/plugins/kanban/board")
+    suspend fun getKanbanBoard(
+        @Query("board") board: String? = null,
+        @Query("include_archived") includeArchived: Boolean = false,
+    ): JsonElement
+
+    @GET("api/plugins/kanban/boards")
+    suspend fun getKanbanBoards(): JsonElement
+
+    @POST("api/plugins/kanban/boards")
+    suspend fun createKanbanBoard(@Body body: JsonObject): JsonElement
+
+    @PATCH("api/plugins/kanban/boards/{slug}")
+    suspend fun patchKanbanBoard(@Path("slug") slug: String, @Body body: JsonObject): JsonElement
+
+    @DELETE("api/plugins/kanban/boards/{slug}")
+    suspend fun deleteKanbanBoard(@Path("slug") slug: String): JsonElement
+
+    @POST("api/plugins/kanban/boards/{slug}/switch")
+    suspend fun switchKanbanBoard(@Path("slug") slug: String): JsonElement
+
+    @GET("api/plugins/kanban/tasks/{task_id}")
+    suspend fun getKanbanTask(@Path("task_id") taskId: String): JsonElement
+
+    @POST("api/plugins/kanban/tasks")
+    suspend fun createKanbanTask(@Body body: JsonObject): JsonElement
+
+    @PATCH("api/plugins/kanban/tasks/{task_id}")
+    suspend fun patchKanbanTask(@Path("task_id") taskId: String, @Body body: JsonObject): JsonElement
+
+    @DELETE("api/plugins/kanban/tasks/{task_id}")
+    suspend fun deleteKanbanTask(@Path("task_id") taskId: String): JsonElement
+
+    @GET("api/plugins/kanban/tasks/{task_id}/comments")
+    suspend fun getKanbanTaskComments(@Path("task_id") taskId: String): JsonElement
+
+    @POST("api/plugins/kanban/tasks/{task_id}/comments")
+    suspend fun addKanbanTaskComment(@Path("task_id") taskId: String, @Body body: JsonObject): JsonElement
+
+    @POST("api/plugins/kanban/tasks/{task_id}/attachments")
+    suspend fun addKanbanTaskAttachment(@Path("task_id") taskId: String, @Body body: JsonObject): JsonElement
+
+    @GET("api/plugins/kanban/tasks/{task_id}/attachments")
+    suspend fun getKanbanTaskAttachments(@Path("task_id") taskId: String): JsonElement
+
+    @GET("api/plugins/kanban/tasks/{task_id}/log")
+    suspend fun getKanbanTaskLog(@Path("task_id") taskId: String): JsonElement
+
+    @POST("api/plugins/kanban/tasks/{task_id}/reassign")
+    suspend fun reassignKanbanTask(@Path("task_id") taskId: String, @Body body: JsonObject): JsonElement
+
+    @POST("api/plugins/kanban/tasks/{task_id}/reclaim")
+    suspend fun reclaimKanbanTask(@Path("task_id") taskId: String): JsonElement
+
+    @GET("api/plugins/kanban/stats")
+    suspend fun getKanbanStats(): JsonElement
+
+    @GET("api/plugins/kanban/assignees")
+    suspend fun getKanbanAssignees(): JsonElement
+
+    @GET("api/plugins/kanban/workers/active")
+    suspend fun getKanbanActiveWorkers(): JsonElement
+
+    @GET("api/plugins/kanban/config")
+    suspend fun getKanbanConfig(): JsonElement
+
+    @GET("api/plugins/kanban/runs/{run_id}")
+    suspend fun getKanbanRun(@Path("run_id") runId: String): JsonElement
+
+    @POST("api/plugins/kanban/runs/{run_id}/terminate")
+    suspend fun terminateKanbanRun(@Path("run_id") runId: String): JsonElement
+
+    // --- v0.6 backlog: guided Telegram/WhatsApp onboarding (ROADMAP item 3) ---
+
+    @POST("api/messaging/telegram/onboarding/start")
+    suspend fun startTelegramOnboarding(@Body body: JsonObject): JsonElement
+
+    @GET("api/messaging/telegram/onboarding/{pairing_id}")
+    suspend fun getTelegramOnboarding(@Path("pairing_id") pairingId: String): JsonElement
+
+    @DELETE("api/messaging/telegram/onboarding/{pairing_id}")
+    suspend fun cancelTelegramOnboarding(@Path("pairing_id") pairingId: String): JsonElement
+
+    @POST("api/messaging/telegram/onboarding/{pairing_id}/apply")
+    suspend fun applyTelegramOnboarding(@Path("pairing_id") pairingId: String, @Body body: JsonObject): JsonElement
+
+    @POST("api/messaging/whatsapp/onboarding/start")
+    suspend fun startWhatsAppOnboarding(@Body body: JsonObject): JsonElement
+
+    @GET("api/messaging/whatsapp/onboarding/{pairing_id}")
+    suspend fun getWhatsAppOnboarding(@Path("pairing_id") pairingId: String): JsonElement
+
+    @DELETE("api/messaging/whatsapp/onboarding/{pairing_id}")
+    suspend fun cancelWhatsAppOnboarding(@Path("pairing_id") pairingId: String): JsonElement
+
+    @POST("api/messaging/whatsapp/onboarding/{pairing_id}/apply")
+    suspend fun applyWhatsAppOnboarding(@Path("pairing_id") pairingId: String, @Body body: JsonObject): JsonElement
+
+    // --- v0.6 backlog: MCP server edit (ROADMAP item 4) ---
+
+    @PUT("api/mcp/servers")
+    suspend fun updateMcpServer(@Body body: JsonObject, @Query("profile") profile: String? = null): JsonElement
+
+    // --- v0.6 backlog: memory provider config/setup/OAuth (ROADMAP item 5) ---
+
+    @GET("api/memory/providers/{name}/config")
+    suspend fun getMemoryProviderConfig(
+        @Path("name") name: String,
+        @Query("surface") surface: String? = null,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
+
+    @PUT("api/memory/providers/{name}/config")
+    suspend fun updateMemoryProviderConfig(
+        @Path("name") name: String,
+        @Body body: JsonObject,
+        @Query("surface") surface: String? = null,
+        @Query("profile") profile: String? = null,
+    ): JsonElement
+
+    @POST("api/memory/providers/{name}/setup")
+    suspend fun setupMemoryProvider(@Path("name") name: String, @Body body: JsonObject): JsonElement
+
+    @POST("api/memory/providers/{provider}/oauth/start")
+    suspend fun startMemoryProviderOAuth(@Path("provider") provider: String): JsonElement
+
+    @GET("api/memory/providers/{provider}/oauth/status")
+    suspend fun getMemoryProviderOAuthStatus(@Path("provider") provider: String): JsonElement
+
+    // --- v0.6 backlog: computer-use + terminal backends (ROADMAP item 6) ---
+
+    @GET("api/tools/computer-use/status")
+    suspend fun getComputerUseStatus(@Query("profile") profile: String? = null): JsonElement
+
+    @POST("api/tools/computer-use/permissions/grant")
+    suspend fun grantComputerUsePermissions(@Query("profile") profile: String? = null): JsonElement
+
+    @GET("api/tools/terminal/backends")
+    suspend fun getTerminalBackends(@Query("profile") profile: String? = null): TerminalBackendsResponse
+
+    @PUT("api/tools/terminal/backend")
+    suspend fun selectTerminalBackend(@Body body: JsonObject, @Query("profile") profile: String? = null): JsonElement
+
+    // --- v0.6 backlog: toolset deep config (ROADMAP item 7) ---
+
+    @GET("api/tools/toolsets/{name}/config")
+    suspend fun getToolsetConfig(@Path("name") name: String, @Query("profile") profile: String? = null): JsonElement
+
+    @PUT("api/tools/toolsets/{name}/env")
+    suspend fun putToolsetEnv(@Path("name") name: String, @Body body: JsonObject, @Query("profile") profile: String? = null): JsonElement
+
+    @PUT("api/tools/toolsets/{name}/model")
+    suspend fun putToolsetModel(@Path("name") name: String, @Body body: JsonObject, @Query("profile") profile: String? = null): JsonElement
+
+    @GET("api/tools/toolsets/{name}/models")
+    suspend fun getToolsetModels(@Path("name") name: String, @Query("profile") profile: String? = null): JsonElement
+
+    @PUT("api/tools/toolsets/{name}/provider")
+    suspend fun putToolsetProvider(@Path("name") name: String, @Body body: JsonObject, @Query("profile") profile: String? = null): JsonElement
+
+    @POST("api/tools/toolsets/{name}/post-setup")
+    suspend fun runToolsetPostSetup(@Path("name") name: String, @Body body: JsonObject = JsonObject(emptyMap()), @Query("profile") profile: String? = null): JsonElement
+
+    // --- v0.6 backlog: model MoA / auxiliary / recommended-default (ROADMAP item 8) ---
+
+    @GET("api/model/moa")
+    suspend fun getMoaConfig(@Query("profile") profile: String? = null): JsonElement
+
+    @PUT("api/model/moa")
+    suspend fun putMoaConfig(@Body body: JsonObject, @Query("profile") profile: String? = null): JsonElement
+
+    @GET("api/model/auxiliary")
+    suspend fun getAuxiliaryModels(@Query("profile") profile: String? = null): JsonElement
+
+    @GET("api/model/recommended-default")
+    suspend fun getRecommendedDefaultModel(@Query("provider") provider: String = ""): JsonElement
+
+    // --- v0.6 backlog: update apply + gateway drain (ROADMAP item 9) ---
+
+    @POST("api/hermes/update")
+    suspend fun applyHermesUpdate(@Body body: JsonObject = JsonObject(emptyMap())): JsonElement
+
+    @POST("api/gateway/drain")
+    suspend fun drainGateway(): JsonElement
+
+    // --- v0.6 backlog: ops depth (ROADMAP item 10) ---
+
+    @GET("api/ops/checkpoints")
+    suspend fun getOpsCheckpoints(): JsonElement
+
+    @POST("api/ops/checkpoints/prune")
+    suspend fun pruneOpsCheckpoints(@Body body: JsonObject = JsonObject(emptyMap())): JsonElement
+
+    @POST("api/ops/config-migrate")
+    suspend fun runConfigMigrate(): JsonElement
+
+    @POST("api/ops/dump")
+    suspend fun runOpsDump(@Body body: JsonObject = JsonObject(emptyMap())): JsonElement
+
+    @POST("api/ops/prompt-size")
+    suspend fun runOpsPromptSize(): JsonElement
+
+    // --- v0.6 backlog: minor surfaces (ROADMAP item 11) ---
+
+    @GET("api/analytics/models")
+    suspend fun getAnalyticsModels(): JsonElement
+
+    @GET("api/audio/elevenlabs/voices")
+    suspend fun getElevenLabsVoices(): JsonElement
+
+    @GET("api/egress/status")
+    suspend fun getEgressStatus(): EgressStatusResponse
+
+    @POST("api/cron/fire")
+    suspend fun fireCronJob(@Body body: JsonObject): JsonElement
+
+    @GET("api/profiles/sessions")
+    suspend fun getProfilesSessions(): JsonElement
+
+    @PUT("api/profiles/{name}/model")
+    suspend fun putProfileModel(@Path("name") name: String, @Body body: JsonObject): JsonElement
+
+    @POST("api/profiles/{name}/open-terminal")
+    suspend fun openProfileTerminal(@Path("name") name: String): JsonElement
+
+    @GET("api/profiles/{name}/setup-command")
+    suspend fun getProfileSetupCommand(@Path("name") name: String): JsonElement
 }

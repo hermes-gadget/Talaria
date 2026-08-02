@@ -61,6 +61,8 @@ object Routes {
     const val TERMINAL = "terminal"
     const val THEMES = "themes"
     const val SETTINGS = "settings"
+    const val PLUGINS = "plugins"
+    const val KANBAN = "kanban"
 
     fun chat(resume: String? = null) =
         if (resume.isNullOrBlank()) "chat?resume=" else "chat?resume=${encode(resume)}"
