@@ -33,6 +33,9 @@ import com.hermesgadget.talaria.domain.model.OpsDebugShareResponse
 import com.hermesgadget.talaria.domain.model.OpsHookCreateRequest
 import com.hermesgadget.talaria.domain.model.OpsHookDeleteRequest
 import com.hermesgadget.talaria.domain.model.OpsHooksResponse
+import com.hermesgadget.talaria.domain.model.OpsRawConfigResponse
+import com.hermesgadget.talaria.domain.model.OpsRawConfigUpdate
+import com.hermesgadget.talaria.domain.model.SystemStats
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,10 +44,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonElement
+import okhttp3.RequestBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.ResponseBody
 import retrofit2.HttpException
 
 data class SystemShareRequest(
@@ -53,6 +59,72 @@ data class SystemShareRequest(
     val subject: String,
     val chooserTitle: String,
 )
+
+/**
+ * System operations are kept behind a small boundary so the ViewModel can be
+ * exercised without constructing the app-wide repository or Retrofit client.
+ * The production adapter below delegates to the existing repository/API
+ * methods; it does not add or duplicate any network routes.
+ */
+interface SystemGateway {
+    suspend fun getSystemStats(): Result<SystemStats>
+    suspend fun getPortal(): Result<JsonElement>
+    suspend fun gateway(action: String): Result<ActionStatus>
+    suspend fun runDoctor(): Result<ActionStatus>
+    suspend fun runSecurityAudit(): Result<ActionStatus>
+    suspend fun runBackup(): Result<ActionStatus>
+    suspend fun checkUpdate(): Result<JsonElement>
+
+    suspend fun getOpsHooks(): OpsHooksResponse
+    suspend fun createOpsHook(request: OpsHookCreateRequest): OpsActionResponse
+    suspend fun deleteOpsHook(request: OpsHookDeleteRequest): OpsActionResponse
+    suspend fun importOpsUpload(file: MultipartBody.Part, force: RequestBody): OpsActionResponse
+    suspend fun createOpsBackup(request: OpsBackupRequest): OpsActionResponse
+    suspend fun downloadOpsBackup(archive: String): ResponseBody
+    suspend fun createOpsDebugShare(request: OpsDebugShareRequest): OpsDebugShareResponse
+    suspend fun getOpsRawConfig(): OpsRawConfigResponse
+    suspend fun putOpsRawConfig(update: OpsRawConfigUpdate): OpsActionResponse
+
+    suspend fun applyHermesUpdate(): JsonElement
+    suspend fun drainGateway(): JsonElement
+    suspend fun getOpsCheckpoints(): JsonElement
+    suspend fun pruneOpsCheckpoints(): JsonElement
+    suspend fun runConfigMigrate(): JsonElement
+    suspend fun runOpsDump(): JsonElement
+    suspend fun runOpsPromptSize(): JsonElement
+}
+
+private class DefaultSystemGateway(
+    private val repo: HermesRepository = TalariaApp.instance.container.hermesRepository,
+    private val api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
+) : SystemGateway {
+    override suspend fun getSystemStats() = repo.getSystemStats()
+    override suspend fun getPortal() = repo.getPortal()
+    override suspend fun gateway(action: String) = repo.gateway(action)
+    override suspend fun runDoctor() = repo.runDoctorToCompletion()
+    override suspend fun runSecurityAudit() = repo.runSecurityAuditToCompletion()
+    override suspend fun runBackup() = repo.runBackupToCompletion()
+    override suspend fun checkUpdate() = repo.checkUpdate()
+
+    override suspend fun getOpsHooks() = api.getOpsHooks()
+    override suspend fun createOpsHook(request: OpsHookCreateRequest) = api.createOpsHook(request)
+    override suspend fun deleteOpsHook(request: OpsHookDeleteRequest) = api.deleteOpsHook(request)
+    override suspend fun importOpsUpload(file: MultipartBody.Part, force: RequestBody) =
+        api.importOpsUpload(file, force)
+    override suspend fun createOpsBackup(request: OpsBackupRequest) = api.createOpsBackup(request)
+    override suspend fun downloadOpsBackup(archive: String) = api.downloadOpsBackup(archive)
+    override suspend fun createOpsDebugShare(request: OpsDebugShareRequest) = api.createOpsDebugShare(request)
+    override suspend fun getOpsRawConfig() = api.getOpsRawConfig()
+    override suspend fun putOpsRawConfig(update: OpsRawConfigUpdate) = api.putOpsRawConfig(update)
+
+    override suspend fun applyHermesUpdate() = api.applyHermesUpdate()
+    override suspend fun drainGateway() = api.drainGateway()
+    override suspend fun getOpsCheckpoints() = api.getOpsCheckpoints()
+    override suspend fun pruneOpsCheckpoints() = api.pruneOpsCheckpoints()
+    override suspend fun runConfigMigrate() = api.runConfigMigrate()
+    override suspend fun runOpsDump() = api.runOpsDump()
+    override suspend fun runOpsPromptSize() = api.runOpsPromptSize()
+}
 
 sealed interface HooksUiState {
     data object Loading : HooksUiState
@@ -104,8 +176,11 @@ data class SystemUiState(
     val audit: String? = null,
     val backup: String? = null,
     val update: String? = null,
+    val updateAction: String? = null,
+    val gatewayDrain: String? = null,
     val portal: String? = null,
     val busy: Boolean = false,
+    val updateBusy: Boolean = false,
     val hooks: HooksUiState = HooksUiState.Loading,
     val hooksBusy: Boolean = false,
     val hooksMessage: String? = null,
@@ -113,38 +188,44 @@ data class SystemUiState(
     val backupDownload: BackupDownloadUiState = BackupDownloadUiState.Idle,
     val debugShare: DebugShareUiState = DebugShareUiState.Idle,
     val rawConfig: RawConfigUiState = RawConfigUiState.Loading,
+    val opsCheckpoints: String? = null,
+    val opsCheckpointsLoading: Boolean = false,
+    val opsResult: String? = null,
+    val opsError: String? = null,
+    val opsBusy: Boolean = false,
     val shareRequest: SystemShareRequest? = null,
 )
 
 class SystemViewModel(
-    private val repo: HermesRepository = TalariaApp.instance.container.hermesRepository,
-    private val api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
+    private val gateway: SystemGateway = DefaultSystemGateway(),
     private val cacheDirectory: File = TalariaApp.instance.cacheDir,
+    private val autoRefresh: Boolean = true,
 ) : ViewModel() {
     private val _ui = MutableStateFlow(SystemUiState())
     val ui: StateFlow<SystemUiState> = _ui.asStateFlow()
 
     init {
-        refresh()
+        if (autoRefresh) refresh()
     }
 
     fun refresh() {
         loadSystem()
         refreshHooks()
         refreshRawConfig()
+        getOpsCheckpoints()
     }
 
     fun loadSystem() {
         viewModelScope.launch {
             _ui.update { it.copy(loading = true, error = null) }
             launch {
-                repo.getSystemStats().fold(
+                gateway.getSystemStats().fold(
                     onSuccess = { stats -> _ui.update { it.copy(stats = stats, loading = false, error = null) } },
                     onFailure = { error -> _ui.update { it.copy(loading = false, error = error.message) } },
                 )
             }
             launch {
-                repo.getPortal().onSuccess { portal ->
+                gateway.getPortal().onSuccess { portal ->
                     _ui.update { it.copy(portal = prettySystemJson(portal)) }
                 }
             }
@@ -154,7 +235,7 @@ class SystemViewModel(
     fun runGateway(action: String) {
         viewModelScope.launch {
             _ui.update { it.copy(busy = true, error = null) }
-            repo.gateway(action)
+            gateway.gateway(action)
                 .onFailure { error -> _ui.update { it.copy(error = error.message) } }
             _ui.update { it.copy(busy = false) }
             loadSystem()
@@ -163,7 +244,7 @@ class SystemViewModel(
 
     fun runDoctor() {
         viewModelScope.launch {
-            repo.runDoctorToCompletion().fold(
+            gateway.runDoctor().fold(
                 onSuccess = { action -> _ui.update { it.copy(doctor = formatSystemAction(action)) } },
                 onFailure = { error -> _ui.update { it.copy(doctor = error.message) } },
             )
@@ -172,7 +253,7 @@ class SystemViewModel(
 
     fun runSecurityAudit() {
         viewModelScope.launch {
-            repo.runSecurityAuditToCompletion().fold(
+            gateway.runSecurityAudit().fold(
                 onSuccess = { action -> _ui.update { it.copy(audit = formatSystemAction(action)) } },
                 onFailure = { error -> _ui.update { it.copy(audit = error.message) } },
             )
@@ -181,7 +262,7 @@ class SystemViewModel(
 
     fun runBackup() {
         viewModelScope.launch {
-            repo.runBackupToCompletion().fold(
+            gateway.runBackup().fold(
                 onSuccess = { action -> _ui.update { it.copy(backup = formatSystemAction(action)) } },
                 onFailure = { error -> _ui.update { it.copy(backup = error.message) } },
             )
@@ -190,7 +271,7 @@ class SystemViewModel(
 
     fun checkUpdate() {
         viewModelScope.launch {
-            repo.checkUpdate()
+            gateway.checkUpdate()
                 .onSuccess { result -> _ui.update { it.copy(update = prettySystemJson(result)) } }
                 .onFailure { error -> _ui.update { it.copy(update = error.message) } }
         }
@@ -198,16 +279,99 @@ class SystemViewModel(
 
     fun refreshPortal() {
         viewModelScope.launch {
-            repo.getPortal()
+            gateway.getPortal()
                 .onSuccess { result -> _ui.update { it.copy(portal = prettySystemJson(result)) } }
                 .onFailure { error -> _ui.update { it.copy(portal = error.message) } }
+        }
+    }
+
+    fun applyHermesUpdate() {
+        viewModelScope.launch {
+            _ui.update { it.copy(updateBusy = true) }
+            runCatching { gateway.applyHermesUpdate() }.fold(
+                onSuccess = { result ->
+                    _ui.update { it.copy(updateAction = prettySystemJson(result), updateBusy = false) }
+                },
+                onFailure = { error ->
+                    _ui.update { it.copy(updateAction = errorText(error), updateBusy = false) }
+                },
+            )
+        }
+    }
+
+    fun drainGateway() {
+        viewModelScope.launch {
+            _ui.update { it.copy(updateBusy = true) }
+            runCatching { gateway.drainGateway() }.fold(
+                onSuccess = { result ->
+                    _ui.update { it.copy(gatewayDrain = prettySystemJson(result), updateBusy = false) }
+                },
+                onFailure = { error ->
+                    _ui.update { it.copy(gatewayDrain = errorText(error), updateBusy = false) }
+                },
+            )
+        }
+    }
+
+    fun getOpsCheckpoints() {
+        viewModelScope.launch {
+            _ui.update { it.copy(opsCheckpointsLoading = true, opsError = null) }
+            runCatching { gateway.getOpsCheckpoints() }.fold(
+                onSuccess = { result ->
+                    _ui.update {
+                        it.copy(
+                            opsCheckpoints = prettySystemJson(result),
+                            opsCheckpointsLoading = false,
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    _ui.update {
+                        it.copy(opsCheckpointsLoading = false, opsError = errorText(error))
+                    }
+                },
+            )
+        }
+    }
+
+    fun pruneOpsCheckpoints() {
+        runOpsAction(refreshCheckpoints = true) { gateway.pruneOpsCheckpoints() }
+    }
+
+    fun runConfigMigrate() {
+        runOpsAction { gateway.runConfigMigrate() }
+    }
+
+    fun runOpsDump() {
+        runOpsAction { gateway.runOpsDump() }
+    }
+
+    fun runOpsPromptSize() {
+        runOpsAction { gateway.runOpsPromptSize() }
+    }
+
+    private fun runOpsAction(
+        refreshCheckpoints: Boolean = false,
+        action: suspend () -> JsonElement,
+    ) {
+        viewModelScope.launch {
+            _ui.update { it.copy(opsBusy = true, opsError = null) }
+            runCatching { action() }.fold(
+                onSuccess = { result ->
+                    _ui.update { it.copy(opsResult = prettySystemJson(result), opsBusy = false) }
+                    if (refreshCheckpoints) getOpsCheckpoints()
+                },
+                onFailure = { error ->
+                    _ui.update { it.copy(opsBusy = false, opsError = errorText(error)) }
+                },
+            )
         }
     }
 
     fun refreshHooks() {
         _ui.update { it.copy(hooks = HooksUiState.Loading, hooksMessage = null) }
         viewModelScope.launch {
-            runCatching { api.getOpsHooks() }.fold(
+            runCatching { gateway.getOpsHooks() }.fold(
                 onSuccess = { response -> _ui.update { it.copy(hooks = HooksUiState.Ready(response)) } },
                 onFailure = { error -> _ui.update { it.copy(hooks = HooksUiState.Failed(error.message ?: "Could not load hooks")) } },
             )
@@ -228,8 +392,8 @@ class SystemViewModel(
         viewModelScope.launch {
             _ui.update { it.copy(hooksBusy = true, hooksMessage = null) }
             runCatching {
-                api.createOpsHook(request)
-                api.getOpsHooks()
+                gateway.createOpsHook(request)
+                gateway.getOpsHooks()
             }.fold(
                 onSuccess = { response ->
                     _ui.update {
@@ -259,8 +423,8 @@ class SystemViewModel(
         viewModelScope.launch {
             _ui.update { it.copy(hooksBusy = true, hooksMessage = null) }
             runCatching {
-                api.deleteOpsHook(OpsHookDeleteRequest(entry.event, command))
-                api.getOpsHooks()
+                gateway.deleteOpsHook(OpsHookDeleteRequest(entry.event, command))
+                gateway.getOpsHooks()
             }.fold(
                 onSuccess = { response ->
                     _ui.update {
@@ -333,7 +497,7 @@ class SystemViewModel(
                     pending.file.asRequestBody(mediaType),
                 )
                 val forcePart = "true".toRequestBody("text/plain".toMediaType())
-                api.importOpsUpload(filePart, forcePart)
+                gateway.importOpsUpload(filePart, forcePart)
             }.fold(
                 onSuccess = { response ->
                     pending.file.delete()
@@ -351,14 +515,14 @@ class SystemViewModel(
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    val response = api.createOpsBackup(OpsBackupRequest())
+                    val response = gateway.createOpsBackup(OpsBackupRequest())
                     val archive = response.archive?.takeIf { it.isNotBlank() }
                         ?: error(response.error ?: "The backup endpoint did not return an archive")
                     val directory = File(cacheDirectory, "ops-backups").apply { mkdirs() }
                     val sourceName = archive.substringAfterLast('/').ifBlank { "hermes-backup.zip" }
                     val safeName = sourceName.replace(Regex("[^A-Za-z0-9._-]+"), "_")
                     val output = File.createTempFile("hermes-backup-", "-$safeName", directory)
-                    api.downloadOpsBackup(archive).use { body ->
+                    gateway.downloadOpsBackup(archive).use { body ->
                         body.byteStream().use { input ->
                             output.outputStream().use { file -> input.copyTo(file) }
                         }
@@ -398,7 +562,7 @@ class SystemViewModel(
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    val response = api.createOpsDebugShare(OpsDebugShareRequest())
+                    val response = gateway.createOpsDebugShare(OpsDebugShareRequest())
                     val text = buildString {
                         appendLine("Hermes debug share")
                         appendLine("Redacted: ${response.redacted}")
@@ -439,7 +603,7 @@ class SystemViewModel(
     fun refreshRawConfig() {
         _ui.update { it.copy(rawConfig = RawConfigUiState.Loading) }
         viewModelScope.launch {
-            runCatching { api.getOpsRawConfig() }.fold(
+            runCatching { gateway.getOpsRawConfig() }.fold(
                 onSuccess = { response ->
                     _ui.update { it.copy(rawConfig = RawConfigUiState.Ready(response.yaml, response.path)) }
                 },
@@ -463,7 +627,7 @@ class SystemViewModel(
         }
         _ui.update { it.copy(rawConfig = current.copy(saving = true, message = null)) }
         viewModelScope.launch {
-            runCatching { api.putOpsRawConfig(com.hermesgadget.talaria.domain.model.OpsRawConfigUpdate(current.yaml)) }
+            runCatching { gateway.putOpsRawConfig(OpsRawConfigUpdate(current.yaml)) }
                 .fold(
                     onSuccess = {
                         _ui.update {
@@ -499,6 +663,8 @@ class SystemViewModel(
         }
     }
 }
+
+private fun errorText(error: Throwable): String = error.message ?: error.toString()
 
 internal fun formatSystemAction(action: ActionStatus): String = buildString {
     append(if (action.exit_code == 0) "Completed" else "Exited ${action.exit_code ?: "?"}")
