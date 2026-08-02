@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Strings owned by the declutter feature wave. English only; locale files are translated by the i18n pass. -->
+    <string name="declutter_config_editor">Editor</string>
+    <string name="declutter_config_import_export">Import and export</string>
+    <string name="declutter_logs_filters">Filters</string>
 </resources>

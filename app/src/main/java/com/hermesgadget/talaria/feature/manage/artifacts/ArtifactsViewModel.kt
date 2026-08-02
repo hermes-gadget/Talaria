@@ -23,8 +23,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
-import com.hermesgadget.talaria.core.data.repo.HermesRepository
-import com.hermesgadget.talaria.core.network.HermesApi
+import com.hermesgadget.talaria.domain.model.FsDataUrl
+import com.hermesgadget.talaria.domain.model.FsTextFile
+import com.hermesgadget.talaria.domain.model.SessionMessage
+import com.hermesgadget.talaria.domain.model.SessionsPage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -36,6 +38,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+
+private const val ARTIFACT_SESSION_LIMIT = 50
 
 enum class ArtifactFilter {
     ALL,
@@ -95,8 +99,22 @@ data class ArtifactsUiState(
 
 /** Loads recent sessions, derives artifact paths, and handles remote previews. */
 class ArtifactsViewModel(
-    private val repo: HermesRepository = TalariaApp.instance.container.hermesRepository,
-    private val api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
+    private val loadSessions: suspend () -> Result<SessionsPage> = {
+        TalariaApp.instance.container.hermesRepository.getSessionsPage(
+            limit = ARTIFACT_SESSION_LIMIT,
+            offset = 0,
+        )
+    },
+    private val loadMessages: suspend (String) -> Result<List<SessionMessage>> = { sessionId ->
+        TalariaApp.instance.container.hermesRepository.loadMessages(sessionId)
+    },
+    private val readText: suspend (String) -> Result<FsTextFile> = { path ->
+        TalariaApp.instance.container.hermesRepository.fsReadText(path)
+    },
+    private val readDataUrl: suspend (String) -> FsDataUrl = { path ->
+        TalariaApp.instance.container.clientFactory.api().fsReadDataUrl(path)
+    },
+    private val shareRequestBuilder: (suspend (ArtifactRecord) -> ArtifactShareRequest)? = null,
 ) : ViewModel() {
     private val _ui = MutableStateFlow(ArtifactsUiState())
     val ui: StateFlow<ArtifactsUiState> = _ui.asStateFlow()
@@ -147,7 +165,7 @@ class ArtifactsViewModel(
             runCatching {
                 when (artifact.kind) {
                     ArtifactKind.TEXT -> {
-                        val file = repo.fsReadText(artifact.path).getOrThrow()
+                        val file = readText(artifact.path).getOrThrow()
                         ArtifactPreview.Text(
                             artifact = artifact,
                             text = file.text,
@@ -158,7 +176,7 @@ class ArtifactsViewModel(
                     }
 
                     ArtifactKind.IMAGE -> {
-                        val file = api.fsReadDataUrl(artifact.path)
+                        val file = readDataUrl(artifact.path)
                         ArtifactPreview.Image(
                             artifact = artifact,
                             dataUrl = file.dataUrl,
@@ -168,7 +186,7 @@ class ArtifactsViewModel(
                     }
 
                     ArtifactKind.ARCHIVE -> {
-                        val file = api.fsReadDataUrl(artifact.path)
+                        val file = readDataUrl(artifact.path)
                         ArtifactPreview.Binary(
                             artifact = artifact,
                             mimeType = file.mimeType ?: "application/octet-stream",
@@ -199,7 +217,9 @@ class ArtifactsViewModel(
     fun share(artifact: ArtifactRecord) {
         _ui.update { it.copy(sharing = true, shareError = null, shareRequest = null) }
         viewModelScope.launch {
-            runCatching { prepareShare(artifact) }.fold(
+            runCatching {
+                shareRequestBuilder?.invoke(artifact) ?: prepareShare(artifact)
+            }.fold(
                 onSuccess = { request ->
                     _ui.update { it.copy(sharing = false, shareRequest = request) }
                 },
@@ -222,10 +242,10 @@ class ArtifactsViewModel(
     private suspend fun loadArtifacts(): List<ArtifactRecord> = coroutineScope {
         // The desktop browser intentionally scans a recent bounded session slice;
         // doing the same keeps a mobile refresh responsive on large Hermes homes.
-        val sessions = repo.getSessionsPage(limit = SESSION_LIMIT, offset = 0).getOrThrow().sessions
+        val sessions = loadSessions().getOrThrow().sessions
         sessions.map { session ->
             async {
-                session to repo.loadMessages(session.id)
+                session to loadMessages(session.id)
             }
         }.awaitAll().flatMap { (session, result) ->
             result.getOrNull()?.let { extractArtifacts(session, it) }.orEmpty()
@@ -236,12 +256,12 @@ class ArtifactsViewModel(
         val app = TalariaApp.instance
         val (bytes, mimeType) = when (artifact.kind) {
             ArtifactKind.TEXT -> {
-                val text = repo.fsReadText(artifact.path).getOrThrow()
+                val text = readText(artifact.path).getOrThrow()
                 text.text.toByteArray(Charsets.UTF_8) to (text.mimeType ?: "text/plain")
             }
 
             ArtifactKind.IMAGE, ArtifactKind.ARCHIVE -> {
-                val data = api.fsReadDataUrl(artifact.path)
+                val data = readDataUrl(artifact.path)
                 val decoded = decodeDataUrl(data.dataUrl)
                 decoded.bytes to (data.mimeType ?: decoded.mimeType ?: mimeTypeFor(artifact))
             }
@@ -264,8 +284,6 @@ class ArtifactsViewModel(
     }
 
     companion object {
-        private const val SESSION_LIMIT = 50
-
         fun factory() = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = ArtifactsViewModel() as T

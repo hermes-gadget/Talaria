@@ -48,10 +48,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.network.JsonConfig
 import com.hermesgadget.talaria.domain.model.ConfigSchemaResponse
+import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import com.hermesgadget.talaria.ui.components.UnsavedChangesGuard
 import kotlinx.coroutines.launch
@@ -145,128 +148,130 @@ fun ConfigScreen() {
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (useForm) {
-                Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                    categories.forEach { cat ->
+            CollapsibleSection(title = stringResource(R.string.declutter_config_editor)) {
+                if (useForm) {
+                    Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        categories.forEach { cat ->
+                            FilterChip(
+                                selected = selectedCategory == cat,
+                                onClick = { selectedCategory = cat },
+                                label = { Text(cat) },
+                                modifier = Modifier.padding(end = 4.dp),
+                            )
+                        }
                         FilterChip(
-                            selected = selectedCategory == cat,
-                            onClick = { selectedCategory = cat },
-                            label = { Text(cat) },
-                            modifier = Modifier.padding(end = 4.dp),
+                            selected = selectedCategory == "__json__",
+                            onClick = { selectedCategory = "__json__" },
+                            label = { Text("JSON") },
                         )
                     }
-                    FilterChip(
-                        selected = selectedCategory == "__json__",
-                        onClick = { selectedCategory = "__json__" },
-                        label = { Text("JSON") },
-                    )
                 }
-            }
 
-            if (!useForm || selectedCategory == "__json__") {
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 280.dp),
-                    minLines = 16,
-                    label = { Text("config.json") },
-                )
-            } else {
-                val cat = selectedCategory
-                val fields = schema?.fields
-                if (cat != null && fields != null) {
-                    val keys = fieldKeysForCategory(fields, cat)
-                    if (keys.isEmpty()) {
-                        Text("No fields in $cat", style = MaterialTheme.typography.bodyMedium)
-                    } else {
-                        val configObj = runCatching {
-                            JsonConfig.json.parseToJsonElement(text).jsonObject
-                        }.getOrNull()
-                        keys.forEach { key ->
-                            val meta = fields[key]?.jsonObject
-                            val type = meta?.get("type")?.jsonPrimitive?.contentOrNull
-                            val desc = meta?.get("description")?.jsonPrimitive?.contentOrNull
-                            val currentElement = configObj?.let { configValueAtPath(it, key) }
-                            val current = when (currentElement) {
-                                is JsonPrimitive -> currentElement.content
-                                null -> ""
-                                else -> currentElement.toString()
-                            }
-                            val enumValues = meta?.let { enumOptions(it) }
-                            when {
-                                !enumValues.isNullOrEmpty() -> {
-                                    var expanded by remember(key) { mutableStateOf(false) }
-                                    ExposedDropdownMenuBox(
-                                        expanded = expanded,
-                                        onExpandedChange = { expanded = it },
-                                        modifier = Modifier.fillMaxWidth(),
-                                    ) {
+                if (!useForm || selectedCategory == "__json__") {
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 280.dp),
+                        minLines = 16,
+                        label = { Text("config.json") },
+                    )
+                } else {
+                    val cat = selectedCategory
+                    val fields = schema?.fields
+                    if (cat != null && fields != null) {
+                        val keys = fieldKeysForCategory(fields, cat)
+                        if (keys.isEmpty()) {
+                            Text("No fields in $cat", style = MaterialTheme.typography.bodyMedium)
+                        } else {
+                            val configObj = runCatching {
+                                JsonConfig.json.parseToJsonElement(text).jsonObject
+                            }.getOrNull()
+                            keys.forEach { key ->
+                                val meta = fields[key]?.jsonObject
+                                val type = meta?.get("type")?.jsonPrimitive?.contentOrNull
+                                val desc = meta?.get("description")?.jsonPrimitive?.contentOrNull
+                                val currentElement = configObj?.let { configValueAtPath(it, key) }
+                                val current = when (currentElement) {
+                                    is JsonPrimitive -> currentElement.content
+                                    null -> ""
+                                    else -> currentElement.toString()
+                                }
+                                val enumValues = meta?.let { enumOptions(it) }
+                                when {
+                                    !enumValues.isNullOrEmpty() -> {
+                                        var expanded by remember(key) { mutableStateOf(false) }
+                                        ExposedDropdownMenuBox(
+                                            expanded = expanded,
+                                            onExpandedChange = { expanded = it },
+                                            modifier = Modifier.fillMaxWidth(),
+                                        ) {
+                                            OutlinedTextField(
+                                                value = current,
+                                                onValueChange = {},
+                                                readOnly = true,
+                                                label = { Text(key) },
+                                                supportingText = desc?.let { { Text(it) } },
+                                                trailingIcon = {
+                                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+                                                },
+                                                modifier = Modifier
+                                                    .menuAnchor(
+                                                        ExposedDropdownMenuAnchorType.PrimaryNotEditable,
+                                                        enabled = true,
+                                                    )
+                                                    .fillMaxWidth(),
+                                            )
+                                            ExposedDropdownMenu(
+                                                expanded = expanded,
+                                                onDismissRequest = { expanded = false },
+                                            ) {
+                                                enumValues.forEach { option ->
+                                                    DropdownMenuItem(
+                                                        text = { Text(option) },
+                                                        onClick = {
+                                                            text = updateConfigKey(text, key, option, type)
+                                                            expanded = false
+                                                        },
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                    type == "boolean" || type == "bool" -> {
+                                        val checked = current.equals("true", ignoreCase = true)
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 4.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(key, style = MaterialTheme.typography.titleSmall)
+                                                desc?.let {
+                                                    Text(it, style = MaterialTheme.typography.bodySmall)
+                                                }
+                                            }
+                                            androidx.compose.material3.Switch(
+                                                checked = checked,
+                                                onCheckedChange = { on ->
+                                                    text = updateConfigKey(text, key, on.toString(), "boolean")
+                                                },
+                                            )
+                                        }
+                                    }
+                                    else -> {
                                         OutlinedTextField(
                                             value = current,
-                                            onValueChange = {},
-                                            readOnly = true,
+                                            onValueChange = { newVal ->
+                                                text = updateConfigKey(text, key, newVal, type)
+                                            },
                                             label = { Text(key) },
                                             supportingText = desc?.let { { Text(it) } },
-                                            trailingIcon = {
-                                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
-                                            },
-                                            modifier = Modifier
-                                                .menuAnchor(
-                                                    ExposedDropdownMenuAnchorType.PrimaryNotEditable,
-                                                    enabled = true,
-                                                )
-                                                .fillMaxWidth(),
-                                        )
-                                        ExposedDropdownMenu(
-                                            expanded = expanded,
-                                            onDismissRequest = { expanded = false },
-                                        ) {
-                                            enumValues.forEach { option ->
-                                                DropdownMenuItem(
-                                                    text = { Text(option) },
-                                                    onClick = {
-                                                        text = updateConfigKey(text, key, option, type)
-                                                        expanded = false
-                                                    },
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                                type == "boolean" || type == "bool" -> {
-                                    val checked = current.equals("true", ignoreCase = true)
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 4.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(key, style = MaterialTheme.typography.titleSmall)
-                                            desc?.let {
-                                                Text(it, style = MaterialTheme.typography.bodySmall)
-                                            }
-                                        }
-                                        androidx.compose.material3.Switch(
-                                            checked = checked,
-                                            onCheckedChange = { on ->
-                                                text = updateConfigKey(text, key, on.toString(), "boolean")
-                                            },
+                                            modifier = Modifier.fillMaxWidth(),
                                         )
                                     }
-                                }
-                                else -> {
-                                    OutlinedTextField(
-                                        value = current,
-                                        onValueChange = { newVal ->
-                                            text = updateConfigKey(text, key, newVal, type)
-                                        },
-                                        label = { Text(key) },
-                                        supportingText = desc?.let { { Text(it) } },
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
                                 }
                             }
                         }
@@ -292,51 +297,62 @@ fun ConfigScreen() {
                         }.onFailure { message = it.message }
                     }
                 }) { Text("Save") }
-                OutlinedButton(onClick = {
-                    defaultsText?.let {
-                        text = it
-                        message = "Reset to defaults (not saved)"
-                    } ?: run { message = "Defaults unavailable" }
-                }) { Text("Reset") }
-                OutlinedButton(onClick = {
-                    val send = Intent(Intent.ACTION_SEND).apply {
-                        type = "application/json"
-                        putExtra(Intent.EXTRA_TEXT, text)
-                        putExtra(Intent.EXTRA_TITLE, "hermes-config.json")
-                    }
-                    context.startActivity(Intent.createChooser(send, "Export config"))
-                }) { Text("Export") }
-                OutlinedButton(onClick = {
-                    importText = text
-                }) { Text("Paste") }
-                OutlinedButton(onClick = {
-                    importFileLauncher.launch(
-                        arrayOf("application/json", "text/plain", "*/*"),
-                    )
-                }) { Text("Import file") }
             }
 
-            importText?.let {
-                OutlinedTextField(
-                    value = importText ?: "",
-                    onValueChange = { importText = it },
-                    label = { Text("Paste config JSON") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 120.dp),
-                    minLines = 6,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = {
-                        val pasted = importText.orEmpty()
-                        runCatching {
-                            JsonConfig.json.parseToJsonElement(pasted).jsonObject
-                            text = pasted
-                            importText = null
-                            message = "Imported (not saved)"
-                        }.onFailure { message = "Invalid JSON: ${it.message}" }
-                    }) { Text("Apply import") }
-                    TextButton(onClick = { importText = null }) { Text("Cancel") }
+            CollapsibleSection(
+                title = stringResource(R.string.declutter_config_import_export),
+                collapsible = true,
+            ) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(onClick = {
+                        defaultsText?.let {
+                            text = it
+                            message = "Reset to defaults (not saved)"
+                        } ?: run { message = "Defaults unavailable" }
+                    }) { Text("Reset") }
+                    OutlinedButton(onClick = {
+                        val send = Intent(Intent.ACTION_SEND).apply {
+                            type = "application/json"
+                            putExtra(Intent.EXTRA_TEXT, text)
+                            putExtra(Intent.EXTRA_TITLE, "hermes-config.json")
+                        }
+                        context.startActivity(Intent.createChooser(send, "Export config"))
+                    }) { Text("Export") }
+                    OutlinedButton(onClick = {
+                        importText = text
+                    }) { Text("Paste") }
+                    OutlinedButton(onClick = {
+                        importFileLauncher.launch(
+                            arrayOf("application/json", "text/plain", "*/*"),
+                        )
+                    }) { Text("Import file") }
+                }
+
+                importText?.let {
+                    OutlinedTextField(
+                        value = importText ?: "",
+                        onValueChange = { importText = it },
+                        label = { Text("Paste config JSON") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 120.dp),
+                        minLines = 6,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            val pasted = importText.orEmpty()
+                            runCatching {
+                                JsonConfig.json.parseToJsonElement(pasted).jsonObject
+                                text = pasted
+                                importText = null
+                                message = "Imported (not saved)"
+                            }.onFailure { message = "Invalid JSON: ${it.message}" }
+                        }) { Text("Apply import") }
+                        TextButton(onClick = { importText = null }) { Text("Cancel") }
+                    }
                 }
             }
         }

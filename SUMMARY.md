@@ -62,3 +62,40 @@ JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testD
 ```
 
 No third-party dependencies were added. No services were restarted, and nothing was pushed.
+
+---
+
+# Declutter rollout summary
+
+Implemented ROADMAP item 19 for the requested Manage surfaces and added the ArtifactsViewModel release-floor tests.
+
+## Changes
+
+- Config keeps the schema/raw editor and Save action visible; import/export, reset, paste, and file-import controls are behind a collapsed-by-default section.
+- Command Center keeps Gateway and Usage open; Logs and Maintenance use the shared `CollapsibleSection` and start collapsed.
+- Logs keeps the live tail visible while filters/search are behind a collapsed-by-default section.
+- Added three English `declutter_` strings in `strings_declutter.xml` for the new section labels.
+- Added `ArtifactsViewModelTest` coverage for session extraction/loading, filtering and paging state, text/image previews, preview failures, share-request consumption, and load failures.
+- Added injectable repository/preview/share lambdas to `ArtifactsViewModel` so unit tests do not need concrete repository or network mocks.
+
+## Verification
+
+Required command:
+
+```text
+export ANDROID_HOME=$HOME/android-sdk JAVA_HOME=$HOME/java
+export PATH=$ANDROID_HOME/platform-tools:$JAVA_HOME/bin:$PATH
+./gradlew :app:compileDebugKotlin --max-workers=2 -Dorg.gradle.jvmargs=-Xmx768m -q
+```
+
+The prior `--max-workers=2` attempt lost its Kotlin daemon and then failed with `java.lang.OutOfMemoryError: GC overhead limit exceeded`. After the required 60-second wait, its single `--no-daemon` retry also failed with the same OOM. The resumed low-memory verification is recorded below.
+
+Resumed verification command:
+
+```text
+./gradlew --no-daemon :app:compileDebugKotlin --max-workers=1 -Dorg.gradle.jvmargs=-Xmx768m -q
+```
+
+Result: failed after 4m18s with `java.lang.OutOfMemoryError: GC overhead limit exceeded` while the Kotlin compiler loaded built-in metadata. No further Gradle attempts were made.
+
+The shared `ui/components/CollapsibleSection.kt` and all forbidden core, domain, navigation, catalog, base/locale resource, manifest, Gradle, and CI files were left unchanged.
