@@ -20,6 +20,7 @@ import android.content.Context
 import androidx.room.Room
 import com.hermesgadget.talaria.core.data.db.TalariaDatabase
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
+import com.hermesgadget.talaria.core.data.prefs.LocaleManager
 import com.hermesgadget.talaria.core.data.prefs.SettingsStore
 import com.hermesgadget.talaria.core.data.repo.ChatRepository
 import com.hermesgadget.talaria.core.data.repo.ConnectionRepository
@@ -42,6 +43,7 @@ class AppContainer(context: Context) {
     private val appContext = context.applicationContext
 
     val settingsStore = SettingsStore(appContext)
+    val localeManager = LocaleManager(settingsStore)
     val connectionStore = SecureConnectionStore(appContext)
     val database: TalariaDatabase = Room.databaseBuilder(
         appContext,

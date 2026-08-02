@@ -36,18 +36,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import java.text.DateFormat
 import java.util.Date
 
-private enum class ActivityFilter(val label: String, val match: (String) -> Boolean) {
-    All("All", { true }),
-    Pairing("Pairing", { it.contains("pair", ignoreCase = true) }),
-    Cron("Cron", { it.contains("cron", ignoreCase = true) }),
-    Gateway("Gateway", { it.contains("gateway", ignoreCase = true) }),
-    Chat("Chat", { it.contains("chat", ignoreCase = true) || it.contains("pty", ignoreCase = true) }),
+private enum class ActivityFilter(val labelRes: Int, val match: (String) -> Boolean) {
+    All(R.string.activity_filter_all, { true }),
+    Pairing(R.string.activity_filter_pairing, { it.contains("pair", ignoreCase = true) }),
+    Cron(R.string.activity_filter_cron, { it.contains("cron", ignoreCase = true) }),
+    Gateway(R.string.activity_filter_gateway, { it.contains("gateway", ignoreCase = true) }),
+    Chat(R.string.activity_filter_chat, { it.contains("chat", ignoreCase = true) || it.contains("pty", ignoreCase = true) }),
 }
 
 @Composable
@@ -59,7 +61,7 @@ fun ActivityScreen(onOpen: ((String) -> Unit)? = null) {
         events.filter { filter.match(it.type) || filter.match(it.title) }
     }
 
-    ScreenScaffold("Activity", showProfileSwitcher = true) {
+    ScreenScaffold(stringResource(R.string.activity_title), showProfileSwitcher = true) {
         Column {
             Row(
                 Modifier
@@ -70,7 +72,7 @@ fun ActivityScreen(onOpen: ((String) -> Unit)? = null) {
                     FilterChip(
                         selected = filter == f,
                         onClick = { filter = f },
-                        label = { Text(f.label) },
+                        label = { Text(stringResource(f.labelRes)) },
                         modifier = Modifier.padding(end = 6.dp),
                     )
                 }
@@ -103,9 +105,9 @@ fun ActivityScreen(onOpen: ((String) -> Unit)? = null) {
                     item {
                         Text(
                             if (events.isEmpty()) {
-                                "No activity yet. Background sync will populate this feed."
+                                stringResource(R.string.activity_empty)
                             } else {
-                                "No events for this filter."
+                                stringResource(R.string.activity_no_filter_matches)
                             },
                         )
                     }

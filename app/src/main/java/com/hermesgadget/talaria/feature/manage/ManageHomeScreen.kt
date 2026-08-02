@@ -16,6 +16,7 @@
 
 package com.hermesgadget.talaria.feature.manage
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -73,63 +74,72 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
+import com.hermesgadget.talaria.R
 import androidx.compose.ui.unit.dp
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import com.hermesgadget.talaria.ui.navigation.Routes
 import com.hermesgadget.talaria.ui.theme.LocalSpacing
 
 private data class ManageItem(
-    val title: String,
-    val subtitle: String,
+    @StringRes val titleRes: Int,
+    @StringRes val subtitleRes: Int,
     val route: String,
     val icon: ImageVector,
 )
 
-private data class ManageSection(val title: String, val items: List<ManageItem>)
+private data class ManageSection(@StringRes val titleRes: Int, val items: List<ManageItem>)
+
+private data class LocalizedManageItem(
+    val section: String,
+    val item: ManageItem,
+    val title: String,
+    val subtitle: String,
+)
 
 private val manageSections = listOf(
     ManageSection(
-        "Agents",
+        R.string.manage_agents,
         listOf(
-            ManageItem("Status", "Version, gateway, live sessions", Routes.STATUS, Icons.Filled.MonitorHeart),
+            ManageItem(R.string.manage_status_title, R.string.manage_status_subtitle, Routes.STATUS, Icons.Filled.MonitorHeart),
             ManageItem("Command Center", "Status, logs, usage & maintenance", Routes.COMMAND_CENTER, Icons.Filled.Dashboard),
-            ManageItem("Sessions", "Browse, search, resume, export", Routes.SESSIONS, Icons.Filled.Forum),
-            ManageItem("Artifacts", "Images and files from agent sessions", Routes.ARTIFACTS, Icons.Filled.Folder),
-            ManageItem("Cron", "Scheduled agent jobs", Routes.CRON, Icons.Filled.Schedule),
-            ManageItem("Analytics", "Token usage & cost", Routes.ANALYTICS, Icons.Filled.BarChart),
+            ManageItem(R.string.manage_sessions_title, R.string.manage_sessions_subtitle, Routes.SESSIONS, Icons.Filled.Forum),
+            ManageItem(R.string.manage_artifacts_title, R.string.manage_artifacts_subtitle, Routes.ARTIFACTS, Icons.Filled.Folder),
+            ManageItem(R.string.manage_cron_title, R.string.manage_cron_subtitle, Routes.CRON, Icons.Filled.Schedule),
+            ManageItem(R.string.manage_analytics_title, R.string.manage_analytics_subtitle, Routes.ANALYTICS, Icons.Filled.BarChart),
         ),
     ),
     ManageSection(
-        "Capabilities",
+        R.string.manage_capabilities,
         listOf(
-            ManageItem("Config", "Schema-driven config.yaml editor", Routes.CONFIG, Icons.Filled.Tune),
-            ManageItem("API Keys", ".env secrets (catalog + redacted)", Routes.API_KEYS, Icons.Filled.Key),
-            ManageItem("Models", "Providers & active model", Routes.MODELS, Icons.Filled.SmartToy),
-            ManageItem("Skills", "Skills, toolsets & Hub", Routes.SKILLS, Icons.Filled.AutoAwesome),
-            ManageItem("MCP", "Model Context Protocol servers", Routes.MCP, Icons.Filled.Hub),
+            ManageItem(R.string.manage_config_title, R.string.manage_config_subtitle, Routes.CONFIG, Icons.Filled.Tune),
+            ManageItem(R.string.manage_api_keys_title, R.string.manage_api_keys_subtitle, Routes.API_KEYS, Icons.Filled.Key),
+            ManageItem(R.string.manage_models_title, R.string.manage_models_subtitle, Routes.MODELS, Icons.Filled.SmartToy),
+            ManageItem(R.string.manage_skills_title, R.string.manage_skills_subtitle, Routes.SKILLS, Icons.Filled.AutoAwesome),
+            ManageItem(R.string.manage_mcp_title, R.string.manage_mcp_subtitle, Routes.MCP, Icons.Filled.Hub),
         ),
     ),
     ManageSection(
-        "Messaging",
+        R.string.manage_messaging,
         listOf(
-            ManageItem("Channels", "Messaging platforms", Routes.CHANNELS, Icons.Filled.Campaign),
-            ManageItem("Pairing", "Approve messaging users", Routes.PAIRING, Icons.Filled.Link),
-            ManageItem("Webhooks", "Dynamic subscriptions", Routes.WEBHOOKS, Icons.Filled.Webhook),
+            ManageItem(R.string.manage_channels_title, R.string.manage_channels_subtitle, Routes.CHANNELS, Icons.Filled.Campaign),
+            ManageItem(R.string.manage_pairing_title, R.string.manage_pairing_subtitle, Routes.PAIRING, Icons.Filled.Link),
+            ManageItem(R.string.manage_webhooks_title, R.string.manage_webhooks_subtitle, Routes.WEBHOOKS, Icons.Filled.Webhook),
         ),
     ),
     ManageSection(
-        "System",
+        R.string.manage_system_section,
         listOf(
-            ManageItem("Profiles", "Isolated Hermes homes", Routes.PROFILES, Icons.Filled.SwitchAccount),
-            ManageItem("Files", "Browse the host filesystem", Routes.FILES, Icons.Filled.Folder),
-            ManageItem("Review", "Git status and working-tree diffs", Routes.REVIEW, Icons.Filled.Code),
-            ManageItem("Memory", "Providers & retrieval", Routes.MEMORY, Icons.Filled.Psychology),
-            ManageItem("Learning", "Skills graph & clusters", Routes.LEARNING, Icons.Filled.Insights),
-            ManageItem("Curator", "Automatic session upkeep", Routes.CURATOR, Icons.Filled.CleaningServices),
-            ManageItem("Logs", "Agent / gateway / errors", Routes.LOGS, Icons.AutoMirrored.Filled.Article),
-            ManageItem("Terminal", "Live host shell over PTY", Routes.TERMINAL, Icons.Filled.Terminal),
+            ManageItem(R.string.manage_profiles_title, R.string.manage_profiles_subtitle, Routes.PROFILES, Icons.Filled.SwitchAccount),
+            ManageItem(R.string.manage_files_title, R.string.manage_files_subtitle, Routes.FILES, Icons.Filled.Folder),
+            ManageItem(R.string.manage_review_title, R.string.manage_review_subtitle, Routes.REVIEW, Icons.Filled.Code),
+            ManageItem(R.string.manage_memory_title, R.string.manage_memory_subtitle, Routes.MEMORY, Icons.Filled.Psychology),
+            ManageItem(R.string.manage_learning_title, R.string.manage_learning_subtitle, Routes.LEARNING, Icons.Filled.Insights),
+            ManageItem(R.string.manage_curator_title, R.string.manage_curator_subtitle, Routes.CURATOR, Icons.Filled.CleaningServices),
+            ManageItem(R.string.manage_logs_title, R.string.manage_logs_subtitle, Routes.LOGS, Icons.AutoMirrored.Filled.Article),
+            ManageItem(R.string.manage_terminal_title, R.string.manage_terminal_subtitle, Routes.TERMINAL, Icons.Filled.Terminal),
             ManageItem("Themes", "Preset palettes & server sync", Routes.THEMES, Icons.Filled.Palette),
-            ManageItem("System", "Host stats, doctor, portal", Routes.SYSTEM, Icons.Filled.Dns),
+            ManageItem(R.string.manage_system_title, R.string.manage_system_subtitle, Routes.SYSTEM, Icons.Filled.Dns),
         ),
     ),
 )
@@ -151,19 +161,22 @@ fun ManageHomeScreen(onOpen: (String) -> Unit) {
     }
 
     ScreenScaffold(
-        "Manage",
+        stringResource(R.string.manage_title),
         showProfileSwitcher = true,
         actions = {
             IconButton(onClick = { paletteOpen = true }) {
-                Icon(Icons.Filled.Search, contentDescription = "Search settings")
+                Icon(
+                    Icons.Filled.Search,
+                    contentDescription = stringResource(R.string.manage_search_settings),
+                )
             }
         },
     ) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(spacing.xs)) {
             manageSections.forEach { section ->
-                item(key = "h-${section.title}") {
+                item(key = "h-${section.titleRes}") {
                     Text(
-                        section.title,
+                        stringResource(section.titleRes),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(
@@ -215,9 +228,9 @@ private fun ManageRow(item: ManageItem, onClick: () -> Unit) {
                     .weight(1f)
                     .padding(horizontal = spacing.md),
             ) {
-                Text(item.title, style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(item.titleRes), style = MaterialTheme.typography.titleSmall)
                 Text(
-                    item.subtitle,
+                    stringResource(item.subtitleRes),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -240,17 +253,25 @@ private fun ManageRow(item: ManageItem, onClick: () -> Unit) {
 @Composable
 private fun CommandPalette(onDismiss: () -> Unit, onOpen: (String) -> Unit) {
     var query by remember { mutableStateOf("") }
-    val all = remember { manageSections.flatMap { s -> s.items.map { s.title to it } } }
-    val results = remember(query) {
-        val q = query.trim()
-        if (q.isEmpty()) {
-            all
-        } else {
-            all.filter { (section, item) ->
-                item.title.contains(q, ignoreCase = true) ||
-                    item.subtitle.contains(q, ignoreCase = true) ||
-                    section.contains(q, ignoreCase = true)
-            }
+    val all = mutableListOf<LocalizedManageItem>()
+    for (section in manageSections) {
+        for (item in section.items) {
+            all += LocalizedManageItem(
+                section = stringResource(section.titleRes),
+                item = item,
+                title = stringResource(item.titleRes),
+                subtitle = stringResource(item.subtitleRes),
+            )
+        }
+    }
+    val q = query.trim()
+    val results = if (q.isEmpty()) {
+        all
+    } else {
+        all.filter { result ->
+            result.title.contains(q, ignoreCase = true) ||
+                result.subtitle.contains(q, ignoreCase = true) ||
+                result.section.contains(q, ignoreCase = true)
         }
     }
 
@@ -263,7 +284,7 @@ private fun CommandPalette(onDismiss: () -> Unit, onOpen: (String) -> Unit) {
             onValueChange = { query = it },
             singleLine = true,
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-            placeholder = { Text("Jump to a setting…") },
+            placeholder = { Text(stringResource(R.string.manage_jump_to_setting)) },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp),
@@ -272,14 +293,15 @@ private fun CommandPalette(onDismiss: () -> Unit, onOpen: (String) -> Unit) {
             if (results.isEmpty()) {
                 item {
                     Text(
-                        "No matches",
+                        stringResource(R.string.manage_no_matches),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(16.dp),
                     )
                 }
             }
-            items(results, key = { it.second.route }) { (section, item) ->
+            items(results, key = { it.item.route }) { result ->
+                val item = result.item
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -295,9 +317,9 @@ private fun CommandPalette(onDismiss: () -> Unit, onOpen: (String) -> Unit) {
                         modifier = Modifier.size(22.dp),
                     )
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(item.title, style = MaterialTheme.typography.titleSmall)
+                        Text(result.title, style = MaterialTheme.typography.titleSmall)
                         Text(
-                            "$section · ${item.subtitle}",
+                            "${result.section} · ${result.subtitle}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

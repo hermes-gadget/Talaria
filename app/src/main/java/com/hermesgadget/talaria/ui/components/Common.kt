@@ -47,7 +47,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.ui.theme.LocalSpacing
 
 /**
@@ -88,7 +90,7 @@ fun ScreenScaffold(
                         Text(title, style = MaterialTheme.typography.titleMedium)
                         if (subtitle != null) {
                             Text(
-                                "  ·  $subtitle",
+                                stringResource(R.string.common_subtitle_separator, subtitle),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -147,7 +149,7 @@ fun ErrorBox(message: String, onRetry: (() -> Unit)? = null) {
         Text(message, color = MaterialTheme.colorScheme.error)
         if (onRetry != null) {
             Spacer(modifier = Modifier.height(12.dp))
-            OutlinedButton(onClick = onRetry) { Text("Retry") }
+            OutlinedButton(onClick = onRetry) { Text(stringResource(R.string.common_retry)) }
         }
     }
 }

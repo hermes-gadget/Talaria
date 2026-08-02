@@ -41,31 +41,24 @@ Branch: `feature/widget-pip`
 
 Verification: `JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon` — passed.
 
-## Server voice
+## i18n implementation summary
 
-Implemented on branch `feature/server-voice`.
+- Added `AppLocale` and `LocaleManager` with persisted `SettingsStore` locale tags, Android 13+ per-app locales, and a pre-33 configuration-context fallback. Unknown or malformed stored tags resolve to the system locale.
+- Added the You screen language picker: System default, English, 日本語, 中文, 繁體中文, and العربية. Selecting a language persists it and recreates the activity.
+- Added translated resource overlays for Japanese, Simplified Chinese, Traditional Chinese, and Arabic, with English defaults in `values/strings.xml`.
+- Extracted user-facing strings from Chat, You, Manage home, Activity, shared scaffolding, profile switching, and the unsaved-changes component into `stringResource` calls. Connection resource vocabulary is present for the connection surface, which remained outside this branch's editable screen boundary.
+- Added locale persistence, supported-tag resolution, invalid-tag fallback, and pre-Android-13 context-wrapping tests.
 
-### Live capability probe
+### RTL and boundaries
 
-Hermes v0.19.1 at `127.0.0.1:9119` exposed these voice paths in `GET /openapi.json`:
+`AndroidManifest.xml` already contained `android:supportsRtl="true"`; it was left unchanged. Prohibited network, navigation, connection, widget, PiP, and excluded Manage feature files were not edited.
 
-- `POST /api/audio/transcribe`
-- `POST /api/audio/speak`
-- `GET /api/audio/elevenlabs/voices`
+### i18n verification
 
-The requested `GET /api/voice` and `GET /api/audio` probes returned `404`; both were read-only probes.
+Passed:
 
-### Delivered
+```text
+JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon
+```
 
-- Added typed server voice request/response models in `VoiceModels.kt`.
-- Added only the verified OpenAPI/STT/TTS methods to the end of `HermesApi.kt`, with profile query support.
-- Added the standalone `feature/voice` screen and view model: local recording to an audio data URL, Hermes transcription, copyable/editable text, Hermes TTS playback through `MediaPlayer`, and a six-item in-memory history.
-- Added runtime OpenAPI capability refresh and an explicit unavailable state listing missing routes. When server voice is unavailable, the screen reports Android `SpeechRecognizer` availability and offers the existing on-device dictation coordinator as a local fallback.
-- Added pure voice lifecycle reducer tests covering idle → recording → transcribing → playing and unavailable → available recovery.
-
-Chat dictation hooks and navigation were intentionally left untouched per the ownership constraints; the voice surface is standalone for this wave.
-
-### Verification
-
-- `JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon`
-- Result: passed (`BUILD SUCCESSFUL`, 30 actionable tasks).
+No third-party dependencies were added. No services were restarted, and nothing was pushed.

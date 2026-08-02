@@ -17,6 +17,7 @@
 package com.hermesgadget.talaria.feature.you
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -29,12 +30,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
@@ -43,6 +46,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,10 +55,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import com.hermesgadget.talaria.BuildConfig
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.prefs.ThemeMode
+import com.hermesgadget.talaria.core.data.prefs.AppLocale
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import com.hermesgadget.talaria.ui.theme.LocalSpacing
 import com.hermesgadget.talaria.worker.SyncScheduler
@@ -77,6 +84,8 @@ fun YouScreen(
     var telemetry by remember { mutableStateOf(settings.telemetryEnabled) }
     var dynamicColor by remember { mutableStateOf(settings.dynamicColor) }
     var themeMode by remember { mutableStateOf(settings.themeMode) }
+    var appLocale by remember { mutableStateOf(TalariaApp.instance.container.localeManager.currentLocale()) }
+    var languagePickerOpen by remember { mutableStateOf(false) }
     var privacyExpanded by remember { mutableStateOf(false) }
     val active = TalariaApp.instance.container.connectionStore.activeProfile()
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -89,24 +98,61 @@ fun YouScreen(
         }
     }
 
-    ScreenScaffold("You", "Talaria ${BuildConfig.VERSION_NAME}", showProfileSwitcher = true) {
+    if (languagePickerOpen) {
+        AlertDialog(
+            onDismissRequest = { languagePickerOpen = false },
+            confirmButton = {
+                TextButton(onClick = { languagePickerOpen = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+            title = { Text(stringResource(R.string.you_language)) },
+            text = {
+                Column {
+                    AppLocale.entries.forEach { locale ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    appLocale = locale
+                                    languagePickerOpen = false
+                                    TalariaApp.instance.container.localeManager.setLocale(context, locale)
+                                    (context as? Activity)?.recreate()
+                                }
+                                .padding(vertical = spacing.xs),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = appLocale == locale, onClick = null)
+                            Text(localeLabel(locale), modifier = Modifier.padding(start = spacing.sm))
+                        }
+                    }
+                }
+            },
+        )
+    }
+
+    ScreenScaffold(
+        stringResource(R.string.you_title),
+        stringResource(R.string.you_version, BuildConfig.VERSION_NAME),
+        showProfileSwitcher = true,
+    ) {
         Column(Modifier.verticalScroll(rememberScrollState())) {
             Text(
-                "Active: ${active?.name ?: "none"}",
+                stringResource(R.string.you_active, active?.name ?: stringResource(R.string.you_none)),
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
-                active?.baseUrl ?: "Not connected",
+                active?.baseUrl ?: stringResource(R.string.you_not_connected),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(spacing.md))
             Button(onClick = onConnect, modifier = Modifier.fillMaxWidth()) {
-                Text("Connections")
+                Text(stringResource(R.string.common_connections))
             }
 
-            SectionHeader("Appearance")
-            RowSwitch("Material You dynamic color", dynamicColor) {
+            SectionHeader(stringResource(R.string.you_appearance))
+            RowSwitch(stringResource(R.string.you_dynamic_color), dynamicColor) {
                 dynamicColor = it
                 settings.dynamicColor = it
             }
@@ -117,7 +163,7 @@ fun YouScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text("Theme", style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.you_theme), style = MaterialTheme.typography.bodyMedium)
                 val modes = listOf(ThemeMode.DARK, ThemeMode.SYSTEM, ThemeMode.LIGHT)
                 SingleChoiceSegmentedButtonRow {
                     modes.forEachIndexed { index, mode ->
@@ -128,13 +174,29 @@ fun YouScreen(
                                 settings.themeMode = mode
                             },
                             shape = SegmentedButtonDefaults.itemShape(index, modes.size),
-                        ) { Text(mode.name.lowercase().replaceFirstChar { it.uppercase() }) }
+                        ) { Text(themeLabel(mode)) }
                     }
                 }
             }
 
-            SectionHeader("Notifications & voice")
-            RowSwitch("Notifications", notifications) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { languagePickerOpen = true }
+                    .padding(vertical = spacing.xs),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(stringResource(R.string.you_language), style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    localeLabel(appLocale),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+
+            SectionHeader(stringResource(R.string.you_notifications_voice))
+            RowSwitch(stringResource(R.string.you_notifications), notifications) {
                 notifications = it
                 settings.notificationsEnabled = it
                 if (!it) {
@@ -150,12 +212,12 @@ fun YouScreen(
             }
             AnimatedVisibility(visible = notifications) {
                 Column {
-                    RowSwitch("Agent permission requests", agentPermissions) {
+                    RowSwitch(stringResource(R.string.you_agent_permissions), agentPermissions) {
                         agentPermissions = it
                         settings.notifyAgentPermissions = it
                         if (!it && !taskCompletions) AgentTaskNotificationService.stopAll(context)
                     }
-                    RowSwitch("Agent task completion", taskCompletions) {
+                    RowSwitch(stringResource(R.string.you_agent_completion), taskCompletions) {
                         taskCompletions = it
                         settings.notifyTaskCompletions = it
                         if (!it && !agentPermissions) AgentTaskNotificationService.stopAll(context)
@@ -168,43 +230,45 @@ fun YouScreen(
             ) {
                 Text("Notification settings")
             }
-            RowSwitch("Background sync (WorkManager)", bgSync) {
+            RowSwitch(stringResource(R.string.you_background_sync), bgSync) {
                 bgSync = it
                 settings.backgroundSyncEnabled = it
                 SyncScheduler.ensurePeriodic(context)
             }
-            RowSwitch("Speak responses (TTS)", tts) {
+            RowSwitch(stringResource(R.string.you_speak_responses), tts) {
                 tts = it
                 settings.ttsEnabled = it
             }
-            RowSwitch("Allow cloud speech recognition", cloudStt) {
+            RowSwitch(stringResource(R.string.you_cloud_speech), cloudStt) {
                 cloudStt = it
                 settings.cloudSttOptIn = it
             }
-            RowSwitch("Telemetry (off by default)", telemetry) {
+            RowSwitch(stringResource(R.string.you_telemetry), telemetry) {
                 telemetry = it
                 settings.telemetryEnabled = it
             }
 
             // Privacy folded in as an expandable section (was a standalone screen).
-            SectionHeader("Privacy")
+            SectionHeader(stringResource(R.string.you_privacy))
             TextButton(
                 onClick = { privacyExpanded = !privacyExpanded },
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    "Local-first · no accounts required",
+                    stringResource(R.string.you_local_first),
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Icon(
                     if (privacyExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = if (privacyExpanded) "Collapse" else "Expand",
+                    contentDescription = stringResource(
+                        if (privacyExpanded) R.string.common_collapse else R.string.common_expand,
+                    ),
                 )
             }
             AnimatedVisibility(visible = privacyExpanded) {
                 Text(
-                    PRIVACY_TEXT,
+                    stringResource(R.string.you_privacy_text),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = spacing.sm),
@@ -213,11 +277,11 @@ fun YouScreen(
 
             Spacer(Modifier.height(spacing.md))
             Text(
-                "Hermes API baseline: ${BuildConfig.HERMES_API_BASELINE}",
+                stringResource(R.string.you_api_baseline, BuildConfig.HERMES_API_BASELINE),
                 style = MaterialTheme.typography.labelMedium,
             )
             Text(
-                "Network only contacts your configured Hermes endpoints. Default telemetry=${BuildConfig.DEFAULT_TELEMETRY}.",
+                stringResource(R.string.you_network_description, BuildConfig.DEFAULT_TELEMETRY),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -256,14 +320,19 @@ private fun RowSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Un
     }
 }
 
-private const val PRIVACY_TEXT = """Talaria is a privacy-respecting client for self-hosted Hermes Agent.
+@Composable
+private fun localeLabel(locale: AppLocale): String = when (locale) {
+    AppLocale.SYSTEM -> stringResource(R.string.language_system_default)
+    AppLocale.ENGLISH -> stringResource(R.string.language_english)
+    AppLocale.JAPANESE -> stringResource(R.string.language_japanese)
+    AppLocale.SIMPLIFIED_CHINESE -> stringResource(R.string.language_simplified_chinese)
+    AppLocale.TRADITIONAL_CHINESE -> stringResource(R.string.language_traditional_chinese)
+    AppLocale.ARABIC -> stringResource(R.string.language_arabic)
+}
 
-• Zero telemetry by default. Optional analytics never leave your device unless you enable a future opt-in (currently a no-op flag).
-• Credentials are stored with EncryptedSharedPreferences + Android Keystore.
-• Offline cache (Room) stays on-device; backups exclude secrets.
-• Network traffic only targets Hermes dashboard URLs you configure.
-• Certificate pinning is optional per connection profile.
-• Microphone audio for dictation prefers on-device recognition; cloud STT requires explicit opt-in.
-• Notifications are generated locally from your Hermes polls / chat events.
-
-See PRIVACY.md in the repository for the full statement."""
+@Composable
+private fun themeLabel(mode: ThemeMode): String = when (mode) {
+    ThemeMode.DARK -> stringResource(R.string.theme_dark)
+    ThemeMode.SYSTEM -> stringResource(R.string.theme_system)
+    ThemeMode.LIGHT -> stringResource(R.string.theme_light)
+}

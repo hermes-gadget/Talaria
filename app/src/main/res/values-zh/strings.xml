@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="nav_chat">聊天</string>
+    <string name="nav_activity">活动</string>
+    <string name="nav_manage">管理</string>
+    <string name="nav_you">我的</string>
+    <string name="common_retry">重试</string>
+    <string name="common_cancel">取消</string>
+    <string name="common_save">保存</string>
+    <string name="common_send">发送</string>
+    <string name="common_approve">批准</string>
+    <string name="common_deny">拒绝</string>
+    <string name="common_refresh">刷新</string>
+    <string name="common_new_agent">新建代理</string>
+    <string name="common_all_sessions">所有会话</string>
+    <string name="common_compact">压缩</string>
+    <string name="common_create_branch">创建分支</string>
+    <string name="common_close">关闭</string>
+    <string name="common_default">默认</string>
+    <string name="common_expand">展开</string>
+    <string name="common_collapse">收起</string>
+    <string name="common_connections">连接</string>
+    <string name="common_subtitle_separator">  ·  %1$s</string>
+    <string name="common_edit_session_title">编辑会话标题</string>
+    <string name="common_title">标题</string>
+    <string name="common_name">名称</string>
+    <string name="common_discard">放弃</string>
+    <string name="common_keep_editing">继续编辑</string>
+    <string name="profile_switch">切换配置文件</string>
+    <string name="unsaved_changes_title">放弃未保存的更改？</string>
+    <string name="unsaved_changes_message">你有尚未保存的编辑。现在离开将放弃这些更改。</string>
+
+    <string name="chat_microphone_permission_denied">麦克风权限被拒绝</string>
+    <string name="chat_status_connecting">连接中…</string>
+    <string name="chat_status_live">在线 · %1$s</string>
+    <string name="chat_status_detail"> · %1$s</string>
+    <string name="chat_status_yolo"> · ⚡YOLO</string>
+    <string name="chat_status_tokens"> · %1$d 个令牌</string>
+    <string name="chat_status_cost"> · $%1$.4f</string>
+    <string name="chat_status_disconnected">已断开 · 点击重新连接</string>
+    <string name="chat_choices">选项：%1$s</string>
+    <string name="chat_secure_response">安全响应</string>
+    <string name="chat_response">响应</string>
+    <string name="chat_rename_agent">重命名代理</string>
+    <string name="chat_rewind_title">要回退到此消息吗？</string>
+    <string name="chat_rewind_body">这会创建一个包含截至此消息对话的新聊天分支。当前会话会保持打开。
+
+%1$s</string>
+    <string name="chat_compact_title">压缩会话？</string>
+    <string name="chat_compact_body">Hermes 会总结较早的上下文，以减少会话上下文用量。</string>
+    <string name="chat_compact_session">压缩会话</string>
+    <string name="chat_sessions">会话</string>
+    <string name="chat_open_suffix"> · 已打开</string>
+    <string name="chat_session_metadata">%1$s · %2$s · %3$d 条消息</string>
+    <string name="chat_cli_source">CLI</string>
+    <string name="chat_unknown_model">?</string>
+    <string name="chat_branch_from">来自 %1$s 的分支</string>
+    <string name="chat_edit_session_title_content_description">编辑会话标题</string>
+    <string name="chat_models">模型</string>
+    <string name="chat_model_fallback">模型</string>
+    <string name="chat_no_model_options">API 没有选项 — 请在聊天中尝试 /model</string>
+    <string name="chat_title">聊天</string>
+    <string name="chat_interrupt">中断 (Ctrl-C)</string>
+    <string name="chat_terminal_view">终端视图</string>
+    <string name="chat_reading_view">阅读视图</string>
+    <string name="chat_session_actions">会话操作</string>
+    <string name="chat_agent_activity">代理活动</string>
+    <string name="chat_change_model">更换模型</string>
+    <string name="chat_steer_settings">引导与触发设置</string>
+    <string name="chat_pip">以画中画打开聊天</string>
+    <string name="chat_steer_trigger">引导 / 触发</string>
+    <string name="chat_choose_model">选择模型</string>
+    <string name="chat_reasoning_effort">推理强度</string>
+    <string name="chat_approval_global">批准模式 · 全局仪表盘设置</string>
+    <string name="chat_yolo">YOLO</string>
+    <string name="chat_yolo_on">开启 · 本会话跳过批准</string>
+    <string name="chat_yolo_off">关闭 · 保留提示</string>
+    <string name="chat_unlock_hint">Hermes 分配实时会话后，推理和 YOLO 才会启用。</string>
+    <string name="chat_attachment_staged">%1$s · 已暂存</string>
+    <string name="chat_attachment_retry">%1$s · 重试</string>
+    <string name="chat_remove_attachment">移除 %1$s</string>
+    <string name="chat_queued">排队 %1$d 条</string>
+    <string name="chat_message_placeholder">给 Hermes 发消息…</string>
+    <string name="chat_attach_image">附加图片</string>
+    <string name="chat_dictate">听写</string>
+    <string name="chat_action_rewind">正在创建分支…</string>
+    <string name="chat_action_compact">正在压缩会话…</string>
+    <string name="chat_action_rename">正在保存会话标题…</string>
+    <string name="chat_empty_reading">还没有消息 — 向 Hermes 打个招呼吧。</string>
+    <string name="chat_empty_terminal">正在等待终端输出…</string>
+    <string name="chat_rewind_message">回退到此消息</string>
+    <string name="chat_close_agent">关闭 %1$s</string>
+    <string name="chat_new_agent">新建代理</string>
+    <string name="chat_working">处理中…</string>
+    <string name="chat_running">运行中 · %1$s</string>
+    <string name="chat_failed_continuing">%1$s 失败 — 继续运行…</string>
+    <string name="chat_done_thinking">%1$s 完成 — 思考中…</string>
+
+    <string name="you_title">我的</string>
+    <string name="you_version">Talaria %1$s</string>
+    <string name="you_active">当前：%1$s</string>
+    <string name="you_none">无</string>
+    <string name="you_not_connected">未连接</string>
+    <string name="you_appearance">外观</string>
+    <string name="you_dynamic_color">Material You 动态配色</string>
+    <string name="you_theme">主题</string>
+    <string name="theme_dark">深色</string>
+    <string name="theme_system">系统</string>
+    <string name="theme_light">浅色</string>
+    <string name="you_language">语言</string>
+    <string name="language_system_default">跟随系统</string>
+    <string name="language_english">English</string>
+    <string name="language_japanese">日本語</string>
+    <string name="language_simplified_chinese">中文</string>
+    <string name="language_traditional_chinese">繁體中文</string>
+    <string name="language_arabic">العربية</string>
+    <string name="you_notifications_voice">通知和语音</string>
+    <string name="you_notifications">通知</string>
+    <string name="you_agent_permissions">代理权限请求</string>
+    <string name="you_agent_completion">代理任务完成</string>
+    <string name="you_background_sync">后台同步 (WorkManager)</string>
+    <string name="you_speak_responses">朗读响应 (TTS)</string>
+    <string name="you_cloud_speech">允许云端语音识别</string>
+    <string name="you_telemetry">遥测（默认关闭）</string>
+    <string name="you_privacy">隐私</string>
+    <string name="you_local_first">本地优先 · 无需账户</string>
+    <string name="you_api_baseline">Hermes API 基线：%1$s</string>
+    <string name="you_network_description">网络只连接你配置的 Hermes 端点。默认遥测=%1$s。</string>
+    <string name="you_privacy_text">Talaria 是面向自托管 Hermes Agent 的隐私友好客户端。
+
+• 默认不发送遥测。除非启用未来的选择加入功能，否则可选分析不会离开设备。
+• 凭据使用 EncryptedSharedPreferences 和 Android Keystore 保存。
+• 离线缓存 (Room) 保留在设备上；备份不包含机密信息。
+• 网络流量只发送到你配置的 Hermes 仪表盘地址。
+• 每个连接都可以选择是否启用证书固定。
+• 听写优先使用设备端识别；云端 STT 需要明确选择加入。
+• 通知由设备根据 Hermes 轮询或聊天事件本地生成。
+
+完整说明请参阅仓库中的 PRIVACY.md。</string>
+
+    <string name="manage_title">管理</string>
+    <string name="manage_agents">代理</string>
+    <string name="manage_capabilities">能力</string>
+    <string name="manage_messaging">消息</string>
+    <string name="manage_system_section">系统</string>
+    <string name="manage_status_title">状态</string>
+    <string name="manage_status_subtitle">版本、网关、实时会话</string>
+    <string name="manage_sessions_title">会话</string>
+    <string name="manage_sessions_subtitle">浏览、搜索、恢复、导出</string>
+    <string name="manage_artifacts_title">工件</string>
+    <string name="manage_artifacts_subtitle">代理会话中的图片和文件</string>
+    <string name="manage_cron_title">Cron</string>
+    <string name="manage_cron_subtitle">计划中的代理任务</string>
+    <string name="manage_analytics_title">分析</string>
+    <string name="manage_analytics_subtitle">令牌用量和成本</string>
+    <string name="manage_config_title">配置</string>
+    <string name="manage_config_subtitle">由架构驱动的 config.yaml 编辑器</string>
+    <string name="manage_api_keys_title">API 密钥</string>
+    <string name="manage_api_keys_subtitle">.env 机密（目录和脱敏）</string>
+    <string name="manage_models_title">模型</string>
+    <string name="manage_models_subtitle">提供商和当前模型</string>
+    <string name="manage_skills_title">技能</string>
+    <string name="manage_skills_subtitle">技能、工具集和 Hub</string>
+    <string name="manage_mcp_title">MCP</string>
+    <string name="manage_mcp_subtitle">Model Context Protocol 服务器</string>
+    <string name="manage_channels_title">频道</string>
+    <string name="manage_channels_subtitle">消息平台</string>
+    <string name="manage_pairing_title">配对</string>
+    <string name="manage_pairing_subtitle">批准消息用户</string>
+    <string name="manage_webhooks_title">Webhooks</string>
+    <string name="manage_webhooks_subtitle">动态订阅</string>
+    <string name="manage_profiles_title">配置文件</string>
+    <string name="manage_profiles_subtitle">隔离的 Hermes 主目录</string>
+    <string name="manage_files_title">文件</string>
+    <string name="manage_files_subtitle">浏览主机文件系统</string>
+    <string name="manage_review_title">审查</string>
+    <string name="manage_review_subtitle">Git 状态和工作树差异</string>
+    <string name="manage_memory_title">记忆</string>
+    <string name="manage_memory_subtitle">提供商和检索</string>
+    <string name="manage_learning_title">学习</string>
+    <string name="manage_learning_subtitle">技能图和集群</string>
+    <string name="manage_curator_title">整理器</string>
+    <string name="manage_curator_subtitle">自动维护会话</string>
+    <string name="manage_logs_title">日志</string>
+    <string name="manage_logs_subtitle">代理 / 网关 / 错误</string>
+    <string name="manage_terminal_title">终端</string>
+    <string name="manage_terminal_subtitle">通过 PTY 使用主机 Shell</string>
+    <string name="manage_system_title">系统</string>
+    <string name="manage_system_subtitle">主机统计、诊断、门户</string>
+    <string name="manage_search_settings">搜索设置</string>
+    <string name="manage_jump_to_setting">跳转到设置…</string>
+    <string name="manage_no_matches">没有匹配项</string>
+
+    <string name="activity_title">活动</string>
+    <string name="activity_filter_all">全部</string>
+    <string name="activity_filter_pairing">配对</string>
+    <string name="activity_filter_cron">Cron</string>
+    <string name="activity_filter_gateway">网关</string>
+    <string name="activity_filter_chat">聊天</string>
+    <string name="activity_empty">还没有活动。后台同步会填充此动态。</string>
+    <string name="activity_no_filter_matches">此筛选条件没有事件。</string>
+    <string name="connection_title">连接</string>
+    <string name="connection_server_url">服务器 URL</string>
+    <string name="connection_token">令牌</string>
+    <string name="connection_add_profile">添加连接</string>
+    <string name="connection_test">测试连接</string>
+    <string name="connection_connected">已连接</string>
+    <string name="connection_disconnected">已断开</string>
+    <string name="connection_no_profiles">还没有连接</string>
+    <string name="connection_save">保存连接</string>
+</resources>

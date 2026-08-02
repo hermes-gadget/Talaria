@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="nav_chat">الدردشة</string>
+    <string name="nav_activity">النشاط</string>
+    <string name="nav_manage">الإدارة</string>
+    <string name="nav_you">حسابي</string>
+    <string name="common_retry">إعادة المحاولة</string>
+    <string name="common_cancel">إلغاء</string>
+    <string name="common_save">حفظ</string>
+    <string name="common_send">إرسال</string>
+    <string name="common_approve">موافقة</string>
+    <string name="common_deny">رفض</string>
+    <string name="common_refresh">تحديث</string>
+    <string name="common_new_agent">وكيل جديد</string>
+    <string name="common_all_sessions">كل الجلسات</string>
+    <string name="common_compact">ضغط</string>
+    <string name="common_create_branch">إنشاء فرع</string>
+    <string name="common_close">إغلاق</string>
+    <string name="common_default">الافتراضي</string>
+    <string name="common_expand">توسيع</string>
+    <string name="common_collapse">طيّ</string>
+    <string name="common_connections">الاتصالات</string>
+    <string name="common_subtitle_separator">  ·  %1$s</string>
+    <string name="common_edit_session_title">تعديل عنوان الجلسة</string>
+    <string name="common_title">العنوان</string>
+    <string name="common_name">الاسم</string>
+    <string name="common_discard">تجاهل</string>
+    <string name="common_keep_editing">متابعة التعديل</string>
+    <string name="profile_switch">تبديل الملف الشخصي</string>
+    <string name="unsaved_changes_title">تجاهل التغييرات غير المحفوظة؟</string>
+    <string name="unsaved_changes_message">لديك تعديلات لم تُحفظ. سيؤدي الخروج الآن إلى تجاهلها.</string>
+
+    <string name="chat_microphone_permission_denied">تم رفض إذن الميكروفون</string>
+    <string name="chat_status_connecting">جارٍ الاتصال…</string>
+    <string name="chat_status_live">مباشر · %1$s</string>
+    <string name="chat_status_detail"> · %1$s</string>
+    <string name="chat_status_yolo"> · ⚡YOLO</string>
+    <string name="chat_status_tokens"> · %1$d رمزًا</string>
+    <string name="chat_status_cost"> · $%1$.4f</string>
+    <string name="chat_status_disconnected">غير متصل · اضغط لإعادة الاتصال</string>
+    <string name="chat_choices">الخيارات: %1$s</string>
+    <string name="chat_secure_response">رد آمن</string>
+    <string name="chat_response">الرد</string>
+    <string name="chat_rename_agent">إعادة تسمية الوكيل</string>
+    <string name="chat_rewind_title">هل تريد الرجوع إلى هذه الرسالة؟</string>
+    <string name="chat_rewind_body">سينشئ هذا فرع دردشة جديدًا يتضمن المحادثة حتى هذه الرسالة. ستظل الجلسة الحالية مفتوحة.
+
+%1$s</string>
+    <string name="chat_compact_title">ضغط الجلسة؟</string>
+    <string name="chat_compact_body">سيُلخّص Hermes السياق الأقدم لتقليل استخدام سياق الجلسة.</string>
+    <string name="chat_compact_session">ضغط الجلسة</string>
+    <string name="chat_sessions">الجلسات</string>
+    <string name="chat_open_suffix"> · مفتوحة</string>
+    <string name="chat_session_metadata">%1$s · %2$s · %3$d رسالة</string>
+    <string name="chat_cli_source">CLI</string>
+    <string name="chat_unknown_model">؟</string>
+    <string name="chat_branch_from">فرع من %1$s</string>
+    <string name="chat_edit_session_title_content_description">تعديل عنوان الجلسة</string>
+    <string name="chat_models">النماذج</string>
+    <string name="chat_model_fallback">نموذج</string>
+    <string name="chat_no_model_options">لا توجد خيارات من API — جرّب ‎/model‎ في الدردشة</string>
+    <string name="chat_title">الدردشة</string>
+    <string name="chat_interrupt">مقاطعة (Ctrl-C)</string>
+    <string name="chat_terminal_view">عرض الطرفية</string>
+    <string name="chat_reading_view">عرض القراءة</string>
+    <string name="chat_session_actions">إجراءات الجلسة</string>
+    <string name="chat_agent_activity">نشاط الوكيل</string>
+    <string name="chat_change_model">تغيير النموذج</string>
+    <string name="chat_steer_settings">إعدادات التوجيه والمشغّل</string>
+    <string name="chat_pip">فتح الدردشة بصورة داخل صورة</string>
+    <string name="chat_steer_trigger">التوجيه / المشغّل</string>
+    <string name="chat_choose_model">اختيار نموذج</string>
+    <string name="chat_reasoning_effort">جهد الاستدلال</string>
+    <string name="chat_approval_global">وضع الموافقة · إعداد عام للوحة المعلومات</string>
+    <string name="chat_yolo">YOLO</string>
+    <string name="chat_yolo_on">مفعّل · تجاوز الموافقات لهذه الجلسة</string>
+    <string name="chat_yolo_off">متوقف · تبقى المطالبات مفعّلة</string>
+    <string name="chat_unlock_hint">يتاح الاستدلال وYOLO بعد أن يعيّن Hermes جلسة مباشرة.</string>
+    <string name="chat_attachment_staged">%1$s · مُجهّز</string>
+    <string name="chat_attachment_retry">%1$s · إعادة المحاولة</string>
+    <string name="chat_remove_attachment">إزالة %1$s</string>
+    <string name="chat_queued">%1$d قيد الانتظار</string>
+    <string name="chat_message_placeholder">أرسل رسالة إلى Hermes…</string>
+    <string name="chat_attach_image">إرفاق صورة</string>
+    <string name="chat_dictate">إملاء</string>
+    <string name="chat_action_rewind">جارٍ إنشاء الفرع…</string>
+    <string name="chat_action_compact">جارٍ ضغط الجلسة…</string>
+    <string name="chat_action_rename">جارٍ حفظ عنوان الجلسة…</string>
+    <string name="chat_empty_reading">لا توجد رسائل بعد — ألقِ التحية على Hermes.</string>
+    <string name="chat_empty_terminal">بانتظار مخرجات الطرفية…</string>
+    <string name="chat_rewind_message">الرجوع إلى هذه الرسالة</string>
+    <string name="chat_close_agent">إغلاق %1$s</string>
+    <string name="chat_new_agent">وكيل جديد</string>
+    <string name="chat_working">جارٍ العمل…</string>
+    <string name="chat_running">قيد التشغيل · %1$s</string>
+    <string name="chat_failed_continuing">فشل %1$s — متابعة العمل…</string>
+    <string name="chat_done_thinking">اكتمل %1$s — جارٍ التفكير…</string>
+
+    <string name="you_title">حسابي</string>
+    <string name="you_version">Talaria %1$s</string>
+    <string name="you_active">النشط: %1$s</string>
+    <string name="you_none">لا شيء</string>
+    <string name="you_not_connected">غير متصل</string>
+    <string name="you_appearance">المظهر</string>
+    <string name="you_dynamic_color">الألوان الديناميكية في Material You</string>
+    <string name="you_theme">السمة</string>
+    <string name="theme_dark">داكنة</string>
+    <string name="theme_system">النظام</string>
+    <string name="theme_light">فاتحة</string>
+    <string name="you_language">اللغة</string>
+    <string name="language_system_default">إعدادات النظام</string>
+    <string name="language_english">English</string>
+    <string name="language_japanese">日本語</string>
+    <string name="language_simplified_chinese">中文</string>
+    <string name="language_traditional_chinese">繁體中文</string>
+    <string name="language_arabic">العربية</string>
+    <string name="you_notifications_voice">الإشعارات والصوت</string>
+    <string name="you_notifications">الإشعارات</string>
+    <string name="you_agent_permissions">طلبات أذونات الوكيل</string>
+    <string name="you_agent_completion">إكمال مهمة الوكيل</string>
+    <string name="you_background_sync">المزامنة في الخلفية (WorkManager)</string>
+    <string name="you_speak_responses">نطق الردود (TTS)</string>
+    <string name="you_cloud_speech">السماح بالتعرّف على الكلام سحابيًا</string>
+    <string name="you_telemetry">القياس عن بُعد (متوقف افتراضيًا)</string>
+    <string name="you_privacy">الخصوصية</string>
+    <string name="you_local_first">محلي أولًا · لا حسابات مطلوبة</string>
+    <string name="you_api_baseline">خط أساس Hermes API: %1$s</string>
+    <string name="you_network_description">تتصل الشبكة فقط بنقاط Hermes التي ضبطتها. القياس الافتراضي=%1$s.</string>
+    <string name="you_privacy_text">Talaria عميل يحترم الخصوصية لوكيل Hermes المستضاف ذاتيًا.
+
+• لا قياس عن بُعد افتراضيًا. لا تغادر التحليلات الاختيارية جهازك إلا عند تفعيل الاشتراك المستقبلي.
+• تُخزّن بيانات الاعتماد باستخدام EncryptedSharedPreferences وAndroid Keystore.
+• تبقى ذاكرة التخزين المؤقت غير المتصلة (Room) على الجهاز؛ ولا تتضمن النسخ الاحتياطية الأسرار.
+• تستهدف حركة الشبكة عناوين لوحة Hermes التي تضبطها فقط.
+• تثبيت الشهادة اختياري لكل اتصال.
+• يفضّل الإملاء التعرّف على الجهاز؛ ويتطلب STT السحابي اشتراكًا صريحًا.
+• تُنشأ الإشعارات محليًا من استطلاعات Hermes أو أحداث الدردشة.
+
+راجع PRIVACY.md في المستودع للاطلاع على البيان الكامل.</string>
+
+    <string name="manage_title">الإدارة</string>
+    <string name="manage_agents">الوكلاء</string>
+    <string name="manage_capabilities">الإمكانات</string>
+    <string name="manage_messaging">المراسلة</string>
+    <string name="manage_system_section">النظام</string>
+    <string name="manage_status_title">الحالة</string>
+    <string name="manage_status_subtitle">الإصدار والبوابة والجلسات المباشرة</string>
+    <string name="manage_sessions_title">الجلسات</string>
+    <string name="manage_sessions_subtitle">تصفح وبحث واستئناف وتصدير</string>
+    <string name="manage_artifacts_title">الملفات الناتجة</string>
+    <string name="manage_artifacts_subtitle">صور وملفات من جلسات الوكلاء</string>
+    <string name="manage_cron_title">Cron</string>
+    <string name="manage_cron_subtitle">مهام الوكيل المجدولة</string>
+    <string name="manage_analytics_title">التحليلات</string>
+    <string name="manage_analytics_subtitle">استخدام الرموز والتكلفة</string>
+    <string name="manage_config_title">الإعدادات</string>
+    <string name="manage_config_subtitle">محرر config.yaml قائم على المخطط</string>
+    <string name="manage_api_keys_title">مفاتيح API</string>
+    <string name="manage_api_keys_subtitle">أسرار .env (الفهرس والإخفاء)</string>
+    <string name="manage_models_title">النماذج</string>
+    <string name="manage_models_subtitle">المزوّد والنموذج النشط</string>
+    <string name="manage_skills_title">المهارات</string>
+    <string name="manage_skills_subtitle">المهارات ومجموعات الأدوات وHub</string>
+    <string name="manage_mcp_title">MCP</string>
+    <string name="manage_mcp_subtitle">خوادم Model Context Protocol</string>
+    <string name="manage_channels_title">القنوات</string>
+    <string name="manage_channels_subtitle">منصات المراسلة</string>
+    <string name="manage_pairing_title">الاقتران</string>
+    <string name="manage_pairing_subtitle">الموافقة على مستخدمي المراسلة</string>
+    <string name="manage_webhooks_title">Webhooks</string>
+    <string name="manage_webhooks_subtitle">الاشتراكات الديناميكية</string>
+    <string name="manage_profiles_title">الملفات الشخصية</string>
+    <string name="manage_profiles_subtitle">منازل Hermes معزولة</string>
+    <string name="manage_files_title">الملفات</string>
+    <string name="manage_files_subtitle">تصفح نظام ملفات المضيف</string>
+    <string name="manage_review_title">المراجعة</string>
+    <string name="manage_review_subtitle">حالة Git وفروق شجرة العمل</string>
+    <string name="manage_memory_title">الذاكرة</string>
+    <string name="manage_memory_subtitle">المزوّدون والاسترجاع</string>
+    <string name="manage_learning_title">التعلّم</string>
+    <string name="manage_learning_subtitle">رسم المهارات والعناقيد</string>
+    <string name="manage_curator_title">المنسّق</string>
+    <string name="manage_curator_subtitle">صيانة الجلسات تلقائيًا</string>
+    <string name="manage_logs_title">السجلات</string>
+    <string name="manage_logs_subtitle">الوكيل / البوابة / الأخطاء</string>
+    <string name="manage_terminal_title">الطرفية</string>
+    <string name="manage_terminal_subtitle">صدفة المضيف المباشرة عبر PTY</string>
+    <string name="manage_system_title">النظام</string>
+    <string name="manage_system_subtitle">إحصاءات المضيف والتشخيص والبوابة</string>
+    <string name="manage_search_settings">البحث في الإعدادات</string>
+    <string name="manage_jump_to_setting">الانتقال إلى إعداد…</string>
+    <string name="manage_no_matches">لا توجد مطابقات</string>
+
+    <string name="activity_title">النشاط</string>
+    <string name="activity_filter_all">الكل</string>
+    <string name="activity_filter_pairing">الاقتران</string>
+    <string name="activity_filter_cron">Cron</string>
+    <string name="activity_filter_gateway">البوابة</string>
+    <string name="activity_filter_chat">الدردشة</string>
+    <string name="activity_empty">لا يوجد نشاط بعد. ستملأ المزامنة في الخلفية هذا الموجز.</string>
+    <string name="activity_no_filter_matches">لا توجد أحداث لهذا الفلتر.</string>
+    <string name="connection_title">الاتصالات</string>
+    <string name="connection_server_url">عنوان الخادم</string>
+    <string name="connection_token">الرمز</string>
+    <string name="connection_add_profile">إضافة اتصال</string>
+    <string name="connection_test">اختبار الاتصال</string>
+    <string name="connection_connected">متصل</string>
+    <string name="connection_disconnected">غير متصل</string>
+    <string name="connection_no_profiles">لا توجد اتصالات بعد</string>
+    <string name="connection_save">حفظ الاتصال</string>
+</resources>

@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="nav_chat">チャット</string>
+    <string name="nav_activity">アクティビティ</string>
+    <string name="nav_manage">管理</string>
+    <string name="nav_you">あなた</string>
+    <string name="common_retry">再試行</string>
+    <string name="common_cancel">キャンセル</string>
+    <string name="common_save">保存</string>
+    <string name="common_send">送信</string>
+    <string name="common_approve">承認</string>
+    <string name="common_deny">拒否</string>
+    <string name="common_refresh">更新</string>
+    <string name="common_new_agent">新しいエージェント</string>
+    <string name="common_all_sessions">すべてのセッション</string>
+    <string name="common_compact">圧縮</string>
+    <string name="common_create_branch">ブランチを作成</string>
+    <string name="common_close">閉じる</string>
+    <string name="common_default">デフォルト</string>
+    <string name="common_expand">展開</string>
+    <string name="common_collapse">折りたたむ</string>
+    <string name="common_connections">接続</string>
+    <string name="common_subtitle_separator">  ·  %1$s</string>
+    <string name="common_edit_session_title">セッション名を編集</string>
+    <string name="common_title">タイトル</string>
+    <string name="common_name">名前</string>
+    <string name="common_discard">破棄</string>
+    <string name="common_keep_editing">編集を続ける</string>
+    <string name="profile_switch">プロファイルを切り替え</string>
+    <string name="unsaved_changes_title">保存していない変更を破棄しますか？</string>
+    <string name="unsaved_changes_message">保存していない編集があります。今離れると変更は破棄されます。</string>
+
+    <string name="chat_microphone_permission_denied">マイクの権限が拒否されました</string>
+    <string name="chat_status_connecting">接続中…</string>
+    <string name="chat_status_live">ライブ · %1$s</string>
+    <string name="chat_status_detail"> · %1$s</string>
+    <string name="chat_status_yolo"> · ⚡YOLO</string>
+    <string name="chat_status_tokens"> · %1$d トークン</string>
+    <string name="chat_status_cost"> · $%1$.4f</string>
+    <string name="chat_status_disconnected">切断済み · タップして再接続</string>
+    <string name="chat_choices">選択肢: %1$s</string>
+    <string name="chat_secure_response">安全な応答</string>
+    <string name="chat_response">応答</string>
+    <string name="chat_rename_agent">エージェント名を変更</string>
+    <string name="chat_rewind_title">このメッセージまで巻き戻しますか？</string>
+    <string name="chat_rewind_body">このメッセージまでの会話を含む新しいチャットブランチを作成します。現在のセッションは開いたままです。
+
+%1$s</string>
+    <string name="chat_compact_title">セッションを圧縮しますか？</string>
+    <string name="chat_compact_body">Hermes は古いコンテキストを要約し、セッションのコンテキスト使用量を減らします。</string>
+    <string name="chat_compact_session">セッションを圧縮</string>
+    <string name="chat_sessions">セッション</string>
+    <string name="chat_open_suffix"> · 開いています</string>
+    <string name="chat_session_metadata">%1$s · %2$s · %3$d 件のメッセージ</string>
+    <string name="chat_cli_source">CLI</string>
+    <string name="chat_unknown_model">?</string>
+    <string name="chat_branch_from">%1$s からのブランチ</string>
+    <string name="chat_edit_session_title_content_description">セッション名を編集</string>
+    <string name="chat_models">モデル</string>
+    <string name="chat_model_fallback">モデル</string>
+    <string name="chat_no_model_options">API に選択肢がありません — チャットで /model を試してください</string>
+    <string name="chat_title">チャット</string>
+    <string name="chat_interrupt">割り込み (Ctrl-C)</string>
+    <string name="chat_terminal_view">ターミナル表示</string>
+    <string name="chat_reading_view">閲覧表示</string>
+    <string name="chat_session_actions">セッション操作</string>
+    <string name="chat_agent_activity">エージェントの活動</string>
+    <string name="chat_change_model">モデルを変更</string>
+    <string name="chat_steer_settings">ステアリングとトリガーの設定</string>
+    <string name="chat_pip">ピクチャーインピクチャーで開く</string>
+    <string name="chat_steer_trigger">ステア / トリガー</string>
+    <string name="chat_choose_model">モデルを選択</string>
+    <string name="chat_reasoning_effort">推論の強度</string>
+    <string name="chat_approval_global">承認モード · ダッシュボード全体の設定</string>
+    <string name="chat_yolo">YOLO</string>
+    <string name="chat_yolo_on">オン · このセッションでは承認を省略</string>
+    <string name="chat_yolo_off">オフ · プロンプトを表示</string>
+    <string name="chat_unlock_hint">Hermes がライブセッションを割り当てると推論と YOLO が有効になります。</string>
+    <string name="chat_attachment_staged">%1$s · 準備済み</string>
+    <string name="chat_attachment_retry">%1$s · 再試行</string>
+    <string name="chat_remove_attachment">%1$s を削除</string>
+    <string name="chat_queued">%1$d 件待機中</string>
+    <string name="chat_message_placeholder">Hermes にメッセージ…</string>
+    <string name="chat_attach_image">画像を添付</string>
+    <string name="chat_dictate">音声入力</string>
+    <string name="chat_action_rewind">ブランチを作成中…</string>
+    <string name="chat_action_compact">セッションを圧縮中…</string>
+    <string name="chat_action_rename">セッション名を保存中…</string>
+    <string name="chat_empty_reading">まだメッセージがありません — Hermes に挨拶しましょう。</string>
+    <string name="chat_empty_terminal">ターミナル出力を待機中…</string>
+    <string name="chat_rewind_message">このメッセージまで巻き戻す</string>
+    <string name="chat_close_agent">%1$s を閉じる</string>
+    <string name="chat_new_agent">新しいエージェント</string>
+    <string name="chat_working">処理中…</string>
+    <string name="chat_running">実行中 · %1$s</string>
+    <string name="chat_failed_continuing">%1$s は失敗しました — 続行します…</string>
+    <string name="chat_done_thinking">%1$s 完了 — 考えています…</string>
+
+    <string name="you_title">あなた</string>
+    <string name="you_version">Talaria %1$s</string>
+    <string name="you_active">アクティブ: %1$s</string>
+    <string name="you_none">なし</string>
+    <string name="you_not_connected">未接続</string>
+    <string name="you_appearance">外観</string>
+    <string name="you_dynamic_color">Material You の動的カラー</string>
+    <string name="you_theme">テーマ</string>
+    <string name="theme_dark">ダーク</string>
+    <string name="theme_system">システム</string>
+    <string name="theme_light">ライト</string>
+    <string name="you_language">言語</string>
+    <string name="language_system_default">システムのデフォルト</string>
+    <string name="language_english">English</string>
+    <string name="language_japanese">日本語</string>
+    <string name="language_simplified_chinese">中文</string>
+    <string name="language_traditional_chinese">繁體中文</string>
+    <string name="language_arabic">العربية</string>
+    <string name="you_notifications_voice">通知と音声</string>
+    <string name="you_notifications">通知</string>
+    <string name="you_agent_permissions">エージェントの権限リクエスト</string>
+    <string name="you_agent_completion">エージェントタスクの完了</string>
+    <string name="you_background_sync">バックグラウンド同期 (WorkManager)</string>
+    <string name="you_speak_responses">応答を読み上げる (TTS)</string>
+    <string name="you_cloud_speech">クラウド音声認識を許可</string>
+    <string name="you_telemetry">テレメトリ (デフォルトでオフ)</string>
+    <string name="you_privacy">プライバシー</string>
+    <string name="you_local_first">ローカル優先 · アカウント不要</string>
+    <string name="you_api_baseline">Hermes API ベースライン: %1$s</string>
+    <string name="you_network_description">ネットワークは設定した Hermes エンドポイントにのみ接続します。デフォルトのテレメトリ=%1$s。</string>
+    <string name="you_privacy_text">Talaria はセルフホスト Hermes Agent のためのプライバシー重視クライアントです。
+
+• テレメトリはデフォルトでゼロ。任意の分析情報は、将来のオプトインを有効にしない限り端末外へ出ません。
+• 認証情報は EncryptedSharedPreferences と Android Keystore に保存されます。
+• オフラインキャッシュ (Room) は端末内に留まり、バックアップから秘密情報を除外します。
+• ネットワーク通信は設定した Hermes ダッシュボード URL のみに送られます。
+• 証明書ピンニングは接続ごとに任意で設定できます。
+• 音声入力は端末上の認識を優先し、クラウド STT には明示的な許可が必要です。
+• 通知は Hermes のポーリングやチャットイベントから端末上で生成されます。
+
+詳細はリポジトリの PRIVACY.md を参照してください。</string>
+
+    <string name="manage_title">管理</string>
+    <string name="manage_agents">エージェント</string>
+    <string name="manage_capabilities">機能</string>
+    <string name="manage_messaging">メッセージング</string>
+    <string name="manage_system_section">システム</string>
+    <string name="manage_status_title">ステータス</string>
+    <string name="manage_status_subtitle">バージョン、ゲートウェイ、ライブセッション</string>
+    <string name="manage_sessions_title">セッション</string>
+    <string name="manage_sessions_subtitle">閲覧、検索、再開、書き出し</string>
+    <string name="manage_artifacts_title">アーティファクト</string>
+    <string name="manage_artifacts_subtitle">エージェントセッションの画像とファイル</string>
+    <string name="manage_cron_title">Cron</string>
+    <string name="manage_cron_subtitle">スケジュール済みエージェントジョブ</string>
+    <string name="manage_analytics_title">分析</string>
+    <string name="manage_analytics_subtitle">トークン使用量とコスト</string>
+    <string name="manage_config_title">設定</string>
+    <string name="manage_config_subtitle">スキーマ対応 config.yaml エディター</string>
+    <string name="manage_api_keys_title">API キー</string>
+    <string name="manage_api_keys_subtitle">.env シークレット (一覧とマスク表示)</string>
+    <string name="manage_models_title">モデル</string>
+    <string name="manage_models_subtitle">プロバイダーと現在のモデル</string>
+    <string name="manage_skills_title">スキル</string>
+    <string name="manage_skills_subtitle">スキル、ツールセット、Hub</string>
+    <string name="manage_mcp_title">MCP</string>
+    <string name="manage_mcp_subtitle">Model Context Protocol サーバー</string>
+    <string name="manage_channels_title">チャンネル</string>
+    <string name="manage_channels_subtitle">メッセージングプラットフォーム</string>
+    <string name="manage_pairing_title">ペアリング</string>
+    <string name="manage_pairing_subtitle">メッセージングユーザーを承認</string>
+    <string name="manage_webhooks_title">Webhook</string>
+    <string name="manage_webhooks_subtitle">動的サブスクリプション</string>
+    <string name="manage_profiles_title">プロファイル</string>
+    <string name="manage_profiles_subtitle">分離された Hermes ホーム</string>
+    <string name="manage_files_title">ファイル</string>
+    <string name="manage_files_subtitle">ホストのファイルシステムを閲覧</string>
+    <string name="manage_review_title">レビュー</string>
+    <string name="manage_review_subtitle">Git の状態と作業ツリーの差分</string>
+    <string name="manage_memory_title">メモリ</string>
+    <string name="manage_memory_subtitle">プロバイダーと検索</string>
+    <string name="manage_learning_title">学習</string>
+    <string name="manage_learning_subtitle">スキルグラフとクラスタ</string>
+    <string name="manage_curator_title">キュレーター</string>
+    <string name="manage_curator_subtitle">セッションの自動メンテナンス</string>
+    <string name="manage_logs_title">ログ</string>
+    <string name="manage_logs_subtitle">エージェント / ゲートウェイ / エラー</string>
+    <string name="manage_terminal_title">ターミナル</string>
+    <string name="manage_terminal_subtitle">PTY 経由のホストシェル</string>
+    <string name="manage_system_title">システム</string>
+    <string name="manage_system_subtitle">ホスト統計、診断、ポータル</string>
+    <string name="manage_search_settings">設定を検索</string>
+    <string name="manage_jump_to_setting">設定へ移動…</string>
+    <string name="manage_no_matches">一致なし</string>
+
+    <string name="activity_title">アクティビティ</string>
+    <string name="activity_filter_all">すべて</string>
+    <string name="activity_filter_pairing">ペアリング</string>
+    <string name="activity_filter_cron">Cron</string>
+    <string name="activity_filter_gateway">ゲートウェイ</string>
+    <string name="activity_filter_chat">チャット</string>
+    <string name="activity_empty">まだアクティビティはありません。バックグラウンド同期で表示されます。</string>
+    <string name="activity_no_filter_matches">このフィルターにイベントはありません。</string>
+    <string name="connection_title">接続</string>
+    <string name="connection_server_url">サーバー URL</string>
+    <string name="connection_token">トークン</string>
+    <string name="connection_add_profile">接続を追加</string>
+    <string name="connection_test">接続をテスト</string>
+    <string name="connection_connected">接続済み</string>
+    <string name="connection_disconnected">切断済み</string>
+    <string name="connection_no_profiles">接続がまだありません</string>
+    <string name="connection_save">接続を保存</string>
+</resources>

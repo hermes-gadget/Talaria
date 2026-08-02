@@ -27,6 +27,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.stringResource
+import com.hermesgadget.talaria.R
 
 /**
  * Intercepts the system/gesture back press while an editor has unsaved edits and
@@ -40,9 +42,11 @@ import androidx.compose.runtime.setValue
 @Composable
 fun UnsavedChangesGuard(
     hasUnsavedChanges: Boolean,
-    title: String = "Discard unsaved changes?",
-    message: String = "You have edits that haven't been saved. Leaving now will discard them.",
+    title: String? = null,
+    message: String? = null,
 ) {
+    val resolvedTitle = title ?: stringResource(R.string.unsaved_changes_title)
+    val resolvedMessage = message ?: stringResource(R.string.unsaved_changes_message)
     val backOwner = LocalOnBackPressedDispatcherOwner.current
     var showDialog by remember { mutableStateOf(false) }
     var leaving by remember { mutableStateOf(false) }
@@ -58,16 +62,18 @@ fun UnsavedChangesGuard(
     if (showDialog) {
         AlertDialog(
             onDismissRequest = { showDialog = false },
-            title = { Text(title) },
-            text = { Text(message) },
+            title = { Text(resolvedTitle) },
+            text = { Text(resolvedMessage) },
             confirmButton = {
                 TextButton(onClick = {
                     showDialog = false
                     leaving = true
-                }) { Text("Discard") }
+                }) { Text(stringResource(R.string.common_discard)) }
             },
             dismissButton = {
-                TextButton(onClick = { showDialog = false }) { Text("Keep editing") }
+                TextButton(onClick = { showDialog = false }) {
+                    Text(stringResource(R.string.common_keep_editing))
+                }
             },
         )
     }
