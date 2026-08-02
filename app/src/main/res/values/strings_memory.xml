@@ -1,4 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Strings owned by the memory feature wave. English only; locale files are translated by the i18n pass. -->
+    <string name="memory_title">Memory</string>
+    <string name="memory_refresh">Refresh</string>
+    <string name="memory_active_provider">Active: %1$s</string>
+    <string name="memory_none">none</string>
+    <string name="memory_no_providers">No memory providers.</string>
+    <string name="memory_activate">Activate</string>
+    <string name="memory_configure">Configure</string>
+    <string name="memory_loading">Loading…</string>
+    <string name="memory_status_missing">Missing</string>
+    <string name="memory_status_needs_config">Needs configuration</string>
+    <string name="memory_status_unavailable">Unavailable</string>
+    <string name="memory_status_ready">Ready</string>
+    <string name="memory_status_available">Available</string>
+    <string name="memory_setup">Set up provider</string>
+    <string name="memory_setup_running">Setting up…</string>
+    <string name="memory_setup_description">Install the provider dependencies on the Hermes host.</string>
+    <string name="memory_dependencies_installed">Installed: %1$s</string>
+    <string name="memory_dependencies_needed">Needs: %1$s</string>
+    <string name="memory_no_configuration">This provider has no configurable fields.</string>
+    <string name="memory_documentation">Documentation</string>
+    <string name="memory_group_general">General</string>
+    <string name="memory_required_label">%1$s *</string>
+    <string name="memory_choose">Choose…</string>
+    <string name="memory_save">Save changes</string>
+    <string name="memory_saving">Saving…</string>
+    <string name="memory_secret_set">A value is already set. Enter a new value to replace it.</string>
+    <string name="memory_oauth_title">OAuth connection</string>
+    <string name="memory_oauth_connect">Connect with OAuth</string>
+    <string name="memory_oauth_reconnect">Reconnect with OAuth</string>
+    <string name="memory_oauth_waiting">Waiting for browser consent…</string>
+    <string name="memory_oauth_connected">Connected via %1$s</string>
+    <string name="memory_oauth_connected_unknown">Connected</string>
+    <string name="memory_oauth_not_connected">Not connected</string>
+    <string name="memory_oauth_method">OAuth</string>
+    <string name="memory_api_key_method">API key</string>
+    <string name="memory_builtin_files">Built-in memory files</string>
+    <string name="memory_builtin_sizes">MEMORY.md · %1$s   USER.md · %2$s</string>
+    <string name="memory_reset_memory">Reset memory</string>
+    <string name="memory_reset_user">Reset user</string>
+    <string name="memory_reset_title">Reset %1$s</string>
+    <string name="memory_reset_all_title">Reset all memory</string>
+    <string name="memory_reset_message">This permanently deletes the selected built-in memory file data on the Hermes host.</string>
+    <string name="memory_delete">Delete</string>
+    <string name="memory_cancel">Cancel</string>
+    <string name="memory_error_config_invalid">The memory provider returned an invalid configuration.</string>
+    <string name="memory_error_oauth_status_invalid">The memory provider returned an invalid OAuth status.</string>
+    <string name="memory_error_oauth_timeout">OAuth connection timed out. Try again.</string>
+    <string name="memory_error_setup_failed">Memory provider setup failed.</string>
 </resources>
