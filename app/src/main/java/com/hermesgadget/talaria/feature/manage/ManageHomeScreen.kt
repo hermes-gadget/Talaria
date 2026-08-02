@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MonitorHeart
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.SwitchAccount
@@ -125,6 +126,7 @@ private val manageSections = listOf(
             ManageItem("Curator", "Automatic session upkeep", Routes.CURATOR, Icons.Filled.CleaningServices),
             ManageItem("Logs", "Agent / gateway / errors", Routes.LOGS, Icons.AutoMirrored.Filled.Article),
             ManageItem("Terminal", "Live host shell over PTY", Routes.TERMINAL, Icons.Filled.Terminal),
+            ManageItem("Themes", "Preset palettes & server sync", Routes.THEMES, Icons.Filled.Palette),
             ManageItem("System", "Host stats, doctor, portal", Routes.SYSTEM, Icons.Filled.Dns),
         ),
     ),

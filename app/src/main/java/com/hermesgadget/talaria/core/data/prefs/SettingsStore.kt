@@ -66,6 +66,11 @@ class SettingsStore(context: Context) {
         else -> ThemeMode.DARK
     }
 
+    private fun readThemePreset(): String = prefs.getString(KEY_THEME_PRESET, DEFAULT_THEME_PRESET)
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?: DEFAULT_THEME_PRESET
+
     // Default OFF so the curated Hermes brand palette is what ships; users can
     // opt into Material You dynamic color from the You screen.
     private val _dynamicColor = MutableStateFlow(prefs.getBoolean("dynamic_color", false))
@@ -73,6 +78,9 @@ class SettingsStore(context: Context) {
 
     private val _themeMode = MutableStateFlow(readThemeMode())
     val themeModeFlow: StateFlow<ThemeMode> = _themeMode.asStateFlow()
+
+    private val _themePreset = MutableStateFlow(readThemePreset())
+    val themePresetFlow: StateFlow<String> = _themePreset.asStateFlow()
 
     var telemetryEnabled: Boolean
         get() = prefs.getBoolean("telemetry", false)
@@ -222,6 +230,15 @@ class SettingsStore(context: Context) {
             _themeMode.value = value
         }
 
+    /** Curated palette id; the UI registry supplies the dark/light schemes. */
+    var themePreset: String
+        get() = _themePreset.value
+        set(value) {
+            val normalized = value.trim().ifEmpty { DEFAULT_THEME_PRESET }
+            prefs.edit { putString(KEY_THEME_PRESET, normalized) }
+            _themePreset.value = normalized
+        }
+
     // --- Offline snapshot (Phase 13): last-good status for the widget / offline UI ---
 
     /** Widget/offline status is isolated per connection + Hermes management profile. */
@@ -244,4 +261,9 @@ class SettingsStore(context: Context) {
 
     fun setSyncFingerprint(profileId: String, category: String, values: Set<String>) =
         prefs.edit { putStringSet("sync_${category}_$profileId", values.toSet()) }
+
+    private companion object {
+        const val KEY_THEME_PRESET = "theme_preset"
+        const val DEFAULT_THEME_PRESET = "dark"
+    }
 }
