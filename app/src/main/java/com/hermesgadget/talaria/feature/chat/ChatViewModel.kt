@@ -54,6 +54,7 @@ import com.hermesgadget.talaria.domain.model.SlashCommands
 import com.hermesgadget.talaria.domain.model.ToolCallUi
 import com.hermesgadget.talaria.domain.model.scopeId
 import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
+import com.hermesgadget.talaria.feature.manage.sessions.SessionFilters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -213,6 +214,8 @@ class ChatViewModel(
     private val runtimes = mutableMapOf<String, SessionRuntime>()
     /** Hermes session ids already mapped to a tab, so concurrent tabs don't collide. */
     private val claimedSessions = mutableSetOf<String>()
+    /** Tab ids that were created by the auto-open sync, not by the user. */
+    private val autoOpenedTabs = mutableSetOf<String>()
     private var sessionCounter = 0
     // Suppresses per-tab persistence while restorePersistedTabs() rebuilds the
     // surface, so we don't write half-restored snapshots; we persist once at the end.
@@ -320,6 +323,7 @@ class ChatViewModel(
         _ui.value.tabs.forEach { AgentTaskNotificationService.stopWatching(TalariaApp.instance, it.id) }
         runtimes.clear()
         claimedSessions.clear()
+        autoOpenedTabs.clear()
         pendingImages.clear()
         inputHistories.clear()
         slashCatalog = SlashCommands.defaults
@@ -378,7 +382,9 @@ class ChatViewModel(
         val pid = activeConnection.copy(managementProfile = profileName).scopeId()
         // Runtime websocket ids are transient; durable ids keep resumed and branched
         // tabs reopen on the same REST/PTY session after process recreation.
-        val tabs = _ui.value.tabs.filter { it.profileName == profileName }.map { t ->
+        val tabs = _ui.value.tabs.filter {
+            it.profileName == profileName && it.id !in autoOpenedTabs
+        }.map { t ->
             PersistedChatTab(sessionId = t.resumeSessionId ?: t.liveSessionId, title = t.title)
         }
         container.settingsStore.saveChatState(
@@ -559,6 +565,7 @@ class ChatViewModel(
     }
 
     fun closeTab(tabId: String) {
+        autoOpenedTabs.remove(tabId)
         AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
         pendingImages.remove(tabId)
         val rt = runtimes.remove(tabId)
@@ -625,6 +632,137 @@ class ChatViewModel(
                 selectedSessionProfile = selected,
                 sessionListLoading = registry.loading,
                 profileStreamingStates = registry.streamingStates,
+            )
+        }
+        syncActiveSessions(registry)
+    }
+
+    /**
+     * Auto-open a tab for every active user session (not cron/webhook) that the
+     * user started on another platform — Discord, Telegram, CLI, etc. The user
+     * gets live visibility and notifications for all their chats without
+     * manually opening each one.
+     */
+    private fun syncActiveSessions(registry: ProfileRegistryState) {
+        val activeProfile = profileNameForActiveConnection()
+        val openSessionIds = _ui.value.tabs.mapNotNull { it.resumeSessionId ?: it.liveSessionId }.toSet()
+        val autoSources = SessionFilters.AUTOMATION_SOURCES.toSet()
+
+        for ((profileName, sessions) in registry.sessionsByProfile) {
+            // Only auto-open on the foreground profile; background-profile
+            // sessions are visible through the merged rail.
+            if (profileName != activeProfile) continue
+            for (s in sessions) {
+                val source = s.source.orEmpty().lowercase()
+                // Skip automation sessions and already-open tabs.
+                if (autoSources.any { source.contains(it) }) continue
+                if (s.id in openSessionIds) continue
+                // Only open sessions that the server considers active or live.
+                if (s.is_active != true && s.live != true) continue
+
+                val id = UUID.randomUUID().toString()
+                val channel = UUID.randomUUID().toString()
+                sessionCounter += 1
+                val title = s.title?.takeIf { it.isNotBlank() }
+                    ?: s.preview?.take(40)
+                    ?: "Agent $sessionCounter"
+                val eventClient = HermesEventClient(
+                    container.clientFactory,
+                    container.connectionStore,
+                    container.wsAuthHelper,
+                    profileName = profileName,
+                )
+                val (pty, flow) = chatRepository.openPty(s.id, channel, lastCols, lastRows)
+                val rt = SessionRuntime(session = pty, eventClient = eventClient)
+                runtimes[id] = rt
+                autoOpenedTabs.add(id)
+                claimedSessions.add(s.id)
+
+                _ui.update {
+                    it.copy(
+                        tabs = it.tabs + ChatTab(
+                            id = id,
+                            title = title,
+                            channelId = channel,
+                            profileName = profileName,
+                            resumeSessionId = s.id,
+                            liveSessionId = s.id,
+                            connecting = true,
+                        ),
+                        activeTabId = it.activeTabId ?: id,
+                    )
+                }
+                ProfileRegistry.markConnecting(profileName, s.id)
+
+                eventClient.start(channel)
+                rt.sideJob = viewModelScope.launch {
+                    eventClient.events.collect { handleSideEvent(id, it) }
+                }
+                rt.collectJob = viewModelScope.launch {
+                    try {
+                        flow.collect { event -> handlePtyEvent(id, event) }
+                    } catch (t: Throwable) {
+                        updateTab(id) {
+                            it.copy(error = t.message ?: "Chat connection failed", connecting = false, connected = false)
+                        }
+                    }
+                }
+                loadReading(id, s.id)
+                startReadingPoll(id)
+
+                // Register for background notifications so the user gets alerts
+                // for activity on every auto-opened session, not just the one
+                // they're actively looking at.
+                AgentTaskNotificationService.startWatching(
+                    TalariaApp.instance,
+                    PersistedAgentWatch(
+                        watcherId = id,
+                        agentName = title,
+                        channelId = channel,
+                        sessionId = s.id,
+                        connectionId = boundConnectionId,
+                        managementProfile = profileName,
+                    ),
+                )
+            }
+        }
+
+        // Close auto-opened tabs whose sessions are no longer active.
+        val stillActive = registry.sessionsByProfile[activeProfile].orEmpty()
+            .filter { it.is_active == true || it.live == true }
+            .map { it.id }
+            .toSet()
+        autoOpenedTabs.toList().forEach { tabId ->
+            val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return@forEach
+            val sessionId = tab.resumeSessionId ?: tab.liveSessionId ?: return@forEach
+            if (sessionId !in stillActive) {
+                closeAutoTab(tabId)
+            }
+        }
+    }
+
+    /** Close an auto-opened tab without persisting it or opening a fallback. */
+    private fun closeAutoTab(tabId: String) {
+        autoOpenedTabs.remove(tabId)
+        AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
+        pendingImages.remove(tabId)
+        val rt = runtimes.remove(tabId)
+        rt?.collectJob?.cancel()
+        rt?.sideJob?.cancel()
+        rt?.readingJob?.cancel()
+        rt?.session?.close()
+        rt?.eventClient?.dispose()
+        _ui.value.tabs.firstOrNull { it.id == tabId }?.let { tab ->
+            tab.liveSessionId?.let { claimedSessions.remove(it) }
+            (tab.liveSessionId ?: tab.resumeSessionId)?.let {
+                ProfileRegistry.markDisconnected(tab.profileName, it)
+            }
+        }
+        _ui.update { state ->
+            val remaining = state.tabs.filterNot { it.id == tabId }
+            state.copy(
+                tabs = remaining,
+                activeTabId = if (state.activeTabId == tabId) remaining.lastOrNull()?.id else state.activeTabId,
             )
         }
     }

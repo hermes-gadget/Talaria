@@ -78,6 +78,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -125,6 +126,8 @@ import com.hermesgadget.talaria.MainActivity
 import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.domain.model.ToolCallUi
 import com.hermesgadget.talaria.domain.model.scopeId
+import com.hermesgadget.talaria.feature.manage.sessions.SessionFilters
+import com.hermesgadget.talaria.feature.manage.sessions.SessionTab
 import com.hermesgadget.talaria.feature.pip.PipChatIntent
 import com.hermesgadget.talaria.feature.pip.PipChatMessage
 import com.hermesgadget.talaria.feature.pip.PipChatSnapshot
@@ -153,6 +156,7 @@ fun ChatScreen(
     val density = LocalDensity.current
     var renameTarget by remember { mutableStateOf<ChatTab?>(null) }
     var monitorOpen by remember { mutableStateOf(false) }
+    var sessionRailTab by remember { mutableStateOf(SessionTab.Chats) }
 
     val context = LocalContext.current
     val microphonePermissionDenied = stringResource(R.string.chat_microphone_permission_denied)
@@ -482,8 +486,33 @@ fun ChatScreen(
                     onOpenSessions()
                 }) { Text(stringResource(R.string.common_all_sessions)) }
             }
+            Row(
+                modifier = Modifier
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SessionTab.entries.forEach { tab ->
+                    FilterChip(
+                        selected = sessionRailTab == tab,
+                        onClick = { sessionRailTab = tab },
+                        label = {
+                            Text(
+                                when (tab) {
+                                    SessionTab.Chats -> stringResource(R.string.sessions_tab_chats)
+                                    SessionTab.Automation -> stringResource(R.string.sessions_tab_automation)
+                                    SessionTab.All -> stringResource(R.string.sessions_tab_all)
+                                },
+                            )
+                        },
+                    )
+                }
+            }
             LazyColumn {
-                items(ui.sessions, key = { it.id }) { s ->
+                val filtered = ui.sessions.filter {
+                    SessionFilters.matchesTab(it.source, sessionRailTab)
+                }
+                items(filtered, key = { it.id }) { s ->
                     val isOpen = ui.tabs.any { it.liveSessionId == s.id || it.resumeSessionId == s.id }
                     val parentId = ui.sessionBranchOrigins[s.id]
                     val parentTitle = parentId?.let { id ->

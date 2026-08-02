@@ -89,6 +89,10 @@ data class SessionSummary(
     val output_tokens: Long? = null,
     val live: Boolean? = null,
     val is_active: Boolean? = null,
+    /** Why the session ended — "session_reset", "compression", "agent_close", etc. Null while live. */
+    val end_reason: String? = null,
+    @Serializable(with = FlexiblePrimitiveStringSerializer::class)
+    val ended_at: String? = null,
 )
 
 @Serializable
