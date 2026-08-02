@@ -77,6 +77,7 @@ import com.hermesgadget.talaria.feature.manage.memory.MemoryScreen
 import com.hermesgadget.talaria.feature.manage.models.ModelsScreen
 import com.hermesgadget.talaria.feature.manage.system.SystemScreen
 import com.hermesgadget.talaria.feature.manage.webhooks.WebhooksScreen
+import com.hermesgadget.talaria.feature.terminal.TerminalScreen
 import com.hermesgadget.talaria.feature.you.YouScreen
 import com.hermesgadget.talaria.domain.model.scopeId
 
@@ -328,6 +329,7 @@ fun TalariaNavRoot(
                     )
                 }
                 composable(Routes.LOGS) { LogsScreen() }
+                composable(Routes.TERMINAL) { TerminalScreen(onNeedConnection = { navController.navigate(Routes.CONNECT) }) }
                 composable(Routes.ANALYTICS) { AnalyticsScreen() }
                 composable(Routes.CRON) { CronScreen() }
                 composable(Routes.PROFILES) {
