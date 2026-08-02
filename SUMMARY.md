@@ -29,3 +29,38 @@
 ## Leftovers
 
 - Approval mode is global in the current Hermes server, so the popover labels it accordingly. No requested server-side control was found to be unsupported; reasoning and YOLO are disabled only while a tab has no active/resumable session.
+
+## Chat rewind implementation
+
+Branch: `feature/chat-rewind`
+
+### What changed
+
+- Added long-press rewind confirmation to the reading transcript. The confirmed
+  action calls Hermes websocket RPC `session.branch`, opens the returned durable
+  branch session in a new chat tab, and retains optional parent lineage in the
+  session rail.
+- Added header overflow actions for confirmed `session.compress` compaction and
+  REST-backed session title editing through the existing `PATCH /api/sessions/{id}`
+  repository method.
+- Preserved queue/history/steer behavior and the existing IME padding/navigation
+  behavior. Added ViewModel-owned session action state/reducer tests.
+
+### API verification
+
+The live dashboard at `127.0.0.1:9119` reports Hermes `v0.19.1`. Its OpenAPI
+surface exposes session title PATCH but not REST `/branch` or `/compact` routes;
+the connected gateway RPC methods are `session.branch` and `session.compress`.
+The sessions response exposes `parent_session_id`, which is projected without
+changing the shared `SessionSummary` model.
+
+### Verification
+
+Passed on 2026-08-02:
+
+```text
+JAVA_HOME=/home/ben/java ANDROID_HOME=/home/ben/android-sdk ./gradlew :app:testDebugUnitTest :app:compileDebugKotlin --no-daemon
+```
+
+The build reported only existing warnings in unrelated artifact/learning/markdown
+code and the existing cron test opt-in warnings.

@@ -49,6 +49,7 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -59,10 +60,12 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
@@ -118,7 +121,7 @@ import com.hermesgadget.talaria.domain.model.ToolCallUi
 import com.hermesgadget.talaria.domain.model.scopeId
 import com.hermesgadget.talaria.ui.components.SimpleMarkdownText
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChatScreen(
     resumeSessionId: String? = null,
@@ -292,6 +295,61 @@ fun ChatScreen(
         )
     }
 
+    when (val dialog = ui.sessionControls.dialog) {
+        is ChatSessionDialog.Rewind -> AlertDialog(
+            onDismissRequest = vm::dismissSessionDialog,
+            title = { Text("Rewind to this message?") },
+            text = {
+                Text(
+                    "This creates a new chat branch containing the conversation through this message. " +
+                        "The current session stays open.\n\n${dialog.preview.take(240)}",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = vm::confirmSessionDialog) { Text("Create branch") }
+            },
+            dismissButton = {
+                TextButton(onClick = vm::dismissSessionDialog) { Text("Cancel") }
+            },
+        )
+        is ChatSessionDialog.Compact -> AlertDialog(
+            onDismissRequest = vm::dismissSessionDialog,
+            title = { Text("Compact session?") },
+            text = {
+                Text("Hermes will summarize older context to reduce the session's context usage.")
+            },
+            confirmButton = {
+                TextButton(onClick = vm::confirmSessionDialog) { Text("Compact") }
+            },
+            dismissButton = {
+                TextButton(onClick = vm::dismissSessionDialog) { Text("Cancel") }
+            },
+        )
+        is ChatSessionDialog.EditTitle -> {
+            var title by remember(dialog.sessionId) { mutableStateOf(dialog.initialTitle) }
+            AlertDialog(
+                onDismissRequest = vm::dismissSessionDialog,
+                title = { Text("Edit session title") },
+                text = {
+                    OutlinedTextField(
+                        value = title,
+                        onValueChange = { title = it },
+                        singleLine = true,
+                        label = { Text("Title") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { vm.confirmSessionTitle(title) }) { Text("Save") }
+                },
+                dismissButton = {
+                    TextButton(onClick = vm::dismissSessionDialog) { Text("Cancel") }
+                },
+            )
+        }
+        null -> Unit
+    }
+
     if (ui.showSessionRail) {
         ModalBottomSheet(
             onDismissRequest = { vm.toggleSessionRail(false) },
@@ -313,6 +371,11 @@ fun ChatScreen(
             LazyColumn {
                 items(ui.sessions, key = { it.id }) { s ->
                     val isOpen = ui.tabs.any { it.liveSessionId == s.id || it.resumeSessionId == s.id }
+                    val parentId = ui.sessionBranchOrigins[s.id]
+                    val parentTitle = parentId?.let { id ->
+                        ui.sessions.firstOrNull { it.id == id }?.title?.takeIf { it.isNotBlank() }
+                            ?: id.take(8)
+                    }
                     ListItem(
                         headlineContent = {
                             Text(
@@ -322,7 +385,21 @@ fun ChatScreen(
                             )
                         },
                         supportingContent = {
-                            Text("${s.source ?: "cli"} · ${s.model ?: "?"} · ${s.message_count ?: 0} msgs")
+                            Column {
+                                Text("${s.source ?: "cli"} · ${s.model ?: "?"} · ${s.message_count ?: 0} msgs")
+                                parentTitle?.let {
+                                    Text(
+                                        "Branch from $it",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.secondary,
+                                    )
+                                }
+                            }
+                        },
+                        trailingContent = {
+                            IconButton(onClick = { vm.requestSessionTitleEdit(s.id) }) {
+                                Icon(Icons.Filled.Edit, contentDescription = "Edit session title")
+                            }
                         },
                         modifier = Modifier.clickable { vm.resumeSession(s.id) },
                     )
@@ -399,6 +476,32 @@ fun ChatScreen(
                             )
                         }
                     }
+                    val sessionReady = active?.liveSessionId != null || active?.resumeSessionId != null
+                    val sessionActionRunning = ui.sessionControls.action is ChatSessionActionState.Running
+                    IconButton(onClick = { vm.toggleSessionActions() }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "Session actions")
+                    }
+                    DropdownMenu(
+                        expanded = ui.showSessionActions,
+                        onDismissRequest = { vm.toggleSessionActions(false) },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Compact session") },
+                            onClick = {
+                                vm.toggleSessionActions(false)
+                                vm.requestCompactSession()
+                            },
+                            enabled = sessionReady && active?.working != true && !sessionActionRunning,
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Edit session title") },
+                            onClick = {
+                                vm.toggleSessionActions(false)
+                                vm.requestSessionTitleEdit()
+                            },
+                            enabled = sessionReady && !sessionActionRunning,
+                        )
+                    }
                     IconButton(onClick = { monitorOpen = !monitorOpen }) {
                         Icon(Icons.Filled.Hub, contentDescription = "Agent activity")
                     }
@@ -474,7 +577,6 @@ fun ChatScreen(
                                 enabled = active != null,
                             )
                         }
-                        val sessionReady = active?.liveSessionId != null || active?.resumeSessionId != null
                         DropdownMenuItem(
                             text = {
                                 Column {
@@ -740,6 +842,37 @@ fun ChatScreen(
                     modifier = Modifier.padding(vertical = 4.dp),
                 )
             }
+            when (val action = ui.sessionControls.action) {
+                is ChatSessionActionState.Running -> Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(vertical = 4.dp),
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                    Text(
+                        when (action.kind) {
+                            ChatSessionActionKind.REWIND -> "Creating branch…"
+                            ChatSessionActionKind.COMPACT -> "Compacting session…"
+                            ChatSessionActionKind.RENAME -> "Saving session title…"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                is ChatSessionActionState.Success -> Text(
+                    action.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(vertical = 4.dp),
+                )
+                is ChatSessionActionState.Failure -> Text(
+                    action.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(vertical = 4.dp),
+                )
+                ChatSessionActionState.Idle -> Unit
+            }
             // A single live "working" indicator (spinner + the current tool), not a
             // running list of tool cards. It clears itself when the reply arrives.
             if (active?.working == true) {
@@ -765,12 +898,23 @@ fun ChatScreen(
                         )
                     }
                 }
-                items(displayLines, key = { it.id }) { line ->
+                itemsIndexed(displayLines, key = { _, line -> line.id }) { displayedIndex, line ->
                     val mine = line.role == "user"
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(end = if (mine) 0.dp else 32.dp, start = if (mine) 32.dp else 0.dp),
+                            .padding(end = if (mine) 0.dp else 32.dp, start = if (mine) 32.dp else 0.dp)
+                            .combinedClickable(
+                                enabled = transcriptMode == TranscriptMode.READING,
+                                onClick = {},
+                                onLongClick = {
+                                    vm.requestRewind(
+                                        messageCount = branchMessageCount(line, displayedIndex),
+                                        preview = line.text,
+                                    )
+                                },
+                                onLongClickLabel = "Rewind to this message",
+                            ),
                         color = when (line.role) {
                             "user" -> MaterialTheme.colorScheme.primaryContainer
                             "tool" -> MaterialTheme.colorScheme.tertiaryContainer
