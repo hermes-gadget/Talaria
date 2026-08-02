@@ -19,16 +19,22 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -39,12 +45,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
+import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
 import com.hermesgadget.talaria.domain.model.SessionSummary
 import com.hermesgadget.talaria.domain.model.StatusResponse
 import com.hermesgadget.talaria.core.util.formatHermesTimestamp
+import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.PollEffect
@@ -53,23 +64,87 @@ import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import retrofit2.HttpException
+
+internal data class ComputerUseCheck(
+    val label: String,
+    val status: String,
+    val message: String,
+)
+
+internal data class ComputerUseStatus(
+    val platform: String? = null,
+    val platformSupported: Boolean? = null,
+    val installed: Boolean? = null,
+    val version: String? = null,
+    val ready: Boolean? = null,
+    val canGrant: Boolean? = null,
+    val accessibility: Boolean? = null,
+    val screenRecording: Boolean? = null,
+    val checks: List<ComputerUseCheck> = emptyList(),
+    val error: String? = null,
+)
+
+internal fun parseComputerUseStatus(payload: JsonElement): ComputerUseStatus {
+    val body = payload as? JsonObject ?: return ComputerUseStatus()
+    return ComputerUseStatus(
+        platform = body.textValue("platform"),
+        platformSupported = body.booleanValue("platform_supported"),
+        installed = body.booleanValue("installed"),
+        version = body.textValue("version"),
+        ready = body.booleanValue("ready"),
+        canGrant = body.booleanValue("can_grant"),
+        accessibility = body.booleanValue("accessibility"),
+        screenRecording = body.booleanValue("screen_recording"),
+        checks = (body["checks"] as? JsonArray).orEmpty().mapNotNull { element ->
+            val check = element as? JsonObject ?: return@mapNotNull null
+            ComputerUseCheck(
+                label = check.textValue("label").orEmpty(),
+                status = check.textValue("status").orEmpty(),
+                message = check.textValue("message").orEmpty(),
+            )
+        },
+        error = body.textValue("error"),
+    )
+}
+
+private fun JsonObject.textValue(key: String): String? =
+    (this[key] as? JsonPrimitive)?.contentOrNull
+
+private fun JsonObject.booleanValue(key: String): Boolean? =
+    textValue(key)?.lowercase()?.let {
+        when (it) {
+            "true" -> true
+            "false" -> false
+            else -> null
+        }
+    }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
-    val repo = TalariaApp.instance.container.hermesRepository
+    val container = TalariaApp.instance.container
+    val repo = container.hermesRepository
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf<StatusResponse?>(null) }
     var currentSessions by remember { mutableStateOf<List<SessionSummary>>(emptyList()) }
+    var computerUse by remember { mutableStateOf<ComputerUseStatus?>(null) }
+    var computerUseError by remember { mutableStateOf<String?>(null) }
+    var computerUseLoading by remember { mutableStateOf(true) }
+    var grantingComputerUse by remember { mutableStateOf(false) }
+    var computerUseGrantMessage by remember { mutableStateOf<String?>(null) }
+    var computerUseGrantFailed by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     var refreshing by remember { mutableStateOf(false) }
     var lastUpdatedMs by remember { mutableLongStateOf(0L) }
     var tick by remember { mutableIntStateOf(0) }
+    var actionsExpanded by remember { mutableStateOf(false) }
 
     fun applySuccess(s: StatusResponse) {
         status = s
@@ -79,9 +154,8 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
         lastUpdatedMs = System.currentTimeMillis()
     }
 
-    // Poll only while the screen is RESUMED so we stop hitting the network when the
-    // app is backgrounded (a plain LaunchedEffect loop would keep going off-screen).
-    PollEffect(intervalMs = 10_000, tick) {
+    suspend fun refreshData() {
+        if (computerUse == null) computerUseLoading = true
         repo.refreshStatus()
             .onSuccess { applySuccess(it) }
             .onFailure {
@@ -91,6 +165,24 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
             }
         repo.getSessionsPage(limit = 20)
             .onSuccess { currentSessions = it.sessions }
+
+        runCatching {
+            val profile = container.connectionStore.activeProfile()?.effectiveManagementProfile()
+            container.clientFactory.api().getComputerUseStatus(profile)
+        }.onSuccess {
+            computerUse = parseComputerUseStatus(it)
+            computerUseError = null
+            computerUseLoading = false
+        }.onFailure {
+            computerUseError = it.message
+            computerUseLoading = false
+        }
+    }
+
+    // Poll only while the screen is RESUMED so we stop hitting the network when the
+    // app is backgrounded (a plain LaunchedEffect loop would keep going off-screen).
+    PollEffect(intervalMs = 10_000, tick) {
+        refreshData()
     }
 
     val lastUpdatedLabel = if (lastUpdatedMs == 0L) {
@@ -98,15 +190,33 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
     } else {
         DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(lastUpdatedMs))
     }
+    val grantUnavailableMessage = stringResource(R.string.tools_status_computer_use_grant_unavailable)
+    val grantErrorFallback = stringResource(R.string.tools_status_computer_use_grant_failed)
+    val grantStartedMessage = stringResource(R.string.tools_status_computer_use_grant_started)
 
     ScreenScaffold(
         "Status",
         "Live overview · auto-refresh 10s · updated $lastUpdatedLabel",
         actions = {
-            TextButton(onClick = {
-                refreshing = true
-                tick++
-            }) { Text("Refresh") }
+            IconButton(onClick = { actionsExpanded = true }) {
+                Icon(
+                    Icons.Filled.MoreVert,
+                    contentDescription = stringResource(R.string.tools_status_more_actions),
+                )
+            }
+            DropdownMenu(
+                expanded = actionsExpanded,
+                onDismissRequest = { actionsExpanded = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.tools_status_refresh)) },
+                    onClick = {
+                        actionsExpanded = false
+                        refreshing = true
+                        tick++
+                    },
+                )
+            }
         },
     ) {
         when {
@@ -122,14 +232,7 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
                     onRefresh = {
                         refreshing = true
                         scope.launch {
-                            repo.refreshStatus()
-                                .onSuccess { applySuccess(it) }
-                                .onFailure {
-                                    error = it.message
-                                    refreshing = false
-                                }
-                            repo.getSessionsPage(limit = 20)
-                                .onSuccess { currentSessions = it.sessions }
+                            refreshData()
                         }
                     },
                 ) {
@@ -138,7 +241,9 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         item {
-                            SectionCard("Version") {
+                            CollapsibleSection(
+                                title = stringResource(R.string.tools_status_overview),
+                            ) {
                                 Text("Hermes ${s.version ?: "—"}", style = MaterialTheme.typography.titleMedium)
                                 s.release_date?.let {
                                     Text("Released $it", style = MaterialTheme.typography.bodySmall)
@@ -151,10 +256,21 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
                                 s.profile?.let {
                                     Text("Profile: $it", style = MaterialTheme.typography.bodyMedium)
                                 }
+                                val platforms = formatPlatforms(s.gateway?.platforms ?: s.gateway_platforms)
+                                if (platforms.isEmpty()) {
+                                    Text("No platform info", style = MaterialTheme.typography.bodyMedium)
+                                } else {
+                                    platforms.forEach { line ->
+                                        Text(line, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
                             }
                         }
                         item {
-                            SectionCard("Gateway") {
+                            CollapsibleSection(
+                                title = stringResource(R.string.tools_status_gateway),
+                                collapsible = true,
+                            ) {
                                 val gw = s.gateway
                                 // Some dashboard versions nest state, others only
                                 // emit the top-level gateway_running flag.
@@ -180,37 +296,69 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
                             }
                         }
                         item {
-                            SectionCard("Platforms") {
-                                val platforms = formatPlatforms(s.gateway?.platforms ?: s.gateway_platforms)
-                                if (platforms.isEmpty()) {
-                                    Text("No platform info", style = MaterialTheme.typography.bodyMedium)
-                                } else {
-                                    platforms.forEach { line ->
-                                        Text(line, style = MaterialTheme.typography.bodyMedium)
+                            ComputerUseCard(
+                                status = computerUse,
+                                loading = computerUseLoading,
+                                error = computerUseError,
+                                granting = grantingComputerUse,
+                                grantMessage = computerUseGrantMessage,
+                                grantFailed = computerUseGrantFailed,
+                                unavailableMessage = grantUnavailableMessage,
+                                onGrant = {
+                                    if (!grantingComputerUse) {
+                                        grantingComputerUse = true
+                                        computerUseGrantMessage = null
+                                        computerUseGrantFailed = false
+                                        scope.launch {
+                                            runCatching {
+                                                val profile = container.connectionStore.activeProfile()
+                                                    ?.effectiveManagementProfile()
+                                                container.clientFactory.api()
+                                                    .grantComputerUsePermissions(profile)
+                                            }.onSuccess {
+                                                grantingComputerUse = false
+                                                computerUseGrantMessage = grantStartedMessage
+                                            }.onFailure { failure ->
+                                                grantingComputerUse = false
+                                                computerUseGrantFailed = true
+                                                computerUseGrantMessage = if (
+                                                    failure is HttpException && failure.code() == 400
+                                                ) {
+                                                    grantUnavailableMessage
+                                                } else {
+                                                    failure.message ?: grantErrorFallback
+                                                }
+                                            }
+                                        }
                                     }
-                                }
-                            }
+                                },
+                            )
                         }
                         item {
-                            Text(
-                                "Active sessions: ${s.active_sessions ?: "—"}",
-                                style = MaterialTheme.typography.titleMedium,
-                                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
-                            )
-                            Text(
-                                "Recent (up to 20)",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.secondary,
-                            )
-                        }
-                        val recent = (if (currentSessions.isNotEmpty()) currentSessions else s.sessions).take(20)
-                        if (recent.isEmpty()) {
-                            item {
-                                Text("No recent sessions", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        } else {
-                            items(recent, key = { it.id }) { session ->
-                                SessionRow(session, onOpenSession)
+                            val recent = (if (currentSessions.isNotEmpty()) currentSessions else s.sessions).take(20)
+                            CollapsibleSection(
+                                title = stringResource(R.string.tools_status_recent_sessions),
+                                collapsible = true,
+                            ) {
+                                Text(
+                                    "Active sessions: ${s.active_sessions ?: "—"}",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                Text(
+                                    "Recent (up to 20)",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                )
+                                if (recent.isEmpty()) {
+                                    Text(
+                                        "No recent sessions",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                } else {
+                                    recent.forEach { session ->
+                                        SessionRow(session, onOpenSession)
+                                    }
+                                }
                             }
                         }
                         error?.let {
@@ -219,6 +367,128 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ComputerUseCard(
+    status: ComputerUseStatus?,
+    loading: Boolean,
+    error: String?,
+    granting: Boolean,
+    grantMessage: String?,
+    grantFailed: Boolean,
+    unavailableMessage: String,
+    onGrant: () -> Unit,
+) {
+    CollapsibleSection(title = stringResource(R.string.tools_status_computer_use)) {
+        if (loading && status == null) {
+            Text(stringResource(R.string.tools_status_computer_use_loading))
+        }
+        status?.let { computer ->
+            val readinessText = when (computer.ready) {
+                true -> stringResource(R.string.tools_status_computer_use_ready)
+                false -> stringResource(R.string.tools_status_computer_use_not_ready)
+                null -> stringResource(R.string.tools_status_computer_use_unknown)
+            }
+            Text(
+                stringResource(R.string.tools_status_computer_use_readiness, readinessText),
+                style = MaterialTheme.typography.titleMedium,
+                color = when (computer.ready) {
+                    true -> MaterialTheme.colorScheme.primary
+                    false -> MaterialTheme.colorScheme.error
+                    null -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Text(
+                stringResource(
+                    R.string.tools_status_computer_use_platform,
+                    computer.platform ?: stringResource(R.string.tools_status_unknown_value),
+                ),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            computer.version?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    stringResource(R.string.tools_status_computer_use_driver, it),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            if (computer.platformSupported == false) {
+                Text(
+                    stringResource(R.string.tools_status_computer_use_unsupported),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            if (computer.installed == false) {
+                Text(
+                    stringResource(R.string.tools_status_computer_use_driver_missing),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+
+            if (computer.checks.isNotEmpty()) {
+                Text(
+                    stringResource(R.string.tools_status_computer_use_doctor),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+                computer.checks.forEach { check ->
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            listOfNotNull(
+                                check.label.takeIf(String::isNotBlank),
+                                check.status.takeIf(String::isNotBlank),
+                            ).joinToString(" · ").ifBlank {
+                                stringResource(R.string.tools_status_unknown_value)
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        check.message.takeIf(String::isNotBlank)?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+
+            when {
+                computer.canGrant == true -> {
+                    OutlinedButton(onClick = onGrant, enabled = !granting) {
+                        Text(
+                            if (granting) {
+                                stringResource(R.string.tools_status_computer_use_granting)
+                            } else {
+                                stringResource(R.string.tools_status_computer_use_grant)
+                            },
+                        )
+                    }
+                }
+                computer.canGrant == false && computer.platform != "darwin" -> {
+                    Text(unavailableMessage, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            grantMessage?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (grantFailed) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                )
+            }
+            computer.error?.takeIf { it.isNotBlank() }?.let {
+                Text(it, color = MaterialTheme.colorScheme.error)
+            }
+        }
+        error?.let {
+            Text(
+                it.ifBlank { stringResource(R.string.tools_status_computer_use_unavailable) },
+                color = MaterialTheme.colorScheme.error,
+            )
         }
     }
 }
@@ -263,29 +533,6 @@ private fun SessionRow(session: SessionSummary, onOpenSession: ((String) -> Unit
                     modifier = Modifier.padding(top = 4.dp),
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun SectionCard(title: String, content: @Composable () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-        ),
-        shape = MaterialTheme.shapes.medium,
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(
-                title,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.secondary,
-            )
-            content()
         }
     }
 }

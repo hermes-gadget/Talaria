@@ -16,6 +16,7 @@
 
 package com.hermesgadget.talaria.feature.terminal
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -54,13 +56,16 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
+import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 
 @Composable
@@ -77,8 +82,13 @@ fun TerminalScreen(
     val outputScroll = rememberScrollState()
     val horizontalScroll = rememberScrollState()
 
-    LaunchedEffect(hasConnection) {
-        if (hasConnection) vm.ensureStarted() else onNeedConnection()
+    LaunchedEffect(hasConnection, activeId) {
+        if (hasConnection) {
+            vm.ensureStarted()
+            vm.loadBackends()
+        } else {
+            onNeedConnection()
+        }
     }
     LaunchedEffect(lifecycleOwner, hasConnection) {
         if (!hasConnection) return@LaunchedEffect
@@ -116,6 +126,11 @@ fun TerminalScreen(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            TerminalBackendPanel(
+                ui = ui,
+                onSelect = vm::selectBackend,
+                onRetry = vm::loadBackends,
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -223,6 +238,101 @@ fun TerminalScreen(
                 ) {
                     Icon(Icons.Filled.Send, contentDescription = "Send command")
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TerminalBackendPanel(
+    ui: TerminalUiState,
+    onSelect: (String) -> Unit,
+    onRetry: () -> Unit,
+) {
+    CollapsibleSection(
+        title = stringResource(R.string.tools_terminal_backend_title),
+        collapsible = true,
+    ) {
+        val response = ui.backends
+        if (ui.backendsLoading && response == null) {
+            Text(stringResource(R.string.tools_terminal_backend_loading))
+        }
+        if (response == null && !ui.backendsLoading) {
+            Text(
+                ui.backendError?.takeIf(String::isNotBlank)
+                    ?: stringResource(R.string.tools_terminal_backend_error),
+                color = MaterialTheme.colorScheme.error,
+            )
+            TextButton(onClick = onRetry) {
+                Text(stringResource(R.string.tools_terminal_backend_retry))
+            }
+        }
+        response?.let { backends ->
+            Text(
+                stringResource(
+                    R.string.tools_terminal_backend_active,
+                    backends.active.ifBlank { stringResource(R.string.tools_terminal_backend_unknown) },
+                ),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+            backends.backends.forEach { backend ->
+                val selectable = ui.backendSelecting == null && !backend.active
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = selectable) {
+                            onSelect(backend.name)
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    RadioButton(
+                        selected = backend.active,
+                        onClick = if (selectable) {
+                            { onSelect(backend.name) }
+                        } else {
+                            null
+                        },
+                        enabled = selectable || backend.active,
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            backend.label.ifBlank { backend.name },
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        backend.description.takeIf(String::isNotBlank)?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text(
+                            stringResource(
+                                R.string.tools_terminal_backend_status,
+                                backend.status.replace('_', ' ').ifBlank {
+                                    stringResource(R.string.tools_terminal_backend_unknown)
+                                },
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = when (backend.status.lowercase()) {
+                                "ready" -> MaterialTheme.colorScheme.primary
+                                "unavailable" -> MaterialTheme.colorScheme.error
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                        backend.detail.takeIf(String::isNotBlank)?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    if (ui.backendSelecting == backend.name) {
+                        Text(
+                            stringResource(R.string.tools_terminal_backend_selecting),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                        )
+                    }
+                }
+            }
+            ui.backendError?.takeIf(String::isNotBlank)?.let {
+                Text(it, color = MaterialTheme.colorScheme.error)
             }
         }
     }
