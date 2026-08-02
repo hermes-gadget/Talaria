@@ -492,4 +492,60 @@ interface HermesApi {
         @Body body: JsonObject,
         @Query("profile") profile: String? = null,
     ): JsonElement
+
+    // --- Provider onboarding ---
+
+    /** Newer gateways expose this catalog; older v0.19.x uses model/options. */
+    @GET("api/providers")
+    suspend fun getProviders(): JsonElement
+
+    @GET("api/providers/custom-endpoints")
+    suspend fun getCustomEndpoints(): JsonElement
+
+    /** Hermes v0.19.1 calls this operation POST (the dashboard docs say upsert). */
+    @POST("api/providers/custom-endpoints")
+    suspend fun upsertCustomEndpoint(@Body body: JsonObject): JsonElement
+
+    @POST("api/providers/custom-endpoints/validate")
+    suspend fun validateCustomEndpoint(@Body body: JsonObject): JsonElement
+
+    @POST("api/providers/custom-endpoints/{endpoint_id}/activate")
+    suspend fun activateCustomEndpoint(@Path("endpoint_id") endpointId: String): JsonElement
+
+    @DELETE("api/providers/custom-endpoints/{endpoint_id}")
+    suspend fun deleteCustomEndpoint(@Path("endpoint_id") endpointId: String): JsonElement
+
+    @POST("api/providers/validate")
+    suspend fun validateProvider(@Body body: JsonObject): JsonElement
+
+    @GET("api/credentials/pool")
+    suspend fun getCredentialPool(): JsonElement
+
+    @POST("api/credentials/pool")
+    suspend fun addCredentialPoolEntry(@Body body: JsonObject): JsonElement
+
+    @DELETE("api/credentials/pool/{provider}/{index}")
+    suspend fun deleteCredentialPoolEntry(
+        @Path("provider") provider: String,
+        @Path("index") index: Int,
+    ): JsonElement
+
+    /** Read-only provider OAuth catalog; individual flow actions are user initiated. */
+    @GET("api/providers/oauth")
+    suspend fun getProviderOAuth(): JsonElement
+
+    @POST("api/providers/oauth/{provider_id}/start")
+    suspend fun startProviderOAuth(@Path("provider_id") providerId: String): JsonElement
+
+    @POST("api/providers/oauth/{provider_id}/submit")
+    suspend fun submitProviderOAuth(
+        @Path("provider_id") providerId: String,
+        @Body body: JsonObject,
+    ): JsonElement
+
+    @GET("api/providers/oauth/{provider_id}/poll/{session_id}")
+    suspend fun pollProviderOAuth(
+        @Path("provider_id") providerId: String,
+        @Path("session_id") sessionId: String,
+    ): JsonElement
 }

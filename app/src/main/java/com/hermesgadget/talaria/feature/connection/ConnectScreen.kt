@@ -89,6 +89,9 @@ fun ConnectScreen(
     LaunchedEffect(initialProfile) {
         vm.applyDeepLinkProfile(initialProfile)
     }
+    LaunchedEffect(Unit) {
+        vm.loadProviderOnboarding()
+    }
 
     ScreenScaffold(
         title = "Talaria",
@@ -262,6 +265,14 @@ fun ConnectScreen(
                 Text("Diagnosis", style = MaterialTheme.typography.titleMedium)
                 Text(report, style = MaterialTheme.typography.bodySmall)
             }
+            ProviderOnboardingSection(
+                ui = ui,
+                vm = vm,
+                openBrowser = { url ->
+                    CustomTabsIntent.Builder().build()
+                        .launchUrl(context, android.net.Uri.parse(url))
+                },
+            )
             if (profiles.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Text("Saved connections", style = MaterialTheme.typography.titleLarge)
