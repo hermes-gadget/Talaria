@@ -35,6 +35,7 @@ object Routes {
     const val SESSION_DETAIL = "session/{id}"
     const val MANAGE_HOME = "manage_home"
     const val STATUS = "status"
+    const val COMMAND_CENTER = "command_center"
     const val CONFIG = "config"
     const val API_KEYS = "api_keys"
     const val SESSIONS = "sessions"

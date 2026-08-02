@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Forum
@@ -91,6 +92,7 @@ private val manageSections = listOf(
         "Agents",
         listOf(
             ManageItem("Status", "Version, gateway, live sessions", Routes.STATUS, Icons.Filled.MonitorHeart),
+            ManageItem("Command Center", "Status, logs, usage & maintenance", Routes.COMMAND_CENTER, Icons.Filled.Dashboard),
             ManageItem("Sessions", "Browse, search, resume, export", Routes.SESSIONS, Icons.Filled.Forum),
             ManageItem("Artifacts", "Images and files from agent sessions", Routes.ARTIFACTS, Icons.Filled.Folder),
             ManageItem("Cron", "Scheduled agent jobs", Routes.CRON, Icons.Filled.Schedule),
