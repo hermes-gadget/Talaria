@@ -48,6 +48,26 @@ Talaria’s target is feature parity for remote-capable Hermes chat and manageme
 - Actionable, thread-aware notifications (inline reply, pairing approval, 10 channels, quiet hours, per-agent channels, scoped active-turn foreground monitor).
 - Keystore-encrypted credentials (AES256-GCM/SIV), optional TLS pinning per profile, Room offline cache, doze-aware sync workers, connection doctor, OIDC PKCE with silent refresh, edge-to-edge Material You UI.
 
+## Design direction: progressive disclosure (decluttered, app-wide)
+
+**Nothing on screen at once.** Talaria surfaces hide secondary detail behind groups, collapsible sections, and overflow menus; a screen should read at a glance and drill in on demand. This is the app-wide design standard, not a per-screen preference.
+
+Patterns (established in the `3de87d8` UI decluttering merge, 2026-08-02):
+
+- **Group → drill down.** Manage was a 25-row flat list; it is now five categories (Agents / Capabilities / Workspace / Messaging / System) that open focused sub-lists. Every destination stays one command-palette search away, so the extra tap only affects browsing, not power use.
+- **Overflow, don't stack.** Chat's top bar dropped 8 icon buttons to a contextual slot (interrupt while working, transcript toggle while idle) plus sessions/steer, with the rest (agent activity, PiP, compact, edit title) behind one overflow menu.
+- **Section, don't wall.** You's flat wall of switches is grouped into Appearance / Notifications / Voice & speech / Data & privacy, with alert toggles moved to the dedicated notification screen and a uniform row height.
+- **Collapse by default.** System's maintenance groups (Doctor, Security audit, Backup, Import, Hooks, Debug share, Raw YAML, Update check, Portal) are collapsible and start collapsed.
+- **Right home for settings.** Themes and Voice moved from Manage to You — device-level preferences live with the device; Manage owns the connected Hermes host.
+
+### UX backlog for the declutter rollout
+
+| # | Item | Status | Priority |
+|---|------|--------|----------|
+| 18 | Extract the collapsible `Section` composable (currently private in SystemScreen) into `ui/components` and reuse it across Manage detail screens | ❌ | MEDIUM |
+| 19 | Apply progressive disclosure to remaining flat surfaces: Status, Config, Command Center, Cron, Skills, MCP, Files, Logs, Analytics, Sessions | ❌ | MEDIUM |
+| 20 | Audit every screen for "everything at once" violations before new features land (design gate for the v0.6 UX backlog) | ❌ | MEDIUM |
+
 ## Next remote-capable parity work (v0.6 plan)
 
 > Status per item verified against source and the live Hermes `v0.19.1` API (2026-08-02). Priorities are ordered by user value and destructive-operation risk. All server-side routes listed below are confirmed present in the live `/openapi.json`; none have Talaria UI coverage yet.
