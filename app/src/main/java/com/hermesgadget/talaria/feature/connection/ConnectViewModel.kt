@@ -26,6 +26,7 @@ import com.hermesgadget.talaria.core.network.WsAuthHelper
 import com.hermesgadget.talaria.core.network.NativeOidcLogin
 import com.hermesgadget.talaria.core.network.NativeOidcProvider
 import com.hermesgadget.talaria.domain.model.AuthMode
+import com.hermesgadget.talaria.domain.model.CredentialPoolEntry
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -33,6 +34,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 data class ConnectUiState(
     val name: String = "Home Hermes",
@@ -54,6 +57,14 @@ data class ConnectUiState(
     val oidcSigningIn: Boolean = false,
     val oidcProviders: List<NativeOidcProvider> = emptyList(),
     val oidcProvider: String = "",
+    val providerSection: ProviderSectionState = ProviderSectionState.Idle,
+    val providerDraft: ProviderDraft = ProviderDraft(),
+    val providerBusy: ProviderBusyAction? = null,
+    val providerNotice: String? = null,
+    val providerValidation: ProviderValidationUi? = null,
+    val customEndpointValidation: ProviderValidationUi? = null,
+    val providerOAuthSession: ProviderOAuthSession? = null,
+    val providerConfirmation: ProviderConfirmation? = null,
 )
 
 class ConnectViewModel(
@@ -68,6 +79,558 @@ class ConnectViewModel(
 
     fun update(transform: (ConnectUiState) -> ConnectUiState) {
         _ui.value = transform(_ui.value)
+    }
+
+    fun updateProviderDraft(transform: (ProviderDraft) -> ProviderDraft) {
+        _ui.value = _ui.value.copy(providerDraft = transform(_ui.value.providerDraft))
+    }
+
+    /** Load provider settings for an already-saved connection, without changing the connection flow. */
+    fun loadProviderOnboarding() {
+        if (repo.active() == null) {
+            _ui.value = _ui.value.copy(
+                providerSection = ProviderSectionState.Failure(
+                    "Save a connection before loading provider settings",
+                ),
+                providerBusy = null,
+            )
+            return
+        }
+        viewModelScope.launch {
+            val previous = providerContent(_ui.value.providerSection)
+            _ui.value = _ui.value.copy(
+                providerSection = ProviderSectionState.Loading,
+                providerBusy = ProviderBusyAction.LOAD,
+                providerNotice = null,
+            )
+            runCatching { loadProviderData() }
+                .onSuccess { content ->
+                    _ui.value = _ui.value.copy(
+                        providerSection = ProviderSectionState.Content(content),
+                        providerBusy = null,
+                    )
+                }
+                .onFailure { failure ->
+                    _ui.value = _ui.value.copy(
+                        providerSection = ProviderSectionState.Failure(
+                            failure.message ?: "Could not load provider settings",
+                            previous,
+                        ),
+                        providerBusy = null,
+                    )
+                }
+        }
+    }
+
+    /** Persist the connection draft but stay on Connect so the provider step can continue. */
+    fun saveConnectionAndLoadProviders() {
+        val snapshot = _ui.value
+        viewModelScope.launch {
+            _ui.value = snapshot.copy(
+                providerSection = ProviderSectionState.Loading,
+                providerBusy = ProviderBusyAction.LOAD,
+                providerNotice = null,
+                error = null,
+            )
+            try {
+                val profile = saveConnectionDraft(snapshot)
+                draftProfileId = profile.id
+                repo.setActive(profile.id)
+                val content = loadProviderData()
+                _ui.value = _ui.value.copy(
+                    providerSection = ProviderSectionState.Content(content),
+                    providerBusy = null,
+                    statusLine = "Saved · provider settings ready",
+                )
+            } catch (t: Throwable) {
+                _ui.value = _ui.value.copy(
+                    providerSection = ProviderSectionState.Failure(
+                        t.message ?: "Could not prepare provider settings",
+                        providerContent(_ui.value.providerSection),
+                    ),
+                    providerBusy = null,
+                    error = t.message,
+                )
+            }
+        }
+    }
+
+    fun validateProviderCredential() {
+        val draft = _ui.value.providerDraft
+        val provider = draft.credentialProvider.ifBlank { draft.selectedProvider }.trim()
+        val key = draft.credentialEnvKey.trim().ifBlank { providerEnvKey(provider) }
+        val apiKey = draft.credentialApiKey.trim()
+        if (provider.isBlank()) {
+            _ui.value = _ui.value.copy(
+                providerValidation = ProviderValidationUi(false, false, "Choose a provider first"),
+            )
+            return
+        }
+        if (apiKey.isBlank()) {
+            _ui.value = _ui.value.copy(
+                providerValidation = ProviderValidationUi(false, false, "Enter an API key to validate"),
+            )
+            return
+        }
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(
+                providerBusy = ProviderBusyAction.VALIDATE_PROVIDER,
+                providerValidation = null,
+            )
+            try {
+                val response = providerApi().validateProvider(buildJsonObject {
+                    put("key", key)
+                    put("value", apiKey)
+                    put("api_key", apiKey)
+                })
+                val result = parseProviderValidation(response)
+                _ui.value = _ui.value.copy(
+                    providerBusy = null,
+                    providerValidation = ProviderValidationUi(result.ok, result.reachable, validationMessage(result)),
+                )
+            } catch (t: Throwable) {
+                _ui.value = _ui.value.copy(
+                    providerBusy = null,
+                    providerValidation = ProviderValidationUi(
+                        ok = false,
+                        reachable = false,
+                        message = "Provider validation is unavailable on this Hermes version; enter the key to save it. (${t.message ?: "request failed"})",
+                    ),
+                )
+            }
+        }
+    }
+
+    fun validateCustomEndpoint() {
+        val draft = _ui.value.providerDraft
+        val inputError = validateCustomEndpointInput(draft.endpointName, draft.endpointBaseUrl, draft.endpointModel)
+        if (inputError != null) {
+            _ui.value = _ui.value.copy(
+                customEndpointValidation = ProviderValidationUi(false, false, inputError),
+            )
+            return
+        }
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(
+                providerBusy = ProviderBusyAction.VALIDATE_ENDPOINT,
+                customEndpointValidation = null,
+            )
+            try {
+                val response = providerApi().validateCustomEndpoint(customEndpointBody(draft))
+                val result = parseProviderValidation(response)
+                _ui.value = _ui.value.copy(
+                    providerBusy = null,
+                    customEndpointValidation = ProviderValidationUi(result.ok, result.reachable, validationMessage(result)),
+                )
+            } catch (t: Throwable) {
+                _ui.value = _ui.value.copy(
+                    providerBusy = null,
+                    customEndpointValidation = ProviderValidationUi(
+                        false,
+                        false,
+                        "Endpoint validation failed: ${t.message ?: "request failed"}",
+                    ),
+                )
+            }
+        }
+    }
+
+    fun saveCustomEndpoint() {
+        val draft = _ui.value.providerDraft
+        val inputError = validateCustomEndpointInput(draft.endpointName, draft.endpointBaseUrl, draft.endpointModel)
+        if (inputError != null) {
+            _ui.value = _ui.value.copy(
+                customEndpointValidation = ProviderValidationUi(false, false, inputError),
+            )
+            return
+        }
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(providerBusy = ProviderBusyAction.SAVE_ENDPOINT)
+            try {
+                providerApi().upsertCustomEndpoint(customEndpointBody(draft))
+                refreshProviderContent("Custom endpoint saved")
+                clearEndpointDraft()
+            } catch (t: Throwable) {
+                providerFailure(t)
+            }
+        }
+    }
+
+    fun editCustomEndpoint(endpoint: com.hermesgadget.talaria.domain.model.CustomEndpoint) {
+        updateProviderDraft {
+            it.copy(
+                endpointId = endpoint.id,
+                endpointName = endpoint.name,
+                endpointBaseUrl = endpoint.baseUrl,
+                endpointModel = endpoint.model,
+                endpointApiKey = "",
+                endpointContextLength = endpoint.contextLength?.toString().orEmpty(),
+                endpointDiscoverModels = endpoint.discoverModels,
+                endpointMakeDefault = endpoint.makeDefault,
+            )
+        }
+        _ui.value = _ui.value.copy(customEndpointValidation = null, providerNotice = "Editing ${endpoint.name}")
+    }
+
+    fun activateCustomEndpoint(endpointId: String) {
+        if (endpointId.isBlank()) return
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(providerBusy = ProviderBusyAction.ACTIVATE_ENDPOINT)
+            try {
+                providerApi().activateCustomEndpoint(endpointId)
+                refreshProviderContent("Custom endpoint activated")
+            } catch (t: Throwable) {
+                providerFailure(t)
+            }
+        }
+    }
+
+    fun requestRemoveCustomEndpoint(endpoint: com.hermesgadget.talaria.domain.model.CustomEndpoint) {
+        _ui.value = _ui.value.copy(providerConfirmation = ProviderConfirmation.RemoveEndpoint(endpoint))
+    }
+
+    fun editCredential(provider: String, entry: CredentialPoolEntry) {
+        updateProviderDraft {
+            it.copy(
+                credentialProvider = provider,
+                selectedProvider = provider,
+                credentialEnvKey = "",
+                credentialLabel = entry.label,
+                credentialApiKey = "",
+                editingCredential = entry,
+            )
+        }
+        _ui.value = _ui.value.copy(providerNotice = "Enter a new key to replace ${entry.label.ifBlank { "this credential" }}")
+    }
+
+    fun clearCredentialDraft() {
+        updateProviderDraft {
+            it.copy(
+                credentialProvider = "",
+                credentialEnvKey = "",
+                credentialLabel = "",
+                credentialApiKey = "",
+                editingCredential = null,
+            )
+        }
+    }
+
+    fun requestSaveCredential() {
+        val draft = _ui.value.providerDraft
+        val provider = draft.credentialProvider.ifBlank { draft.selectedProvider }.trim()
+        if (provider.isBlank()) {
+            _ui.value = _ui.value.copy(providerNotice = "Choose a provider before saving a credential")
+            return
+        }
+        if (draft.credentialApiKey.isBlank()) {
+            _ui.value = _ui.value.copy(providerNotice = "Enter an API key before saving a credential")
+            return
+        }
+        _ui.value = _ui.value.copy(
+            providerConfirmation = ProviderConfirmation.SaveCredential(provider, draft.editingCredential),
+        )
+    }
+
+    fun requestRemoveCredential(provider: String, entry: CredentialPoolEntry) {
+        _ui.value = _ui.value.copy(providerConfirmation = ProviderConfirmation.RemoveCredential(provider, entry))
+    }
+
+    fun cancelProviderConfirmation() {
+        _ui.value = _ui.value.copy(providerConfirmation = null)
+    }
+
+    fun confirmProviderAction() {
+        val action = _ui.value.providerConfirmation ?: return
+        _ui.value = _ui.value.copy(providerConfirmation = null)
+        viewModelScope.launch {
+            try {
+                when (action) {
+                    is ProviderConfirmation.SaveCredential -> saveCredentialNow(action.provider, action.replacing)
+                    is ProviderConfirmation.RemoveCredential -> {
+                        _ui.value = _ui.value.copy(providerBusy = ProviderBusyAction.DELETE_CREDENTIAL)
+                        providerApi().deleteCredentialPoolEntry(action.provider, action.entry.index)
+                        refreshProviderContent("Credential removed")
+                    }
+                    is ProviderConfirmation.RemoveEndpoint -> {
+                        _ui.value = _ui.value.copy(providerBusy = ProviderBusyAction.DELETE_ENDPOINT)
+                        providerApi().deleteCustomEndpoint(action.endpoint.id)
+                        refreshProviderContent("Custom endpoint removed")
+                    }
+                }
+            } catch (t: Throwable) {
+                providerFailure(t)
+            }
+        }
+    }
+
+    fun startProviderOAuth(providerId: String, openBrowser: (String) -> Unit) {
+        if (providerId.isBlank()) return
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(
+                providerBusy = ProviderBusyAction.START_OAUTH,
+                providerNotice = null,
+            )
+            try {
+                val response = parseProviderOAuthStart(providerApi().startProviderOAuth(providerId))
+                val url = response.verificationUriComplete
+                    ?: response.authUrl
+                    ?: response.authorizationUrl
+                    ?: response.verificationUri
+                if (url != null) openBrowser(url)
+                _ui.value = _ui.value.copy(
+                    providerBusy = null,
+                    providerOAuthSession = ProviderOAuthSession(
+                        providerId = providerId,
+                        sessionId = response.sessionId,
+                        authUrl = response.authUrl ?: response.authorizationUrl,
+                        verificationUri = response.verificationUri,
+                        verificationUriComplete = response.verificationUriComplete,
+                        userCode = response.userCode,
+                        status = response.status,
+                        message = response.message
+                            ?: if (url == null) "Hermes did not return an authorization URL" else null,
+                    ),
+                    providerDraft = _ui.value.providerDraft.copy(
+                        oauthProviderId = providerId,
+                        oauthCode = "",
+                    ),
+                )
+            } catch (t: Throwable) {
+                _ui.value = _ui.value.copy(
+                    providerBusy = null,
+                    providerNotice = "OAuth is unavailable on this Hermes version; enter an API key below. (${t.message ?: "request failed"})",
+                )
+            }
+        }
+    }
+
+    fun submitProviderOAuth() {
+        val session = _ui.value.providerOAuthSession
+        val code = _ui.value.providerDraft.oauthCode.trim()
+        val sessionId = session?.sessionId
+        if (session == null || sessionId.isNullOrBlank()) {
+            _ui.value = _ui.value.copy(providerNotice = "Start the provider OAuth flow before submitting a code")
+            return
+        }
+        if (code.isBlank()) {
+            _ui.value = _ui.value.copy(providerNotice = "Paste the authorization code first")
+            return
+        }
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(providerBusy = ProviderBusyAction.SUBMIT_OAUTH, providerNotice = null)
+            try {
+                val response = parseProviderOAuthPoll(
+                    providerApi().submitProviderOAuth(
+                        session.providerId,
+                        buildJsonObject {
+                            put("session_id", sessionId)
+                            put("code", code)
+                        },
+                    ),
+                )
+                _ui.value = _ui.value.copy(
+                    providerBusy = null,
+                    providerOAuthSession = session.copy(status = response.status, message = response.message ?: response.detail),
+                    providerNotice = response.message ?: response.detail,
+                )
+                if (oauthCompleted(response.status, response.loggedIn)) refreshProviderContent("Provider OAuth connected")
+            } catch (t: Throwable) {
+                _ui.value = _ui.value.copy(
+                    providerBusy = null,
+                    providerNotice = "OAuth code submission failed: ${t.message ?: "request failed"}",
+                )
+            }
+        }
+    }
+
+    fun pollProviderOAuth() {
+        val session = _ui.value.providerOAuthSession
+        val sessionId = session?.sessionId
+        if (session == null || sessionId.isNullOrBlank()) return
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(providerBusy = ProviderBusyAction.POLL_OAUTH, providerNotice = null)
+            try {
+                val response = parseProviderOAuthPoll(
+                    providerApi().pollProviderOAuth(session.providerId, sessionId),
+                )
+                _ui.value = _ui.value.copy(
+                    providerBusy = null,
+                    providerOAuthSession = session.copy(status = response.status, message = response.message ?: response.detail),
+                    providerNotice = response.message ?: response.detail,
+                )
+                if (oauthCompleted(response.status, response.loggedIn)) refreshProviderContent("Provider OAuth connected")
+            } catch (t: Throwable) {
+                _ui.value = _ui.value.copy(
+                    providerBusy = null,
+                    providerNotice = "OAuth status check failed: ${t.message ?: "request failed"}",
+                )
+            }
+        }
+    }
+
+    fun clearProviderOAuthSession() {
+        _ui.value = _ui.value.copy(providerOAuthSession = null)
+    }
+
+    private fun providerApi() = TalariaApp.instance.container.clientFactory.api()
+
+    private suspend fun saveConnectionDraft(s: ConnectUiState): ConnectionProfile = repo.save(
+        name = s.name,
+        baseUrl = s.baseUrl,
+        authMode = s.authMode,
+        username = s.username.ifBlank { null },
+        authProvider = if (s.authMode == AuthMode.OIDC_BROWSER) s.oidcProvider else s.passwordProvider,
+        sessionToken = s.sessionToken.ifBlank { null },
+        password = s.password.ifBlank { null },
+        bearerToken = s.bearerToken.ifBlank { null },
+        managementProfile = s.managementProfile,
+        pinSha256 = s.pinSha256.ifBlank { null },
+        existingId = draftProfileId,
+    )
+
+    private suspend fun loadProviderData(): ProviderOnboardingContent {
+        val api = providerApi()
+        val notices = mutableListOf<String>()
+        val directCatalog = runCatching { api.getProviders() }
+        val catalog = if (directCatalog.isSuccess) {
+            val parsed = parseProviderCatalog(directCatalog.getOrThrow())
+            if (parsed.providers.isNotEmpty()) {
+                parsed
+            } else {
+                notices += "This Hermes version returned no /api/providers entries; showing /api/model/options."
+                parseProviderCatalog(api.getModelOptions())
+            }
+        } else {
+            notices += "This Hermes version does not expose /api/providers; showing /api/model/options."
+            runCatching { parseProviderCatalog(api.getModelOptions()) }.getOrElse { fallbackFailure ->
+                throw IllegalStateException(
+                    "Provider catalog unavailable: ${fallbackFailure.message ?: directCatalog.exceptionOrNull()?.message}",
+                    fallbackFailure,
+                )
+            }
+        }
+
+        val endpoints = runCatching { parseCustomEndpoints(api.getCustomEndpoints()) }
+            .getOrElse {
+                notices += "Custom endpoints are unavailable on this Hermes version."
+                CustomEndpointSnapshot()
+            }
+        val credentials = runCatching { parseCredentialPool(api.getCredentialPool()) }
+            .getOrElse {
+                notices += "Credential pools are unavailable on this Hermes version."
+                CredentialPoolSnapshot()
+            }
+        val oauth = runCatching { parseOAuthProviders(api.getProviderOAuth()) }
+            .getOrElse {
+                notices += "Provider OAuth is unavailable; use an API key instead."
+                emptyList()
+            }
+        return ProviderOnboardingContent(
+            providers = catalog.providers,
+            activeProvider = catalog.activeProvider,
+            activeModel = catalog.activeModel,
+            customEndpoints = endpoints.endpoints,
+            currentEndpointProvider = endpoints.current?.provider,
+            currentEndpointModel = endpoints.current?.model,
+            currentEndpointBaseUrl = endpoints.current?.baseUrl,
+            credentialPools = credentials.providers,
+            oauthProviders = oauth,
+            notices = notices,
+        )
+    }
+
+    private suspend fun refreshProviderContent(message: String) {
+        val content = loadProviderData()
+        _ui.value = _ui.value.copy(
+            providerSection = ProviderSectionState.Content(content),
+            providerBusy = null,
+            providerNotice = message,
+            providerValidation = null,
+            customEndpointValidation = null,
+        )
+    }
+
+    private fun providerFailure(failure: Throwable) {
+        _ui.value = _ui.value.copy(
+            providerSection = ProviderSectionState.Failure(
+                failure.message ?: "Provider operation failed",
+                providerContent(_ui.value.providerSection),
+            ),
+            providerBusy = null,
+        )
+    }
+
+    private fun clearEndpointDraft() {
+        updateProviderDraft {
+            it.copy(
+                endpointId = "",
+                endpointName = "",
+                endpointBaseUrl = "",
+                endpointModel = "",
+                endpointApiKey = "",
+                endpointContextLength = "",
+                endpointDiscoverModels = true,
+                endpointMakeDefault = false,
+            )
+        }
+    }
+
+    private fun customEndpointBody(draft: ProviderDraft) = buildJsonObject {
+        draft.endpointId.trim().takeIf { it.isNotBlank() }?.let { put("id", it) }
+        put("name", draft.endpointName.trim())
+        put("base_url", draft.endpointBaseUrl.trim())
+        put("model", draft.endpointModel.trim())
+        draft.endpointApiKey.trim().takeIf { it.isNotBlank() }?.let { put("api_key", it) }
+        draft.endpointContextLength.toIntOrNull()?.takeIf { it > 0 }?.let { put("context_length", it) }
+        put("discover_models", draft.endpointDiscoverModels)
+        put("make_default", draft.endpointMakeDefault)
+    }
+
+    private suspend fun saveCredentialNow(provider: String, replacing: CredentialPoolEntry?) {
+        val draft = _ui.value.providerDraft
+        _ui.value = _ui.value.copy(providerBusy = ProviderBusyAction.SAVE_CREDENTIAL)
+        providerApi().addCredentialPoolEntry(buildJsonObject {
+            put("provider", provider)
+            put("api_key", draft.credentialApiKey.trim())
+            draft.credentialLabel.trim().takeIf { it.isNotBlank() }?.let { put("label", it) }
+        })
+        // The live API has no edit verb. Add first so a failed replacement leaves
+        // the old credential usable, then remove the confirmed old row.
+        replacing?.let { providerApi().deleteCredentialPoolEntry(provider, it.index) }
+        refreshProviderContent(if (replacing == null) "Credential added" else "Credential replaced")
+        clearCredentialDraft()
+    }
+
+    private fun providerEnvKey(provider: String): String = provider
+        .replace(Regex("[^A-Za-z0-9]+"), "_")
+        .trim('_')
+        .uppercase()
+        .let { if (it.isBlank()) "PROVIDER_API_KEY" else "${it}_API_KEY" }
+
+    private fun validationMessage(result: com.hermesgadget.talaria.domain.model.ProviderValidationResponse): String =
+        result.message.ifBlank {
+            when {
+                result.ok -> "Provider accepted the credential"
+                result.reachable -> "Provider rejected the credential"
+                else -> "Provider could not be reached"
+            }
+        }
+
+    private fun oauthCompleted(status: String?, loggedIn: Boolean?): Boolean =
+        loggedIn == true || status?.lowercase() in setOf(
+            "complete",
+            "completed",
+            "success",
+            "succeeded",
+            "authenticated",
+            "logged_in",
+        )
+
+    private fun providerContent(state: ProviderSectionState): ProviderOnboardingContent? = when (state) {
+        ProviderSectionState.Idle,
+        ProviderSectionState.Loading -> null
+        is ProviderSectionState.Content -> state.value
+        is ProviderSectionState.Failure -> state.previous
     }
 
     fun saveAndTest(onSuccess: () -> Unit) {
