@@ -17,27 +17,36 @@
 package com.hermesgadget.talaria.car
 
 import androidx.car.app.CarContext
+import androidx.car.app.CarToast
 import androidx.car.app.Screen
 import androidx.car.app.model.Action
+import androidx.car.app.model.CarIcon
 import androidx.car.app.model.CarText
 import androidx.car.app.model.Header
 import androidx.car.app.model.ItemList
 import androidx.car.app.model.ListTemplate
 import androidx.car.app.model.MessageTemplate
+import androidx.car.app.model.Row
 import androidx.car.app.model.Template
 import androidx.car.app.messaging.model.CarMessage
 import androidx.car.app.messaging.model.ConversationCallback
 import androidx.car.app.messaging.model.ConversationItem
 import androidx.core.app.Person
+import androidx.core.graphics.drawable.IconCompat
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.domain.model.SessionSummary
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 
 /**
- * Car home screen: a voice-driven "New agent" conversation at the top,
- * followed by one conversation per active agent session. Voice replies
- * and read actions are provided natively by the templated messaging
- * framework through [ConversationCallback] — no manual input handling.
+ * Car home screen, designed for minimal glances while driving:
+ *
+ * 1. **Create new agent** — a distinct action entry (plus avatar, voice
+ *    via the framework mic). Speaking the first prompt creates the session.
+ * 2. **Quick start** — one-tap rows that kick off a fresh agent with a
+ *    canned prompt. No dictation needed: a single tap while driving.
+ * 3. **Active agent conversations** — one row per live session; voice
+ *    replies via [ConversationCallback].
  */
 class SessionListScreen(carContext: CarContext) : Screen(carContext) {
 
@@ -57,6 +66,29 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
         .setName("Hermes")
         .setKey("hermes_id")
         .build()
+
+    /** Distinct "+" avatar so the create entry reads as an action, not a chat. */
+    private val createPerson: Person = Person.Builder()
+        .setName("Me")
+        .setKey("create_agent")
+        .build()
+
+    private data class QuickStart(val title: String, val prompt: String)
+
+    private val quickStarts = listOf(
+        QuickStart(
+            "Draft a release note",
+            "Draft a release note covering the latest changes.",
+        ),
+        QuickStart(
+            "Summarize my sessions",
+            "Summarize my active agent sessions and what each is working on.",
+        ),
+        QuickStart(
+            "Plan today",
+            "Plan today's work based on my recent activity.",
+        ),
+    )
 
     override fun onGetTemplate(): Template {
         if (conversations == null) {
@@ -82,24 +114,39 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
 
         val itemList = ItemList.Builder()
 
-        // Voice-driven new agent: the framework's reply affordance is the
-        // mic — speaking the first prompt creates the session.
+        // 1) Create-agent entry. The framework's reply affordance is the
+        //    mic — speaking the first prompt creates the session.
         itemList.addItem(
             ConversationItem.Builder(
-                NEW_AGENT_ID,
-                CarText.create("New agent"),
-                selfPerson,
+                CREATE_AGENT_ID,
+                CarText.create("Create new agent"),
+                createPerson,
                 listOf(
                     CarMessage.Builder()
                         .setSender(hermesPerson)
                         .setBody(CarText.create("Tap the mic and say what you want this agent to do."))
+                        .setReceivedTimeEpochMillis(System.currentTimeMillis())
                         .setRead(true)
                         .build(),
                 ),
                 newAgentCallback(),
-            ).build(),
+            )
+                .setIcon(CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_car_add)).build())
+                .build(),
         )
 
+        // 2) Quick-start one-tap actions (no dictation needed while driving).
+        quickStarts.forEach { quick ->
+            itemList.addItem(
+                Row.Builder()
+                    .setTitle(quick.title)
+                    .setImage(CarIcon.APP_ICON)
+                    .setOnClickListener { startQuickAction(quick) }
+                    .build(),
+            )
+        }
+
+        // 3) Active agent conversations.
         conversations.orEmpty().forEach { conversation ->
             val session = conversation.session
             itemList.addItem(
@@ -128,8 +175,16 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
         CarMessage.Builder()
             .setSender(if (message.role == "user") selfPerson else hermesPerson)
             .setBody(CarText.create(message.content.orEmpty().trim().replace('\n', ' ')))
+            .setReceivedTimeEpochMillis(message.timestamp?.toEpochMillis() ?: System.currentTimeMillis())
             .setRead(true)
             .build()
+
+    /** Message timestamps arrive as epoch-seconds-double or ISO-8601 — normalize to millis. */
+    private fun String.toEpochMillis(): Long? =
+        toDoubleOrNull()?.let { d ->
+            // Hermes stores epoch SECONDS (1.78e9); the car API wants MILLIS.
+            if (d < 1_000_000_000_000L) (d * 1000).toLong() else d.toLong()
+        } ?: runCatching { java.time.Instant.parse(this).toEpochMilli() }.getOrNull()
 
     private fun newAgentCallback(): ConversationCallback =
         object : ConversationCallback {
@@ -141,8 +196,17 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
                         CarSessionsRepository.createSession(prompt)
                     }
                     mainExecutor.execute {
-                        error = result.exceptionOrNull()?.message
-                        conversations = null // reload — new session appears as a conversation
+                        result.fold(
+                            onSuccess = {
+                                CarToast.makeText(
+                                    carContext,
+                                    "Agent created — it's in your list.",
+                                    CarToast.LENGTH_LONG,
+                                ).show()
+                            },
+                            onFailure = { error = it.message ?: "Failed to create agent" },
+                        )
+                        conversations = null // reload — the new session appears as a conversation
                         invalidate()
                     }
                 }
@@ -171,6 +235,29 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
             override fun onMarkAsRead() = Unit
         }
 
+    /** One-tap kick-off: create a fresh agent with a canned prompt. */
+    private fun startQuickAction(quick: QuickStart) {
+        executor.execute {
+            val result = kotlinx.coroutines.runBlocking {
+                CarSessionsRepository.createSession(quick.prompt)
+            }
+            mainExecutor.execute {
+                result.fold(
+                    onSuccess = {
+                        CarToast.makeText(
+                            carContext,
+                            "Agent started — it's in your list.",
+                            CarToast.LENGTH_LONG,
+                        ).show()
+                    },
+                    onFailure = { error = it.message ?: "Failed to start agent" },
+                )
+                conversations = null
+                invalidate()
+            }
+        }
+    }
+
     private fun loadConversations() {
         loading = true
         invalidate()
@@ -194,6 +281,6 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
     }
 
     companion object {
-        private const val NEW_AGENT_ID = "talaria-new-agent"
+        private const val CREATE_AGENT_ID = "create-agent"
     }
 }

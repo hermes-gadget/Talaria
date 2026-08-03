@@ -38,9 +38,10 @@ class ChatRepository(
         channelId: String = UUID.randomUUID().toString(),
         cols: Int = 80,
         rows: Int = 24,
+        attachToken: String? = null,
     ): Pair<PtyWebSocketSession, Flow<PtyEvent>> {
         val session = PtyWebSocketSession(clientFactory.webSocketClient(), connectionStore, wsAuth)
-        return session to session.connect(resumeSessionId, channelId, cols, rows)
+        return session to session.connect(resumeSessionId, channelId, cols, rows, attachToken)
     }
 
     suspend fun saveDraft(text: String) {

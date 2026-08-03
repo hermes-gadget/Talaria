@@ -26,6 +26,7 @@ import com.hermesgadget.talaria.ui.navigation.TalariaDeepLinkParser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import java.io.IOException
+import java.util.UUID
 
 private class ReplySent : CancellationException()
 
@@ -45,11 +46,25 @@ class ReplyWorker(
             return Result.failure()
         }
         return try {
-            val (session, flow) = container.chatRepository.openPty(resumeSessionId = resumeSessionId)
-            // Best-effort: wait for connect then send
+            val attachToken = UUID.randomUUID().toString()
+            val (session, flow) = container.chatRepository.openPty(
+                resumeSessionId = resumeSessionId,
+                attachToken = attachToken,
+            )
+            // The TUI is a fresh process per PTY: wait for its first output frame
+            // (the banner) before sending — an immediate send races startup and
+            // the prompt is silently dropped. Brief settle beat, then send.
+            // The socket then closes, but the keep-alive registry keeps the PTY
+            // (and the agent's run) alive server-side.
+            var sent = false
             kotlinx.coroutines.withTimeout(15_000) {
                 flow.collect { event ->
                     if (event is com.hermesgadget.talaria.core.network.PtyEvent.Connected) {
+                        // Connected only marks the WS open; hold until output.
+                    }
+                    if (event is com.hermesgadget.talaria.core.network.PtyEvent.Output && !sent) {
+                        sent = true
+                        kotlinx.coroutines.delay(350)
                         session.sendText(text)
                         session.close()
                         throw ReplySent()
@@ -57,7 +72,7 @@ class ReplyWorker(
                     if (event is com.hermesgadget.talaria.core.network.PtyEvent.Failure) {
                         throw IOException(event.message)
                     }
-                    if (event is com.hermesgadget.talaria.core.network.PtyEvent.Closed) {
+                    if (event is com.hermesgadget.talaria.core.network.PtyEvent.Closed && !sent) {
                         throw IOException("Chat closed before reply was sent (${event.code})")
                     }
                 }

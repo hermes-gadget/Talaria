@@ -23,7 +23,9 @@ import com.hermesgadget.talaria.domain.model.HERMES_DEFAULT_PROFILE
 import com.hermesgadget.talaria.domain.model.SessionMessage
 import com.hermesgadget.talaria.domain.model.SessionSummary
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
+import java.util.UUID
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -108,18 +110,37 @@ object CarSessionsRepository {
     suspend fun createSession(prompt: String): Result<String> =
         runCatching { withTimeout(20_000) { ptySend(resumeSessionId = null, text = prompt) } }
 
-    /** Opens a PTY, waits for connect, sends the text, closes. Returns session key. */
+    /**
+     * Opens a PTY, waits for the TUI banner, sends the text, closes the socket.
+     * The keep-alive registry (attach token) keeps the TUI process running after
+     * the socket closes, so the agent's run completes server-side; the registry
+     * reaper closes the PTY after its TTL.
+     */
     private suspend fun ptySend(resumeSessionId: String?, text: String): String {
-        val (session, flow) = container.chatRepository.openPty(resumeSessionId = resumeSessionId)
+        val attachToken = UUID.randomUUID().toString()
+        val (session, flow) = container.chatRepository.openPty(
+            resumeSessionId = resumeSessionId,
+            attachToken = attachToken,
+        )
         var sessionKey = ""
+        var sent = false
         try {
             flow.collect { event ->
                 when (event) {
-                    is PtyEvent.Connected -> {
-                        sessionKey = event.sessionKey
-                        session.sendText(text)
-                        session.close()
-                        throw PtySendDone
+                    is PtyEvent.Connected -> sessionKey = event.sessionKey
+                    is PtyEvent.Output -> {
+                        if (!sent && sessionKey.isNotEmpty()) {
+                            sent = true
+                            // The Hermes TUI is a fresh process per PTY; the first
+                            // output frame is its banner, meaning it has mounted
+                            // and is reading stdin. Sending any earlier races its
+                            // startup and the prompt is silently dropped. Brief
+                            // settle beat after the first render, then send.
+                            delay(350)
+                            session.sendText(text)
+                            session.close()
+                            throw PtySendDone
+                        }
                     }
                     is PtyEvent.Failure -> throw IllegalStateException(event.message)
                     is PtyEvent.Closed ->
@@ -127,10 +148,12 @@ object CarSessionsRepository {
                     else -> Unit
                 }
             }
+        } catch (_: PtySendDone) {
+            // Sent; fall through to return. MUST precede the CancellationException
+            // catch — PtySendDone IS a CancellationException, so the generic
+            // catch would swallow it and report a null-message failure.
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: PtySendDone) {
-            // Sent; fall through to return.
         } finally {
             session.close()
         }

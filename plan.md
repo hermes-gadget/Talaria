@@ -17,15 +17,18 @@
 | Emulator testing | Android Automotive OS AVD (`talaria_auto`, android-34-ext9 automotive x86_64) — **capped resources only** (full AAOS boot crashes the VM; regular phone AVDs are fine) |
 | Delegation | MissionDeck agents allowed if needed; Hermes monitors in-session |
 
-**Status update (2026-08-03):** launcher binding FIXED. Root cause:
-AAOS launches templated apps via an *activity* entry point —
-`androidx.car.app.activity.CarAppActivity` (from `app-automotive`) —
-not the CarAppService. Manifest now declares it (exported, no launcher
-filter) and `MainActivity.onCreate` hands off when
-`FEATURE_AUTOMOTIVE` is present. `minCarApiLevel` bumped 2 → 7
-(`ConversationItem` is `@RequiresCarApi(7)`; metadata key is
-`androidx.car.app.minCarApiLevel`). Pending: AAOS emulator
-re-verify + screenshots, commit/push, v0.8.0 tag.
+**Status update (2026-08-03):** ✅ VERIFIED on the AAOS emulator (capped
+boot, no crash): car launcher → CarAppActivity → template host renders
+the real session list (live sessions from the Hermes dashboard, "New
+agent" mic entry, active-only filtering). Fixes: CarAppActivity
+declaration + MainActivity `FEATURE_AUTOMOTIVE` hand-off; minCarApiLevel
+metadata on `<application>` (key is `androidx.car.app.minCarApiLevel`,
+host throws otherwise); `minCarApiLevel` 7 for ConversationItem. Also
+added debug hook `--ez force_phone_ui true` to reach the phone UI on
+AAOS (used to configure the connection on the emulator — SESSION_TOKEN
+auth auto-mints against the local dashboard via `adb reverse`).
+Pending: v0.8.0 tag (Ben's call — release discipline: never tag
+unprompted).
 
 ---
 

@@ -58,6 +58,7 @@ class PtyWebSocketSession(
         channelId: String = UUID.randomUUID().toString(),
         cols: Int = 80,
         rows: Int = 24,
+        attachToken: String? = null,
     ): Flow<PtyEvent> = callbackFlow {
         this@PtyWebSocketSession.channel = channelId
         val profile = connectionStore.activeProfile()
@@ -78,6 +79,7 @@ class PtyWebSocketSession(
                 "channel" to channelId,
                 "profile" to profile.effectiveManagementProfile(),
                 "resume" to resumeSessionId,
+                "attach" to attachToken,
                 "cols" to cols.toString(),
                 "rows" to rows.toString(),
             ),
