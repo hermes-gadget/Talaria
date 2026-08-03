@@ -34,6 +34,11 @@
             android:name="androidx.car.app.minCarApiLevel"
             android:value="7" />
 
+        <!-- Android Auto (phone projection) discovery: capability descriptor. -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

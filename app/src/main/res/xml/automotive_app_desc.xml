@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android Auto (phone projection) capability descriptor. Required for the
+    Android Auto host to discover this app as a templated car app when the
+    phone is connected to a vehicle. AAOS discovers via the CarAppService
+    intent filter; the projection host additionally requires this metadata
+    declared on <application> (com.google.android.gms.car.application).
+    MESSAGING category -> notification + template capabilities.
+-->
+<automotiveApp>
+    <uses name="notification" />
+    <uses name="template" />
+</automotiveApp>
