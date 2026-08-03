@@ -1,26 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
     <!--
-        Release posture: system CAs only and no arbitrary cleartext. The
-        explicit local exceptions support the emulator/loopback development
-        targets; ConnectionRepository and CleartextPolicyInterceptor still
-        require a persisted per-profile decision and reject non-local hosts.
-        TLS pinning is never treated as protection for HTTP.
+        Release posture: system CAs only. Cleartext HTTP stays permitted in
+        the base config because Talaria connects to user-configured
+        self-hosted Hermes hosts (arbitrary LAN IPs such as 192.168.x entered
+        in the Connect screen) which are frequently plain HTTP. The actual
+        cleartext gate is the app-level CleartextPolicyInterceptor
+        (CleartextPolicy): it only allows verified private/local destinations
+        and requires a persisted per-profile decision (allowCleartext), so a
+        static XML ban would reject legitimate LAN hosts before app policy
+        could evaluate them.
 
         User-installed CA certificates are trusted ONLY in debug builds, so a
         release APK cannot be MITM'd by a certificate planted on the device.
+        For HTTPS hosts, per-profile TLS pinning (CertificatePinnerFactory)
+        provides the hostile-network defense.
     -->
-    <base-config cleartextTrafficPermitted="false">
+    <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
-
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">localhost</domain>
-        <domain includeSubdomains="true">127.0.0.1</domain>
-        <domain includeSubdomains="true">10.0.2.2</domain>
-    </domain-config>
 
     <debug-overrides>
         <trust-anchors>
