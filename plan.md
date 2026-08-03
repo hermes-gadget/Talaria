@@ -1,7 +1,7 @@
 # Talaria Android Auto / Car Experience — Implementation Plan
 
 **Status:** ACTIVE — implementation started 2026-08-03
-**Last updated:** 2026-08-03 (launcher→car-UI binding fixed)
+**Last updated:** 2026-08-03 (agent creation live end-to-end)
 **Owner:** Ben + Hermes
 **Distribution model:** APK-only via GitHub releases — **no Play Store** (this is a hard constraint, see [Distribution](#distribution-model))
 
@@ -27,6 +27,35 @@ host throws otherwise); `minCarApiLevel` 7 for ConversationItem. Also
 added debug hook `--ez force_phone_ui true` to reach the phone UI on
 AAOS (used to configure the connection on the emulator — SESSION_TOKEN
 auth auto-mints against the local dashboard via `adb reverse`).
+
+**Agent creation — LIVE end-to-end (2026-08-03):** car list has a
+"Create new agent" entry (distinct + avatar, voice via framework mic)
+plus 3 one-tap quick-start actions. Verified on the AAOS emulator:
+tapping a quick action created a real session on the Hermes dashboard
+("Plan today's work based on my recent activity.") and the agent's run
+continued after the app closed its socket. Three stacked fixes were
+required:
+1. **Server: PTY spawn re-ran `npm install` on every connection** —
+   `_tui_need_npm_install` compares the whole-workspace lockfile (incl.
+   never-installed `apps/desktop` deps) against the installed state, so
+   it always reinstalled (~40-60s) and prompts were dropped. Workaround:
+   move `hermes-agent/package-lock.json` aside (prebuilt-bundle mode:
+   `ui-tui/dist/entry.js` exists → install skipped → TUI spawns in ~2s).
+   Also unbreaks the dashboard's own /chat tab (broken since ~Jul 31).
+2. **App: send only after the TUI banner** — an immediate send races the
+   fresh TUI process and the prompt is silently dropped (PTY buffer does
+   NOT reliably hold it through TUI startup). Wait for first Output, +
+   350ms settle, then send.
+3. **App: keep-alive attach token (`?attach=<uuid>`)** — the legacy
+   path kills the PTY on socket close, so the agent's run died right
+   after it started. With attach, the server's PTY registry keeps the
+   TUI + run alive (30-min TTL reaper). Applied to the car repository
+   AND `ReplyWorker` (same bug class — notification replies were killing
+   runs too).
+Plus: catch-order fix in `ptySend` (PtySendDone is a CancellationException
+and was swallowed by the generic catch → every successful send reported
+"Failed to start agent"); Hermes message timestamps are epoch SECONDS →
+×1000 for the car API (was rendering garbage hex time labels).
 Pending: v0.8.0 tag (Ben's call — release discipline: never tag
 unprompted).
 
