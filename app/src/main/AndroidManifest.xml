@@ -71,6 +71,7 @@
                 <data android:host="status" />
                 <data android:host="activity" />
                 <data android:host="manage" />
+                <data android:host="voice" />
             </intent-filter>
         </activity>
 

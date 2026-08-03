@@ -25,6 +25,9 @@ import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.repo.HermesRepository
 import com.hermesgadget.talaria.core.network.HermesApi
+import com.hermesgadget.talaria.core.network.JsonConfig
+import com.hermesgadget.talaria.feature.manage.files.ShareFileManager
+import com.hermesgadget.talaria.feature.manage.files.MAX_SHARE_FILE_BYTES
 import com.hermesgadget.talaria.domain.model.ActionStatus
 import com.hermesgadget.talaria.domain.model.OpsActionResponse
 import com.hermesgadget.talaria.domain.model.OpsBackupRequest
@@ -549,15 +552,26 @@ class SystemViewModel(
                     val response = gateway.createOpsBackup(OpsBackupRequest())
                     val archive = response.archive?.takeIf { it.isNotBlank() }
                         ?: error(response.error ?: "The backup endpoint did not return an archive")
-                    val directory = File(cacheDirectory, "ops-backups").apply { mkdirs() }
-                    val sourceName = archive.substringAfterLast('/').ifBlank { "hermes-backup.zip" }
-                    val safeName = sourceName.replace(Regex("[^A-Za-z0-9._-]+"), "_")
-                    val output = File.createTempFile("hermes-backup-", "-$safeName", directory)
-                    gateway.downloadOpsBackup(archive).use { body ->
-                        body.byteStream().use { input ->
-                            output.outputStream().use { file -> input.copyTo(file) }
+                    // Bounded, tracked share file: abort past the cap instead of
+                    // buffering unboundedly or leaving untracked files in cache.
+                    val shareManager = ShareFileManager(TalariaApp.instance.cacheDir)
+                    val bytes = gateway.downloadOpsBackup(archive).use { body ->
+                        val stream = body.byteStream()
+                        val buffer = java.io.ByteArrayOutputStream()
+                        val chunk = ByteArray(64 * 1024)
+                        var total = 0L
+                        while (true) {
+                            val n = stream.read(chunk)
+                            if (n < 0) break
+                            total += n
+                            if (total > MAX_SHARE_FILE_BYTES) {
+                                error("Backup exceeds the ${MAX_SHARE_FILE_BYTES / (1024 * 1024)} MiB share limit")
+                            }
+                            buffer.write(chunk, 0, n)
                         }
+                        buffer.toByteArray()
                     }
+                    val output = shareManager.createShareFile("hermes-backup-", ".zip", bytes)
                     val uri = FileProvider.getUriForFile(
                         TalariaApp.instance,
                         "${TalariaApp.instance.packageName}.files",
@@ -603,9 +617,9 @@ class SystemViewModel(
                         response.urls.toSortedMap().forEach { (label, url) -> appendLine("$label: $url") }
                         response.failures.forEach { failure -> appendLine("Failure: $failure") }
                     }
-                    val directory = File(cacheDirectory, "ops-debug").apply { mkdirs() }
-                    val output = File.createTempFile("hermes-debug-share-", ".txt", directory)
-                        .also { it.writeText(text) }
+                    // Bounded, tracked share file (16 MiB cap, 15-minute TTL, cache sweep).
+                    val output = ShareFileManager(TalariaApp.instance.cacheDir)
+                        .createShareFile("hermes-debug-share-", ".txt", text.toByteArray(Charsets.UTF_8))
                     val uri = FileProvider.getUriForFile(
                         TalariaApp.instance,
                         "${TalariaApp.instance.packageName}.files",

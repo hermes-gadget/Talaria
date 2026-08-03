@@ -66,9 +66,11 @@ fun ProfileSwitcherChip() {
     var switching by remember { mutableStateOf(false) }
 
     LaunchedEffect(active?.id, managementProfile) {
+        // A different server's profiles must never leak into this server's list.
+        hermesNames = emptyList()
         container.hermesRepository.getProfiles()
             .onSuccess { list -> hermesNames = list.map { it.name } }
-            .onFailure { /* keep prior list */ }
+            .onFailure { /* keep the cleared list — stale names are worse than none */ }
     }
 
     val options = remember(hermesNames) {

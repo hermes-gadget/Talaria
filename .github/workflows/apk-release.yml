@@ -15,12 +15,43 @@ name: Build APK
 "on":
   push:
     tags: ["v*"]
+    branches: ["main"]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  # Quality gate on every PR and main push: the 4,685 lines of unit tests and
+  # lint must gate ordinary changes, not only release tags. Unsigned debug
+  # build only — signing stays on the tag path.
+  pr-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v4
+
+      - name: Install SDK components
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          yes | sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Lint
+        run: ./gradlew :app:lintDebug --no-daemon
+
+      - name: Debug assemble
+        run: ./gradlew :app:assembleDebug --no-daemon
+
   build-apk:
     runs-on: ubuntu-latest
     steps:

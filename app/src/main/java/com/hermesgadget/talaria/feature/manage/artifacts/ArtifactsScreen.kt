@@ -57,13 +57,17 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -316,7 +320,10 @@ private fun ArtifactPreviewSheet(
             loading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
             error != null -> Text(error, color = MaterialTheme.colorScheme.error)
             preview is ArtifactPreview.Image -> {
-                val bitmap = remember(preview.dataUrl) { decodeBitmap(preview.dataUrl) }
+                val bitmapState by produceState<ImageBitmap?>(null, preview.dataUrl) {
+                    value = withContext(Dispatchers.Default) { decodeBitmap(preview.dataUrl) }
+                }
+                val bitmap = bitmapState
                 if (bitmap != null) {
                     Image(
                         bitmap = bitmap,
@@ -445,7 +452,18 @@ private fun decodeBitmap(dataUrl: String) = runCatching {
     val metadata = dataUrl.substring(0, comma)
     if (!metadata.contains("base64", ignoreCase = true)) return@runCatching null
     val bytes = Base64.decode(dataUrl.substring(comma + 1), Base64.DEFAULT)
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+    // Bounds-first, sampled decode — never materialise a full-resolution bitmap.
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+    var sample = 1
+    while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 2048) sample *= 2
+    BitmapFactory.decodeByteArray(
+        bytes,
+        0,
+        bytes.size,
+        BitmapFactory.Options().apply { inSampleSize = sample },
+    )?.asImageBitmap()
 }.getOrNull()
 
 private fun formatBytes(bytes: Long): String = when {

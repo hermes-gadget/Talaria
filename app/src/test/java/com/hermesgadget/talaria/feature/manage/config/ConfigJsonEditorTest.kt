@@ -17,7 +17,8 @@ class ConfigJsonEditorTest {
         val root = JsonConfig.json.parseToJsonElement(original).jsonObject
         assertEquals(30, configValueAtPath(root, "terminal.lifetime_seconds")?.jsonPrimitive?.int)
 
-        val updated = updateConfigKey(original, "security.telemetry", "false", "boolean")
+        val value = parseConfigDraft("false", "boolean")
+        val updated = applyConfigEdit(original, "security.telemetry", value)
         val parsed = JsonConfig.json.parseToJsonElement(updated).jsonObject
         assertFalse(parsed["security"]!!.jsonObject["telemetry"]!!.jsonPrimitive.boolean)
         assertEquals(null, parsed["security.telemetry"])
@@ -25,9 +26,9 @@ class ConfigJsonEditorTest {
 
     @Test
     fun preservesStringValuesThatLookNumeric() {
-        val updated = updateConfigKey("{}", "voice.provider", "123", "string")
-        val value = JsonConfig.json.parseToJsonElement(updated).jsonObject["voice"]!!
-            .jsonObject["provider"]!!.jsonPrimitive.content
-        assertEquals("123", value)
+        val value = parseConfigDraft("123", "string")
+        val updated = applyConfigEdit("{}", "voice.provider", value)
+        val parsed = JsonConfig.json.parseToJsonElement(updated).jsonObject
+        assertEquals("123", parsed["voice"]!!.jsonObject["provider"]!!.jsonPrimitive.content)
     }
 }

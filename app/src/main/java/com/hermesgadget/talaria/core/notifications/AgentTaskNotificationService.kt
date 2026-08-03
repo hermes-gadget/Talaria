@@ -34,6 +34,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Keeps a lightweight `/api/events` subscriber alive for each user-started turn.
@@ -48,7 +49,10 @@ class AgentTaskNotificationService : Service() {
     )
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val runtimes = linkedMapOf<String, Runtime>()
+    // ConcurrentHashMap: mutated from the main thread (onStartCommand/watch/stopWatch)
+    // and from serviceScope's IO dispatcher (handle/verifyRuntimeScopes). A plain
+    // linkedMapOf let values() iteration race with insertion -> ConcurrentModificationException.
+    private val runtimes = ConcurrentHashMap<String, Runtime>()
     private val container get() = TalariaApp.instance.container
     private var scopeGuardJob: Job? = null
 

@@ -69,7 +69,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -640,13 +646,30 @@ private fun TransferProgress(bytes: Long, total: Long) {
     }
 }
 
+/** Bounds-first, sampled decode: never materialise a full-resolution bitmap for a preview. */
+private fun decodeSampled(bytes: ByteArray, maxDimension: Int = 2048): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    var sample = 1
+    while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxDimension) sample *= 2
+    return BitmapFactory.decodeByteArray(
+        bytes,
+        0,
+        bytes.size,
+        BitmapFactory.Options().apply { inSampleSize = sample },
+    )
+}
+
 @Composable
 private fun ZoomableImagePreview(bytes: ByteArray, contentDescription: String) {
-    val bitmap = remember(bytes) {
-        runCatching { android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
-            .getOrNull()
+    val bitmap by produceState<ImageBitmap?>(null, bytes) {
+        value = withContext(Dispatchers.Default) {
+            runCatching { decodeSampled(bytes)?.asImageBitmap() }.getOrNull()
+        }
     }
-    if (bitmap == null) {
+    val loaded = bitmap
+    if (loaded == null) {
         Text(
             stringResource(R.string.files_image_decode_error),
             color = MaterialTheme.colorScheme.error,
@@ -670,7 +693,7 @@ private fun ZoomableImagePreview(bytes: ByteArray, contentDescription: String) {
         contentAlignment = Alignment.Center,
     ) {
         Image(
-            bitmap = bitmap,
+            bitmap = loaded,
             contentDescription = contentDescription,
             contentScale = ContentScale.Fit,
             modifier = Modifier

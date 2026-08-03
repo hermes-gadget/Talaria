@@ -363,6 +363,7 @@ internal class KanbanViewModel(
 
     private fun mutate(block: suspend () -> Unit) {
         val previous = currentContent() ?: return
+        if (previous.busy) return // re-entry guard: no overlapping mutations
         _ui.value = KanbanUiState.Content(previous.copy(busy = true, refreshing = false))
         viewModelScope.launch {
             runCatching { block() }

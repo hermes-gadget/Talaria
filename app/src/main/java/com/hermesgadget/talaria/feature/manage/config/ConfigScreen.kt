@@ -111,14 +111,12 @@ fun ConfigScreen() {
                     (key to (error.message ?: "Invalid value"))
                 return
             }
-        val updatedText = runCatching {
-            val root = JsonConfig.json.parseToJsonElement(text).jsonObject
-            JsonConfig.json.encodeToString(setConfigValueAtPath(root, key.split('.'), value))
-        }.getOrElse { error ->
-            fieldErrors = fieldErrors +
-                (key to (error.message ?: "Current config is not valid JSON"))
-            return
-        }
+        val updatedText = runCatching { applyConfigEdit(text, key, value) }
+            .getOrElse {
+                fieldErrors = fieldErrors +
+                    (key to "Current config is not valid JSON")
+                return
+            }
         text = updatedText
         fieldErrors = fieldErrors - key
     }
@@ -542,12 +540,10 @@ internal fun parseConfigDraft(newVal: String, expectedType: String?): JsonElemen
     }
 }
 
-internal fun updateConfigKey(text: String, key: String, newVal: String, expectedType: String?): String {
-    return runCatching {
-        val value = parseConfigDraft(newVal, expectedType)
-        val root = JsonConfig.json.parseToJsonElement(text).jsonObject
-        JsonConfig.json.encodeToString(setConfigValueAtPath(root, key.split('.'), value))
-    }.getOrDefault(text)
+/** Single source of truth for applying a typed field edit to the config text. */
+internal fun applyConfigEdit(text: String, key: String, value: kotlinx.serialization.json.JsonElement): String {
+    val root = JsonConfig.json.parseToJsonElement(text).jsonObject
+    return JsonConfig.json.encodeToString(setConfigValueAtPath(root, key.split('.'), value))
 }
 
 private fun setConfigValueAtPath(

@@ -17,6 +17,7 @@
 package com.hermesgadget.talaria.core.network
 
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
+import com.hermesgadget.talaria.BuildConfig
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
 import com.hermesgadget.talaria.core.data.prefs.SettingsStore
 import com.hermesgadget.talaria.core.security.CertificatePinnerFactory
@@ -119,8 +120,16 @@ class HermesClientFactory(
             .writeTimeout(60, TimeUnit.SECONDS)
             .addInterceptor(auth)
             .addInterceptor(ProfileQueryInterceptor(snapshot))
+            // Application interceptor: covers the WebSocket upgrade handshake (network
+            // interceptors do not run for WebSockets).
             .addInterceptor(CleartextPolicyInterceptor(snapshot))
-            .addInterceptor(EmulatorLoopbackInterceptor())
+            // Network interceptor: runs again per redirect/retry, so an https->http
+            // 30x cannot bypass the cleartext gate after the first hop.
+            .addNetworkInterceptor(CleartextPolicyInterceptor(snapshot))
+            .apply {
+                // Emulator loopback rewrite is dev scaffolding; never ship it in release.
+                if (BuildConfig.DEBUG) addInterceptor(EmulatorLoopbackInterceptor())
+            }
 
         val restBuilder = baseBuilder()
         if (snapshot.httpLoggingEnabled) {

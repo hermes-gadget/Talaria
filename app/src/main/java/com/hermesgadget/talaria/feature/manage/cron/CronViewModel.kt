@@ -257,6 +257,7 @@ class CronViewModel(
 
     private fun mutate(failureMessage: String, action: suspend () -> Unit) {
         val state = _ui.value as? CronUiState.Content ?: return
+        if (state.busy) return // re-entry guard: no overlapping mutations
         _ui.value = state.copy(busy = true, message = null)
         viewModelScope.launch {
             runCatching { action() }

@@ -154,7 +154,6 @@ dependencies {
     ksp(libs.androidx.room.compiler)
 
     implementation(libs.androidx.security.crypto)
-    implementation(libs.androidx.datastore.preferences)
 
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.androidx.browser)
@@ -188,12 +187,15 @@ tasks.register("assembleSignedRelease") {
     description = "Assembles a signed release APK when keystore.properties is present."
     dependsOn("assembleRelease")
     doLast {
-        if (!keystorePropertiesFile.exists()) {
-            logger.lifecycle(
-                "No keystore.properties — release APK is unsigned. See SETUP.md for signing.",
-            )
-        } else {
-            logger.lifecycle("Signed release APK ready under app/build/outputs/apk/release/")
+        val signed = useCiSigning || keystorePropertiesFile.exists()
+        val source = when {
+            useCiSigning -> "CI signing (useCiSigning)"
+            keystorePropertiesFile.exists() -> "keystore.properties ($keystorePropertiesFile)"
+            else -> "NONE"
         }
+        logger.lifecycle(
+            if (signed) "Signed release APK ready under app/build/outputs/apk/release/ (signing: $source)"
+            else "Release APK is UNSIGNED (signing: $source). See SETUP.md for signing.",
+        )
     }
 }

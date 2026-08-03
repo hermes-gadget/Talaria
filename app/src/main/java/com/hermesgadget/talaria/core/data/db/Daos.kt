@@ -21,6 +21,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -45,6 +46,17 @@ interface MessageDao {
 
     @Query("DELETE FROM cached_messages WHERE connectionId = :connectionId AND sessionId = :sessionId")
     suspend fun clearSession(connectionId: String, sessionId: String)
+
+    /** Atomic full-transcript replace: no window where readers see half-old/half-new rows. */
+    @Transaction
+    suspend fun replaceSessionMessages(
+        connectionId: String,
+        sessionId: String,
+        items: List<CachedMessageEntity>,
+    ) {
+        clearSession(connectionId, sessionId)
+        upsertAll(items)
+    }
 }
 
 @Dao

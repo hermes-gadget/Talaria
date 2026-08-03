@@ -220,8 +220,9 @@ class HermesRepository(
             runCatching {
             val msgs = api(snapshot).getSessionMessages(sessionId, profile = snapshot.managementProfile).messages
             val cid = snapshot.scopeId
-            db.messages().clearSession(cid, sessionId)
-            db.messages().upsertAll(
+            db.messages().replaceSessionMessages(
+                cid,
+                sessionId,
                 msgs.mapIndexed { index, m ->
                     CachedMessageEntity(
                         key = "$sessionId-$index",

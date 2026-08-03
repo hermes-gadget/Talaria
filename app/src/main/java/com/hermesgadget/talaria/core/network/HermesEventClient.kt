@@ -80,7 +80,10 @@ class HermesEventClient(
     private val json = JsonConfig.json
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val rpcId = AtomicLong(1)
-    private val eventQueue = Channel<HermesSideEvent>(Channel.UNLIMITED)
+    // Bounded with DROP_OLDEST: live sidecar state is current-state, not a
+    // queue to replay — if the collector falls behind, old frames are worthless
+    // and unbounded buffering would OOM the process.
+    private val eventQueue = Channel<HermesSideEvent>(256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     private var channelId: String? = null
     private var eventsSocket: WebSocket? = null
@@ -153,6 +156,9 @@ class HermesEventClient(
                 publish(HermesSideEvent.TransportError("auth", it.message ?: "authentication failed"))
                 return@launch
             }
+            // stop() may have run while authQueryParam() was suspended; without this
+            // check two WebSockets would be opened that nothing will ever close.
+            if (stopped) return@launch
             openEvents(channel, auth)
             if (includeRpc) openRpc(auth)
         }

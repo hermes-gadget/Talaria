@@ -2737,7 +2737,9 @@ class ChatViewModel(
         }
         AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
         drainQueuedPrompt(tabId)
-        if (full.isNotEmpty()) tts.speak(full)
+        // Only read aloud the tab the user is actually looking at — a background
+        // auto-opened session finishing must not speak over the active one.
+        if (full.isNotEmpty() && _ui.value.activeTabId == tabId) tts.speak(full)
         applyProfileRegistry(ProfileRegistry.state.value)
     }
 
