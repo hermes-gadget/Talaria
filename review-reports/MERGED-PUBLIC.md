@@ -10,9 +10,9 @@
 
 Talaria is a **strong, genuinely shipped codebase**: an immutable connection-snapshot transport identity, a disciplined WebSocket lifecycle, a real (if under-tested) PTY delivery acknowledgement protocol, deliberate Compose perf fixes, and a documented security posture. The verdicts converge on one core statement:
 
-> **The plumbing is production-grade; the chat orchestration is prototype-grade at production scale.**
+> **Ship-worthy for its intended sideloaded, single-operator audience; not yet structurally sound enough to add another major surface without paying down the chat core first.** (Claude Opus: *"the plumbing is production-grade; the chat orchestration is prototype-grade at production scale."*)
 
-The highest-risk logic — mapping local tabs onto server sessions across profiles — is a heuristic with **zero direct test coverage**, and one reviewer found a concrete cross-profile key inconsistency in its ownership store. Everything else is recoverable, ordered work.
+The highest-risk logic — mapping local tabs onto server sessions across profiles — is a heuristic with **zero direct test coverage**, and the project's own test file documents that it *cannot* test the race. A genuine concurrency bug exists in the notification service (`ConcurrentModificationException`). Everything else is recoverable, ordered work.
 
 **Priority spine (convergent across 3+ reports each):**
 1. Cleartext consent + private-route classification (LAN/Tailscale onboarding is broken as advertised)
@@ -39,9 +39,10 @@ The highest-risk logic — mapping local tabs onto server sessions across profil
 | Artifact recursion + image decode crash/OOM/main-thread hazards | Improvements BUG-034, Security F-07, Performance J5/M4/M6, Testing | **High / M / P0** |
 | Encrypted-store corruption silently shows empty list; crypto wrapper aging | Improvements, Security F-09, Testing | **High / M now + M later** |
 | Chat/network/UI ownership in large facades & Composables | Improvements, Performance, Testing | **High leverage / L / P1–P2** |
-| Car + widget not localized (app ships 4 locales) | Claude Opus, Compatibility | **Medium / S–M / P1** |
+| Car + widget not localized (app ships 4 locales at ~29% coverage; 565 strings missing per locale) | Claude Opus C5, Compatibility | **Medium / M / P1** |
 | Notifications policy-tested but orchestration/delivery/car integration weak | Compatibility, Ideas, Testing | **High / M / P1** |
-| `runCatching` swallows `CancellationException` in 83 sites | Claude Opus (new) | **High / S / P0-10** — hours of work, phantom error banners |
+| CI gates nothing but release tags (no PR tests/lint; R8 + reflection ships untested) | Claude Opus C6, Testing CI-status | **High / S / P0-11** |
+| Chat/network/UI ownership in large facades & Composables; 134 `TalariaApp.instance` refs in 50 files block testability | Claude Opus C1, Improvements, Performance, Testing | **High leverage / M / P0-6** |
 
 ---
 
@@ -69,6 +70,9 @@ The highest-risk logic — mapping local tabs onto server sessions across profil
 
 ### S-5 (Medium) — Car prompt delivery race + FGS fragility
 `AgentTaskNotificationService` long-lived data-sync FGS stops after Android 15's 6-hour quota; start failures swallowed (`runCatching`). ReplyWorker lacks network constraint/expedited policy.
+
+### S-6 (Claude, genuine bug) — `ConcurrentModificationException` in the foreground notification service
+`AgentTaskNotificationService.runtimes` is a plain `linkedMapOf()` mutated from the main thread (`onStartCommand`/`watch`) and from an IO dispatcher (`handle()`, `verifyRuntimeScopes()`) — iterating `runtimes.values` while `onStartCommand` inserts is a CME waiting for a user who switches connections during an active turn. Fix: `ConcurrentHashMap` or confine to one dispatcher (~20 min). Secondary: `startForeground()` re-invoked + SharedPreferences write on *every* event that updates a session id.
 
 ---
 
@@ -106,18 +110,19 @@ The highest-risk logic — mapping local tabs onto server sessions across profil
 - **M3/M4:** image attach RPC peak allocation; previews decode full-res bitmaps and retain both forms. *Fix: bounds-first decode on `Dispatchers.Default`, sample to display size, reject excessive pixels.*
 - **M5/M6:** response cache never evicts; artifact refresh retains all 50 message responses before extraction.
 - **B4:** recording/continuous STT not stopped by screen/process lifecycle.
-- **D (Claude):** cold start does Keystore + EncryptedSharedPreferences + profile JSON decode on main thread (50–200 ms variable, before first frame). `SecureConnectionStore.upsert` uses `editor.commit()` reachable from network paths.
-- **C (Claude):** 83 `runCatching` sites swallow `CancellationException` → phantom error banners on every navigation; correct pattern exists in 5 files (`ProfileRegistry.kt:130`). *Fix: one `call {}` helper, mechanical replacement.*
+- **C4 (Claude):** two `EncryptedSharedPreferences` decrypts + JSON parses on **every HTTP request** (`HermesClientFactory.snapshot()` + `AuthInterceptor.ensureSnapshotStillStored()` re-read), multiplied by poll volume — cache decrypted secrets behind a generation counter.
+- **C8 (Claude):** streaming does O(n²) string work — `assistantBuffer.toString()` on every PTY frame (~40 full copies for a 40 KB turn) + full `ChatUiState` copy per chunk via `updateTab`; `ChatScreen` transcript filter allocates per frame with no `remember`. Also: **TTS speaks every completed turn on every tab** — a background auto-opened Discord session finishing reads itself aloud over whatever the user is looking at.
+- **Cold start (Performance):** eagerly opens every persisted tab and initializes encrypted preferences, WorkManager scheduling, notification channels, and Android TTS (which defaults off) on the critical path before first frame.
 
 ---
 
 ## 6. Architecture & maintainability
 
-- Single `:app` module, 48,581 lines; `HermesApi` = 246 endpoints/1,075 lines; `HermesRepository` = 1,048 lines of ~83 near-identical `runCatching` bodies; `ChatViewModel` = 2,830 lines with 9 mutable side-maps + 6 generation counters.
-- **Claude's key structural finding:** `sessionOwners` keyed by **bare session id** while the rest of the app is profile-scoped (`"profile\u0000id"` keys in `MultiProfileSessionMerger`) — the invariant its own test asserts is violated by the ownership store; background tabs on different profiles can collide. *Fix: `SessionOwnershipRegistry` keyed `(profile, sessionId)`, no Android/singleton deps, then write the race test.*
-- `ChatViewModel` reaches around injected params via `TalariaApp.instance.container` (line 235) — the single line blocking unit-testability.
-- **Dead ProGuard rules (Claude):** `-keepclassmembers @Serializable <fields>` matches nothing (annotation is on classes); `dto` package doesn't exist. Minify+shrink are ON, working by library consumer rules *by accident*, no release-variant smoke test. *Fix: real keeps for `domain.model`, workers, Glance receivers, Room; one release smoke test.*
-- Dead code: `SimpleManageViewModel` (65 lines, zero call sites); `updateConfigKey` (test-only duplicate config updater). `ManageCatalog`/`SimpleManageViewModel` look like an abandoned declarative registry — finish it as `ManageSection(id, title, loader, renderer)` (Claude idea: 26 screens → data).
+- Single `:app` module, 48,581 lines; `HermesApi` = 246 endpoints/1,075 lines; `HermesRepository` = 1,048 lines of ~83 near-identical `runCatching` bodies; `ChatViewModel` = 2,830 lines with 13 responsibilities and 9 mutable side-maps + 6 generation counters.
+- **Claude's key structural finding (C1):** `ChatViewModel`'s constructor *looks* injectable (`:229-234`) — then line 235 defeats it: `TalariaApp.instance.container`. Across the app that's **134 `TalariaApp.instance` references in 50 files**, which is why the app's most intricate concurrency cannot be unit-tested (the project's own test file says so at `SessionAutoOpenOwnershipBehaviorTest.kt:21-27`). Worse, the ownership lock is cargo-culted: `claimSession` synchronizes `sessionOwners`/`claimedSessions` (a race that can't occur — callbacks run on `Dispatchers.Main.immediate`) while `runtimes`, `pendingLocalCreations`, `autoOpenedTabs`, and `pendingImages` — unsynchronized mutable maps touched by the same paths — are unprotected. *Fix: a `ChatDependencies` interface + a plain-Kotlin `SessionOwnershipRegistry` (~450 lines out), then write the race test.*
+- **ProGuard rules are dead (Claude C6):** `-keepclassmembers @Serializable <fields>` matches nothing (annotation is on classes); `core.network.dto` package doesn't exist. Minify+shrink are ON, working by library consumer rules *by accident*, with no release-variant smoke test and only 1 androidTest file.
+- Dead/unused: `androidx.datastore.preferences` declared but never referenced; `exportSchema = false` blocks a `MigrationTestHelper` test for the careful hand-rolled `MIGRATION_1_2`; `material-icons-extended` pulls ~10k icons for ~40 used.
+- **Protocol classification by substring (Claude C10):** `SidecarFrameParser` routes on `type.contains("tool")` / `"usage"` / `"model"` — a future `toolset.changed` or `models.refreshed` frame silently becomes the wrong card type. Fix: exact matching with an explicit prefix allowlist. (`sendRpc` also builds JSON by string concatenation.)
 - BUG-006/007 Room cache reconciliation/atomicity, BUG-027 terminal frame-safe ANSI, BUG-030 stale profile choices, BUG-050 mutation serialization, BUG-060 localization, BUG-062 signed-release reporting, BUG-063 docs drift, BUG-065 behavioral coverage remain from audit (per improvements agent: 41/52 resolved, 4 present, 7 partial).
 
 ---
@@ -138,13 +143,15 @@ The highest-risk logic — mapping local tabs onto server sessions across profil
 1. **Agent Attention Inbox** (M) — durable queue of permission requests/clarifications/failures across profiles; notifications become views onto it. One shared attention model for phone/foldable/widget/car.
 2. **Live Agent Board widget** (M) — up to 3 agents, state dot, needs-input count, deep links; replaces status-only card.
 3. **Contextual launcher shortcuts** (M) — dynamic shortcuts for live/pinned sessions after each 30 s refresh.
-4. **Hands-free Drive Loop** (car, M) — quick-start rows are already the right instinct; make them user-editable, and **read the agent's reply aloud** (TtsSpeaker exists in the container; car never uses it — the actual killer feature).
+4. **Hands-free Drive Loop** (car, M) — quick-start rows are already the right instinct; make them user-editable (Claude: the car app should be an event *subscriber* reusing the `/api/events` subscription — fixes the no-refresh gap and removes `runBlocking` in one change).
 5. **Park-and-continue handoff** (car, S) — finish dictation/action on phone after parking.
 6. **Dashboard Event Spine** (M/L) — bounded event stream + polling reconciliation (also a P0/P1 perf item).
 7. **Mobile cron recipes / MissionDeck task-to-agent bridge** (M) — cron blueprints from the phone; spawn MissionDeck tasks from an agent chat.
-8. **PtySendReceipt → UI concept** (S, Claude) — show ✓/⚠ on sent bubbles ("never left phone" vs "may have landed"); high trust payoff, machinery already exists.
-9. **`docs/hermes-pty-protocol.md`** (S, Claude) — lift the reverse-engineered protocol comments (frame splitting, RESIZE handling, unquoted method names) into one doc; highest-value institutional knowledge in the repo.
-10. **ManageSection declarative registry** (L) — collapse 26 manage screens toward data.
+8. **`SessionTranscriptStore`** (Claude, M) — one store keyed `(profile, sessionId)` exposing `StateFlow<List<ChatLine>>`, shared across tabs and driven by `sessions.changed`/`message.complete` sidecars with backoff-polling fallback — collapses the transport-economics, streaming, and poller-mutex problems in one abstraction.
+9. **`StringProvider` + build-time i18n gap check** (Claude, S) — Gradle check that diffs `strings*.xml` against each locale and fails above a threshold; the 565-string gap happened because nothing measured it.
+10. **Baseline Profile** (Claude, S) — `androidx.baselineprofile` module for cold start on mid-range hardware.
+11. **ManageSection declarative registry** (L) — collapse 26 manage screens toward data; multi-module extraction (`:core:network`, `:feature:chat`, `:feature:manage`, `:feature:car`) would make `TalariaApp.instance` stop compiling — which is the real benefit.
+12. **`SimpleMarkdown` (903 lines) liability** (Claude, M) — hand-rolled block+inline parser rendering untrusted LLM output; cap block count and parse off the main thread to rule out ANRs on pathological input.
 
 **Distribution ideas:** One-tap Obtainium onboarding, stable/beta/canary lanes, Sideload Trust Center, test-builds channel, reproducible F-Droid flavor.
 
@@ -174,9 +181,13 @@ The highest-risk logic — mapping local tabs onto server sessions across profil
 8. Bitmap decode off-main, bounds-first, sampled.
 9. Backup/debug output through `ShareFileManager`; delete partials on failure.
 10. Delete `updateConfigKey` (tests move onto the runtime config reducer).
-11. Replace literal ETX (`ChatViewModel.kt:2050`) with `"\u0003"`.
-12. Surface `sendTextChecked` receipt in interactive send path.
-13. Extract car + widget strings to resources.
+11. **`AgentTaskNotificationService.runtimes` → `ConcurrentHashMap`** or one dispatcher (Claude C3 — a real CME, ~20 min).
+12. **CI on PRs + main**: `testDebugUnitTest` + `lintDebug` + `assembleRelease` on PRs (Claude C6 — 20-line YAML change makes the 4,685 test lines load-bearing; also the only sane way to surface R8 breakage before a tag).
+13. **Delete the dead ProGuard rules** (`core.network.dto` package doesn't exist) + the unused `androidx.datastore.preferences` dependency.
+14. **`if (stopped) return@launch`** after the auth suspension point in `HermesEventClient.start()` (`:155`) — closes a gap where two WebSockets get opened that nothing will ever close.
+15. **Gate `tts.speak` on the active tab** (`ChatViewModel.kt:2740`).
+16. **Move `CleartextPolicyInterceptor` to `addNetworkInterceptor`** so https→http redirects and retries are checked; drop `EmulatorLoopbackInterceptor` + the `10.0.2.2` anonymous default from release (Claude C7 — dev scaffolding in the production client).
+17. Extract car + widget strings to resources (Claude C5: zero `stringResource` in all of `car/`; widget builds English plurals by hand).
 
 ---
 
