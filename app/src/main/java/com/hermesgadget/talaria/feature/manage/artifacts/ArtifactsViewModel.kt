@@ -27,19 +27,26 @@ import com.hermesgadget.talaria.domain.model.FsDataUrl
 import com.hermesgadget.talaria.domain.model.FsTextFile
 import com.hermesgadget.talaria.domain.model.SessionMessage
 import com.hermesgadget.talaria.domain.model.SessionsPage
+import com.hermesgadget.talaria.feature.manage.files.MAX_SHARE_FILE_BYTES
+import com.hermesgadget.talaria.feature.manage.files.ShareFileManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import java.io.File
 
 private const val ARTIFACT_SESSION_LIMIT = 50
+private const val ARTIFACT_MESSAGE_CONCURRENCY = 4
+private const val MAX_ARTIFACT_PREVIEW_BYTES = 16L * 1024L * 1024L
+private const val MAX_ARTIFACT_DATA_URL_CHARS = 24L * 1024L * 1024L
 
 enum class ArtifactFilter {
     ALL,
@@ -115,15 +122,31 @@ class ArtifactsViewModel(
         TalariaApp.instance.container.clientFactory.api().fsReadDataUrl(path)
     },
     private val shareRequestBuilder: (suspend (ArtifactRecord) -> ArtifactShareRequest)? = null,
+    private val shareFileManager: ShareFileManager? = null,
 ) : ViewModel() {
     private val _ui = MutableStateFlow(ArtifactsUiState())
     val ui: StateFlow<ArtifactsUiState> = _ui.asStateFlow()
+    private var artifactLoadJob: Job? = null
+    private var artifactLoadGeneration = 0L
+    private var previewJob: Job? = null
+    private var previewGeneration = 0L
+    private var previewArtifactId: String? = null
+    private var previewArtifactPath: String? = null
+    private var shareJob: Job? = null
+    private val defaultShareFileManager by lazy {
+        ShareFileManager(TalariaApp.instance.cacheDir)
+    }
 
     init {
+        runCatching { (shareFileManager ?: defaultShareFileManager).cleanupStaleFiles() }
         refresh()
     }
 
     fun refresh() {
+        artifactLoadGeneration += 1
+        val generation = artifactLoadGeneration
+        artifactLoadJob?.cancel()
+        cancelPreview()
         _ui.update {
             it.copy(
                 load = ArtifactLoadState.Loading,
@@ -134,20 +157,24 @@ class ArtifactsViewModel(
                 shareError = null,
             )
         }
-        viewModelScope.launch {
-            runCatching { loadArtifacts() }.fold(
-                onSuccess = { artifacts ->
+        artifactLoadJob = viewModelScope.launch {
+            try {
+                val artifacts = loadArtifacts()
+                if (generation == artifactLoadGeneration) {
                     _ui.update { it.copy(load = ArtifactLoadState.Ready(artifacts), page = 0) }
-                },
-                onFailure = { error ->
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (generation == artifactLoadGeneration) {
                     _ui.update {
                         it.copy(
                             load = ArtifactLoadState.Failed(error.message ?: "Could not load artifacts"),
                             page = 0,
                         )
                     }
-                },
-            )
+                }
+            }
         }
     }
 
@@ -160,12 +187,20 @@ class ArtifactsViewModel(
     }
 
     fun openPreview(artifact: ArtifactRecord) {
+        previewJob?.cancel()
+        previewGeneration += 1
+        val generation = previewGeneration
+        previewArtifactId = artifact.id
+        previewArtifactPath = artifact.path
         _ui.update { it.copy(preview = null, previewLoading = true, previewError = null) }
-        viewModelScope.launch {
-            runCatching {
-                when (artifact.kind) {
+        previewJob = viewModelScope.launch {
+            try {
+                val preview = when (artifact.kind) {
                     ArtifactKind.TEXT -> {
                         val file = readText(artifact.path).getOrThrow()
+                        require(file.byteSize <= 0L || file.byteSize <= MAX_ARTIFACT_PREVIEW_BYTES) {
+                            "Artifact preview is too large"
+                        }
                         ArtifactPreview.Text(
                             artifact = artifact,
                             text = file.text,
@@ -177,6 +212,7 @@ class ArtifactsViewModel(
 
                     ArtifactKind.IMAGE -> {
                         val file = readDataUrl(artifact.path)
+                        boundedDataUrl(file.dataUrl, file.byteSize)
                         ArtifactPreview.Image(
                             artifact = artifact,
                             dataUrl = file.dataUrl,
@@ -187,6 +223,7 @@ class ArtifactsViewModel(
 
                     ArtifactKind.ARCHIVE -> {
                         val file = readDataUrl(artifact.path)
+                        boundedDataUrl(file.dataUrl, file.byteSize)
                         ArtifactPreview.Binary(
                             artifact = artifact,
                             mimeType = file.mimeType ?: "application/octet-stream",
@@ -194,44 +231,47 @@ class ArtifactsViewModel(
                         )
                     }
                 }
-            }.fold(
-                onSuccess = { preview ->
+                if (isCurrentPreview(generation, artifact)) {
                     _ui.update { it.copy(preview = preview, previewLoading = false) }
-                },
-                onFailure = { error ->
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (isCurrentPreview(generation, artifact)) {
                     _ui.update {
                         it.copy(
                             previewLoading = false,
                             previewError = error.message ?: "Could not preview ${artifact.label}",
                         )
                     }
-                },
-            )
+                }
+            }
         }
     }
 
     fun closePreview() {
+        cancelPreview()
         _ui.update { it.copy(preview = null, previewLoading = false, previewError = null) }
     }
 
     fun share(artifact: ArtifactRecord) {
+        if (_ui.value.sharing) return
+        shareJob?.cancel()
         _ui.update { it.copy(sharing = true, shareError = null, shareRequest = null) }
-        viewModelScope.launch {
-            runCatching {
-                shareRequestBuilder?.invoke(artifact) ?: prepareShare(artifact)
-            }.fold(
-                onSuccess = { request ->
-                    _ui.update { it.copy(sharing = false, shareRequest = request) }
-                },
-                onFailure = { error ->
-                    _ui.update {
-                        it.copy(
-                            sharing = false,
-                            shareError = error.message ?: "Could not share ${artifact.label}",
-                        )
-                    }
-                },
-            )
+        shareJob = viewModelScope.launch {
+            try {
+                val request = shareRequestBuilder?.invoke(artifact) ?: prepareShare(artifact)
+                _ui.update { it.copy(sharing = false, shareRequest = request) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _ui.update {
+                    it.copy(
+                        sharing = false,
+                        shareError = error.message ?: "Could not share ${artifact.label}",
+                    )
+                }
+            }
         }
     }
 
@@ -242,14 +282,39 @@ class ArtifactsViewModel(
     private suspend fun loadArtifacts(): List<ArtifactRecord> = coroutineScope {
         // The desktop browser intentionally scans a recent bounded session slice;
         // doing the same keeps a mobile refresh responsive on large Hermes homes.
-        val sessions = loadSessions().getOrThrow().sessions
+        val sessions = loadSessions().getOrThrow().sessions.take(ARTIFACT_SESSION_LIMIT)
+        val permits = Semaphore(ARTIFACT_MESSAGE_CONCURRENCY)
         sessions.map { session ->
             async {
-                session to loadMessages(session.id)
+                permits.withPermit {
+                    session to loadMessages(session.id)
+                }
             }
-        }.awaitAll().flatMap { (session, result) ->
+        }.let { requests ->
+            requests.map { it.await() }
+        }.flatMap { (session, result) ->
             result.getOrNull()?.let { extractArtifacts(session, it) }.orEmpty()
         }.sortedWith(compareByDescending<ArtifactRecord> { it.timestamp.orEmpty() }.thenBy { it.path })
+    }
+
+    private fun cancelPreview() {
+        previewJob?.cancel()
+        previewJob = null
+        previewGeneration += 1
+        previewArtifactId = null
+        previewArtifactPath = null
+    }
+
+    private fun isCurrentPreview(generation: Long, artifact: ArtifactRecord): Boolean =
+        generation == previewGeneration &&
+            artifact.id == previewArtifactId &&
+            artifact.path == previewArtifactPath
+
+    override fun onCleared() {
+        artifactLoadJob?.cancel()
+        cancelPreview()
+        shareJob?.cancel()
+        super.onCleared()
     }
 
     private suspend fun prepareShare(artifact: ArtifactRecord): ArtifactShareRequest = withContext(Dispatchers.IO) {
@@ -257,24 +322,31 @@ class ArtifactsViewModel(
         val (bytes, mimeType) = when (artifact.kind) {
             ArtifactKind.TEXT -> {
                 val text = readText(artifact.path).getOrThrow()
-                text.text.toByteArray(Charsets.UTF_8) to (text.mimeType ?: "text/plain")
+                val bytes = text.text.toByteArray(Charsets.UTF_8)
+                require(bytes.size.toLong() <= MAX_SHARE_FILE_BYTES) {
+                    "Artifact is too large to share"
+                }
+                bytes to (text.mimeType ?: "text/plain")
             }
 
             ArtifactKind.IMAGE, ArtifactKind.ARCHIVE -> {
                 val data = readDataUrl(artifact.path)
-                val decoded = decodeDataUrl(data.dataUrl)
+                val decoded = decodeDataUrl(boundedDataUrl(data.dataUrl, data.byteSize))
                 decoded.bytes to (data.mimeType ?: decoded.mimeType ?: mimeTypeFor(artifact))
             }
         }
         require(bytes.isNotEmpty()) { "${artifact.label} is empty" }
 
-        val dir = File(app.cacheDir, "artifacts").apply { mkdirs() }
         val safeName = artifact.label
             .replace(Regex("[^A-Za-z0-9._-]+"), "_")
             .trim('_', '.')
             .take(80)
             .ifBlank { "artifact${suffixFor(artifact)}" }
-        val file = File.createTempFile("artifact-", "-$safeName", dir).also { it.writeBytes(bytes) }
+        val file = (shareFileManager ?: defaultShareFileManager).createShareFile(
+            prefix = "artifact-",
+            suffix = "-$safeName",
+            bytes = bytes,
+        )
         val uri = FileProvider.getUriForFile(app, "${app.packageName}.files", file)
         ArtifactShareRequest(
             uri = uri,
@@ -306,6 +378,31 @@ class ArtifactsViewModel(
             val mimeType: String?,
         )
 
+        private fun boundedDataUrl(dataUrl: String, declaredBytes: Long): String {
+            require(dataUrl.length.toLong() <= MAX_ARTIFACT_DATA_URL_CHARS) {
+                "Artifact preview is too large"
+            }
+            require(declaredBytes <= 0L || declaredBytes <= MAX_ARTIFACT_PREVIEW_BYTES) {
+                "Artifact preview is too large"
+            }
+            val comma = dataUrl.indexOf(',')
+            if (comma > 0) {
+                val payloadLength = (dataUrl.length - comma - 1).toLong()
+                val estimatedBytes = if (dataUrl.substring(0, comma)
+                        .split(';')
+                        .any { it.equals("base64", ignoreCase = true) }
+                ) {
+                    (payloadLength / 4L) * 3L
+                } else {
+                    payloadLength
+                }
+                require(estimatedBytes <= MAX_ARTIFACT_PREVIEW_BYTES) {
+                    "Artifact preview is too large"
+                }
+            }
+            return dataUrl
+        }
+
         private fun decodeDataUrl(value: String): DecodedDataUrl {
             require(value.startsWith("data:", ignoreCase = true)) { "Filesystem preview was not a data URL" }
             val comma = value.indexOf(',')
@@ -314,9 +411,20 @@ class ArtifactsViewModel(
             val payload = value.substring(comma + 1)
             val mime = metadata.substringBefore(';').takeIf { it.isNotBlank() }
             val bytes = if (metadata.split(';').any { it.equals("base64", ignoreCase = true) }) {
-                Base64.decode(payload, Base64.DEFAULT)
+                require(payload.length.toLong() <= MAX_ARTIFACT_DATA_URL_CHARS) {
+                    "Artifact preview is too large"
+                }
+                Base64.decode(payload, Base64.DEFAULT).also {
+                    require(it.size.toLong() <= MAX_SHARE_FILE_BYTES) {
+                        "Artifact is too large to share"
+                    }
+                }
             } else {
-                Uri.decode(payload).toByteArray(Charsets.UTF_8)
+                Uri.decode(payload).toByteArray(Charsets.UTF_8).also {
+                    require(it.size.toLong() <= MAX_SHARE_FILE_BYTES) {
+                        "Artifact is too large to share"
+                    }
+                }
             }
             return DecodedDataUrl(bytes, mime)
         }

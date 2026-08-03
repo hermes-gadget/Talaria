@@ -26,11 +26,13 @@ import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.network.HermesApi
 import com.hermesgadget.talaria.domain.model.ManagedFileEntry
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.buildJsonObject
@@ -94,11 +96,17 @@ sealed interface FileDownloadState {
         val displayName: String,
         val bytesCopied: Long = 0L,
         val totalBytes: Long = -1L,
+        val file: File? = null,
     ) : FileDownloadState
 
     data class Complete(val displayName: String) : FileDownloadState
 
-    data class Failed(val message: String) : FileDownloadState
+    data class Failed(
+        val message: String,
+        val file: File? = null,
+        val displayName: String = "",
+        val mimeType: String = "application/octet-stream",
+    ) : FileDownloadState
 }
 
 data class FilesUiState(
@@ -139,6 +147,12 @@ class FilesViewModel(
     val ui: StateFlow<FilesUiState> = _ui.asStateFlow()
 
     private var uploadResolver: ContentResolver? = null
+    private var directoryJob: Job? = null
+    private var directoryGeneration = 0L
+    private var requestedDirectoryPath: String? = null
+    private var downloadJob: Job? = null
+    private var saveJob: Job? = null
+    private var downloadGeneration = 0L
 
     init {
         open(null)
@@ -147,34 +161,40 @@ class FilesViewModel(
     /** Lists the managed root when [path] is null, or a managed directory otherwise. */
     fun open(path: String?) {
         val requestedPath = path?.takeIf { it.isNotBlank() }
+        val generation = ++directoryGeneration
+        requestedDirectoryPath = requestedPath
+        directoryJob?.cancel()
         _ui.update { it.copy(loading = true, error = null) }
-        viewModelScope.launch {
-            runCatching { api.listManagedFiles(path = requestedPath) }.fold(
-                onSuccess = { response ->
-                    _ui.update {
-                        it.copy(
-                            path = response.path.takeIf { value -> value.isNotBlank() }
-                                ?: requestedPath
-                                ?: "/",
-                            parent = response.parent,
-                            root = response.root,
-                            lockedRoot = response.lockedRoot,
-                            canChangePath = response.canChangePath,
-                            entries = response.entries,
-                            loading = false,
-                            error = null,
-                        )
-                    }
-                },
-                onFailure = { error ->
+        directoryJob = viewModelScope.launch {
+            try {
+                val response = api.listManagedFiles(path = requestedPath)
+                if (!isCurrentDirectoryRequest(generation, requestedPath)) return@launch
+                _ui.update {
+                    it.copy(
+                        path = response.path.takeIf { value -> value.isNotBlank() }
+                            ?: requestedPath
+                            ?: "/",
+                        parent = response.parent,
+                        root = response.root,
+                        lockedRoot = response.lockedRoot,
+                        canChangePath = response.canChangePath,
+                        entries = response.entries,
+                        loading = false,
+                        error = null,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (isCurrentDirectoryRequest(generation, requestedPath)) {
                     _ui.update {
                         it.copy(
                             loading = false,
                             error = error.message ?: appString(R.string.files_error_load_directory),
                         )
                     }
-                },
-            )
+                }
+            }
         }
     }
 
@@ -221,7 +241,7 @@ class FilesViewModel(
             runCatching {
                 if (initialType == FilePreviewType.IMAGE) {
                     val response = api.getMediaDataUrl(entry.path)
-                    val parsed = parseDataUrl(response.dataUrl)
+                    val parsed = parseManagedPreviewDataUrl(response.dataUrl)
                     PreviewPayload(
                         type = FilePreviewType.IMAGE,
                         mimeType = normalizedMime(entry.name, entry.mimeType, parsed.mimeType),
@@ -232,7 +252,7 @@ class FilesViewModel(
                     )
                 } else {
                     val response = api.readManagedFile(entry.path)
-                    val parsed = parseDataUrl(response.dataUrl)
+                    val parsed = parseManagedPreviewDataUrl(response.dataUrl, response.size)
                     val name = response.name.ifBlank { entry.name }
                     val mimeType = normalizedMime(name, response.mimeType, parsed.mimeType)
                     val type = managedPreviewType(name, mimeType)
@@ -316,43 +336,45 @@ class FilesViewModel(
         val path = file.path
         _ui.update { it.copy(confirmSave = false, saving = true, previewError = null) }
         viewModelScope.launch {
-            runCatching {
+            try {
+                val draftBytes = draft.toByteArray(Charsets.UTF_8)
+                require(draftBytes.size.toLong() <= INLINE_UPLOAD_LIMIT_BYTES) {
+                    "Edited file exceeds the ${INLINE_UPLOAD_LIMIT_BYTES / (1024 * 1024)} MiB limit"
+                }
                 api.uploadManagedFile(
                     managedUploadBody(
                         path = path,
-                        dataUrl = dataUrlFor(draft.toByteArray(Charsets.UTF_8), "text/plain"),
+                        dataUrl = dataUrlFor(draftBytes, "text/plain"),
                         overwrite = true,
                     ),
                 )
-            }.fold(
-                onSuccess = {
-                    updateCurrentPreview(path) {
-                        it.copy(
-                            preview = file.copy(
-                                size = draft.toByteArray(Charsets.UTF_8).size.toLong(),
-                                mimeType = "text/plain",
-                                text = draft,
-                            ),
-                            previewType = FilePreviewType.TEXT,
-                            previewBytes = null,
-                            previewMimeType = "text/plain",
-                            editDraft = draft,
-                            editing = false,
-                            saving = false,
-                            previewError = null,
-                            shareError = null,
-                        )
-                    }
-                },
-                onFailure = { error ->
-                    updateCurrentPreview(path) {
-                        it.copy(
-                            saving = false,
-                            previewError = error.message ?: appString(R.string.files_error_save_file),
-                        )
-                    }
-                },
-            )
+                updateCurrentPreview(path) {
+                    it.copy(
+                        preview = file.copy(
+                            size = draftBytes.size.toLong(),
+                            mimeType = "text/plain",
+                            text = draft,
+                        ),
+                        previewType = FilePreviewType.TEXT,
+                        previewBytes = null,
+                        previewMimeType = "text/plain",
+                        editDraft = draft,
+                        editing = false,
+                        saving = false,
+                        previewError = null,
+                        shareError = null,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                updateCurrentPreview(path) {
+                    it.copy(
+                        saving = false,
+                        previewError = error.message ?: appString(R.string.files_error_save_file),
+                    )
+                }
+            }
         }
     }
 
@@ -369,6 +391,9 @@ class FilesViewModel(
                     FilePreviewType.IMAGE,
                     FilePreviewType.BINARY,
                     -> state.previewBytes ?: readPreviewBytes(file.path, type)
+                }
+                require(bytes.size.toLong() <= MAX_SHARE_FILE_BYTES) {
+                    "File is too large to share"
                 }
                 FileSharePayload(
                     path = file.path,
@@ -501,7 +526,10 @@ class FilesViewModel(
         if (_ui.value.downloadState is FileDownloadState.Downloading ||
             _ui.value.downloadState is FileDownloadState.Saving
         ) return
-        deleteReadyDownload()
+        downloadGeneration += 1
+        val generation = downloadGeneration
+        downloadJob?.cancel()
+        deleteOwnedDownload()
         _ui.update {
             it.copy(
                 downloadState = FileDownloadState.Downloading(
@@ -511,24 +539,39 @@ class FilesViewModel(
                 actionError = null,
             )
         }
-        viewModelScope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
+        downloadJob = viewModelScope.launch {
+            try {
+                val ready = withContext(Dispatchers.IO) {
                     val directory = File(cacheDirectory, "managed-downloads").apply { mkdirs() }
                     val output = File.createTempFile("hermes-file-", ".download", directory)
                     try {
                         api.downloadManagedFile(path).use { response ->
                             val total = response.contentLength().takeIf { it > 0L } ?: size
-                            _ui.update {
-                                it.copy(
-                                    downloadState = FileDownloadState.Downloading(
-                                        displayName = displayName,
-                                        totalBytes = total,
-                                    ),
-                                )
+                            if (generation == downloadGeneration) {
+                                _ui.update {
+                                    it.copy(
+                                        downloadState = FileDownloadState.Downloading(
+                                            displayName = displayName,
+                                            totalBytes = total,
+                                        ),
+                                    )
+                                }
                             }
                             response.byteStream().use { source ->
                                 output.outputStream().use { destination ->
+                                    val progress = ProgressThrottler(onProgress = { copied, reportedTotal ->
+                                        if (generation == downloadGeneration) {
+                                            _ui.update {
+                                                it.copy(
+                                                    downloadState = FileDownloadState.Downloading(
+                                                        displayName = displayName,
+                                                        bytesCopied = copied,
+                                                        totalBytes = reportedTotal,
+                                                    ),
+                                                )
+                                            }
+                                        }
+                                    })
                                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                                     var copied = 0L
                                     while (true) {
@@ -536,16 +579,9 @@ class FilesViewModel(
                                         if (count < 0) break
                                         destination.write(buffer, 0, count)
                                         copied += count
-                                        _ui.update {
-                                            it.copy(
-                                                downloadState = FileDownloadState.Downloading(
-                                                    displayName = displayName,
-                                                    bytesCopied = copied,
-                                                    totalBytes = total,
-                                                ),
-                                            )
-                                        }
+                                        progress.report(copied, total)
                                     }
+                                    progress.complete(copied, total)
                                 }
                             }
                         }
@@ -555,9 +591,15 @@ class FilesViewModel(
                         throw error
                     }
                 }
-            }.fold(
-                onSuccess = { ready -> _ui.update { it.copy(downloadState = ready) } },
-                onFailure = { error ->
+                if (generation == downloadGeneration) {
+                    _ui.update { it.copy(downloadState = ready) }
+                } else {
+                    ready.file?.delete()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (generation == downloadGeneration) {
                     _ui.update {
                         it.copy(
                             downloadState = FileDownloadState.Failed(
@@ -565,27 +607,46 @@ class FilesViewModel(
                             ),
                         )
                     }
-                },
-            )
+                }
+            }
         }
     }
 
     fun saveDownload(uri: Uri, resolver: ContentResolver) {
-        val ready = _ui.value.downloadState as? FileDownloadState.Ready ?: return
+        val payload = currentDownloadPayload() ?: return
+        downloadGeneration += 1
+        val generation = downloadGeneration
+        saveJob?.cancel()
         _ui.update {
             it.copy(
                 downloadState = FileDownloadState.Saving(
-                    displayName = ready.displayName,
-                    totalBytes = ready.file.length(),
+                    displayName = payload.displayName,
+                    totalBytes = payload.file.length(),
+                    file = payload.file,
                 ),
             )
         }
-        viewModelScope.launch {
-            runCatching {
+        saveJob = viewModelScope.launch {
+            try {
                 withContext(Dispatchers.IO) {
                     val output = resolver.openOutputStream(uri) ?: error("")
                     output.use { destination ->
-                        ready.file.inputStream().use { source ->
+                        payload.file.inputStream().use { source ->
+                            val total = payload.file.length()
+                            val progress = ProgressThrottler(onProgress = { copied, reportedTotal ->
+                                if (generation == downloadGeneration) {
+                                    _ui.update {
+                                        it.copy(
+                                            downloadState = FileDownloadState.Saving(
+                                                displayName = payload.displayName,
+                                                bytesCopied = copied,
+                                                totalBytes = reportedTotal,
+                                                file = payload.file,
+                                            ),
+                                        )
+                                    }
+                                }
+                            })
                             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                             var copied = 0L
                             while (true) {
@@ -593,41 +654,44 @@ class FilesViewModel(
                                 if (count < 0) break
                                 destination.write(buffer, 0, count)
                                 copied += count
-                                _ui.update {
-                                    it.copy(
-                                        downloadState = FileDownloadState.Saving(
-                                            displayName = ready.displayName,
-                                            bytesCopied = copied,
-                                            totalBytes = ready.file.length(),
-                                        ),
-                                    )
-                                }
+                                progress.report(copied, total)
                             }
+                            progress.complete(copied, total)
                         }
                     }
                 }
-            }.fold(
-                onSuccess = {
-                    ready.file.delete()
-                    _ui.update {
-                        it.copy(downloadState = FileDownloadState.Complete(ready.displayName))
-                    }
-                },
-                onFailure = { error ->
+                if (generation != downloadGeneration) return@launch
+                payload.file.delete()
+                _ui.update {
+                    it.copy(downloadState = FileDownloadState.Complete(payload.displayName))
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (generation == downloadGeneration) {
                     _ui.update {
                         it.copy(
                             downloadState = FileDownloadState.Failed(
-                                error.message ?: appString(R.string.files_error_save_download),
+                                message = error.message ?: appString(R.string.files_error_save_download),
+                                file = payload.file,
+                                displayName = payload.displayName,
+                                mimeType = payload.mimeType,
                             ),
                         )
-                    }
-                },
-            )
-        }
+                                        }
+                                    }
+                                }
+                            })
     }
 
+    /** Alias for callers that expose a retry action after a failed SAF save. */
+    fun retrySaveDownload(uri: Uri, resolver: ContentResolver) = saveDownload(uri, resolver)
+
     fun cancelDownload() {
-        deleteReadyDownload()
+        downloadGeneration += 1
+        downloadJob?.cancel()
+        saveJob?.cancel()
+        deleteOwnedDownload()
         _ui.update { it.copy(downloadState = FileDownloadState.Idle) }
     }
 
@@ -747,9 +811,9 @@ class FilesViewModel(
 
     private suspend fun readPreviewBytes(path: String, type: FilePreviewType): ByteArray {
         return if (type == FilePreviewType.IMAGE) {
-            parseDataUrl(api.getMediaDataUrl(path).dataUrl).bytes
+            parseManagedPreviewDataUrl(api.getMediaDataUrl(path).dataUrl).bytes
         } else {
-            parseDataUrl(api.readManagedFile(path).dataUrl).bytes
+            parseManagedPreviewDataUrl(api.readManagedFile(path).dataUrl).bytes
         }
     }
 
@@ -767,15 +831,34 @@ class FilesViewModel(
             put("overwrite", overwrite)
         }
 
-    private fun deleteReadyDownload() {
-        val ready = _ui.value.downloadState as? FileDownloadState.Ready
-        ready?.file?.delete()
+    private fun isCurrentDirectoryRequest(generation: Long, requestedPath: String?): Boolean =
+        generation == directoryGeneration && requestedPath == requestedDirectoryPath
+
+    private fun currentDownloadPayload(): DownloadPayload? = when (val state = _ui.value.downloadState) {
+        is FileDownloadState.Ready -> DownloadPayload(state.file, state.displayName, state.mimeType)
+        is FileDownloadState.Failed -> state.file?.let {
+            DownloadPayload(
+                file = it,
+                displayName = state.displayName,
+                mimeType = state.mimeType,
+            )
+        }
+        else -> null
+    }
+
+    private fun deleteOwnedDownload() {
+        currentDownloadPayload()?.file?.delete()
+        (_ui.value.downloadState as? FileDownloadState.Saving)?.file?.delete()
     }
 
     private fun appString(@StringRes resourceId: Int): String = TalariaApp.instance.getString(resourceId)
 
     override fun onCleared() {
-        deleteReadyDownload()
+        downloadGeneration += 1
+        directoryJob?.cancel()
+        downloadJob?.cancel()
+        saveJob?.cancel()
+        deleteOwnedDownload()
         super.onCleared()
     }
 
@@ -783,6 +866,29 @@ class FilesViewModel(
         fun factory() = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = FilesViewModel() as T
+        }
+    }
+}
+
+private data class DownloadPayload(
+    val file: File,
+    val displayName: String,
+    val mimeType: String,
+)
+
+private const val MAX_MANAGED_PREVIEW_DATA_URL_CHARS =
+    ((MAX_MANAGED_PREVIEW_BYTES + 2L) / 3L) * 4L + 4_096L
+
+private fun parseManagedPreviewDataUrl(dataUrl: String, declaredBytes: Long = 0L): ParsedDataUrl {
+    require(dataUrl.length.toLong() <= MAX_MANAGED_PREVIEW_DATA_URL_CHARS) {
+        "Managed file preview is too large"
+    }
+    require(declaredBytes <= 0L || declaredBytes <= MAX_MANAGED_PREVIEW_BYTES) {
+        "Managed file preview is too large"
+    }
+    return parseDataUrl(dataUrl).also { parsed ->
+        require(parsed.bytes.size.toLong() <= MAX_MANAGED_PREVIEW_BYTES) {
+            "Managed file preview is too large"
         }
     }
 }

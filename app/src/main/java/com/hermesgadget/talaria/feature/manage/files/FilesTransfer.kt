@@ -25,6 +25,46 @@ import okio.BufferedSink
 
 /** Keep small uploads in the JSON data-URL request; stream larger files instead. */
 internal const val INLINE_UPLOAD_LIMIT_BYTES = 2L * 1024L * 1024L
+internal const val MAX_MANAGED_PREVIEW_BYTES = 16L * 1024L * 1024L
+
+private const val PROGRESS_MIN_BYTES = 64L * 1024L
+private const val PROGRESS_INTERVAL_NANOS = 100L * 1_000_000L
+
+/** Emits transfer progress at a renderable cadence and never drops completion. */
+internal class ProgressThrottler(
+    private val onProgress: (copied: Long, total: Long) -> Unit,
+    private val minBytes: Long = PROGRESS_MIN_BYTES,
+    private val intervalNanos: Long = PROGRESS_INTERVAL_NANOS,
+    private val clockNanos: () -> Long = System::nanoTime,
+) {
+    private var lastCopied = -1L
+    private var lastTotal = Long.MIN_VALUE
+    private var lastEmitNanos = Long.MIN_VALUE
+
+    fun report(copied: Long, total: Long) {
+        val now = clockNanos()
+        val first = lastCopied < 0L
+        val terminal = total >= 0L && copied >= total
+        val enoughBytes = copied - lastCopied >= minBytes
+        val enoughTime = lastEmitNanos == Long.MIN_VALUE ||
+            now - lastEmitNanos >= intervalNanos
+        if (first || terminal || enoughBytes || enoughTime) {
+            emit(copied, total, now)
+        }
+    }
+
+    fun complete(copied: Long, total: Long) {
+        emit(copied, total, clockNanos())
+    }
+
+    private fun emit(copied: Long, total: Long, now: Long) {
+        if (copied == lastCopied && total == lastTotal && lastEmitNanos != Long.MIN_VALUE) return
+        lastCopied = copied
+        lastTotal = total
+        lastEmitNanos = now
+        onProgress(copied, total)
+    }
+}
 
 internal fun contentDisplayName(resolver: ContentResolver, uri: Uri): String {
     val queriedName = runCatching {
@@ -56,20 +96,30 @@ internal fun readContent(
     expectedLength: Long,
     onProgress: (Long, Long) -> Unit,
 ): ByteArray {
+    require(expectedLength < 0L || expectedLength <= INLINE_UPLOAD_LIMIT_BYTES) {
+        "Inline upload exceeds the ${INLINE_UPLOAD_LIMIT_BYTES / (1024 * 1024)} MiB limit"
+    }
     val input = resolver.openInputStream(uri) ?: error("")
     return input.use { source ->
         ByteArrayOutputStream(
-            expectedLength.takeIf { it in 1..Int.MAX_VALUE }?.toInt() ?: 16 * 1024,
+            expectedLength.takeIf { it in 1..INLINE_UPLOAD_LIMIT_BYTES }
+                ?.toInt()
+                ?: 16 * 1024,
         ).use { output ->
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            val progress = ProgressThrottler(onProgress)
             var copied = 0L
             while (true) {
                 val count = source.read(buffer)
                 if (count < 0) break
+                require(copied <= INLINE_UPLOAD_LIMIT_BYTES - count) {
+                    "Inline upload exceeds the ${INLINE_UPLOAD_LIMIT_BYTES / (1024 * 1024)} MiB limit"
+                }
                 output.write(buffer, 0, count)
                 copied += count
-                onProgress(copied, expectedLength)
+                progress.report(copied, expectedLength)
             }
+            progress.complete(copied, expectedLength)
             output.toByteArray()
         }
     }
@@ -91,21 +141,27 @@ internal class ContentResolverRequestBody(
         val input = resolver.openInputStream(uri) ?: error("")
         input.use { source ->
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            val progress = ProgressThrottler(onProgress)
             var copied = 0L
             while (true) {
                 val count = source.read(buffer)
                 if (count < 0) break
                 sink.write(buffer, 0, count)
                 copied += count
-                onProgress(copied, length)
+                progress.report(copied, length)
             }
+            progress.complete(copied, length)
         }
     }
 }
 
 internal fun joinManagedPath(directory: String, name: String): String {
-    val cleanName = name.trim().trim('/')
+    require(name.none { character ->
+        character == '/' || character == '\\' || character.isISOControl()
+    })
+    val cleanName = name.trim()
     require(cleanName.isNotBlank())
+    require(cleanName != "." && cleanName != "..")
     val cleanDirectory = directory.trim()
     return when {
         cleanDirectory.isBlank() || cleanDirectory == "/" -> "/$cleanName"
