@@ -66,6 +66,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -184,6 +186,8 @@ data class ChatPromptUi(
     val message: String,
     val requestId: String? = null,
     val choices: List<String> = emptyList(),
+    /** Unique for each gateway prompt, including prompts without a request id. */
+    val instanceId: String = UUID.randomUUID().toString(),
 )
 
 private class SessionRuntime(
@@ -192,6 +196,9 @@ private class SessionRuntime(
     var collectJob: Job? = null,
     var sideJob: Job? = null,
     var readingJob: Job? = null,
+    var readingRequestJob: Job? = null,
+    var readingGeneration: Long = 0L,
+    val readingMutex: Mutex = Mutex(),
     var assistantBuffer: StringBuilder = StringBuilder(),
     var sidecarAssistantBuffer: StringBuilder = StringBuilder(),
     var readingSessionId: String? = null,
@@ -207,6 +214,18 @@ private data class PendingChatImage(
     var attachedSessionId: String? = null,
 )
 
+private data class PendingLocalCreation(
+    val tabId: String,
+    val channelId: String,
+    val profileName: String,
+    val startedAtMillis: Long = System.currentTimeMillis(),
+)
+
+private data class CachedServerSttCapability(
+    val supported: Boolean,
+    val checkedAtMillis: Long,
+)
+
 class ChatViewModel(
     private val chatRepository: ChatRepository = TalariaApp.instance.container.chatRepository,
     private val hermesRepository: HermesRepository = TalariaApp.instance.container.hermesRepository,
@@ -220,6 +239,11 @@ class ChatViewModel(
     private val runtimes = mutableMapOf<String, SessionRuntime>()
     /** Hermes session ids already mapped to a tab, so concurrent tabs don't collide. */
     private val claimedSessions = mutableSetOf<String>()
+    /** The single owner map behind [claimedSessions]; claims are atomic across pollers. */
+    private val sessionOwners = mutableMapOf<String, String>()
+    private val sessionOwnershipLock = Any()
+    /** Local, not-yet-bound tabs keyed by their originating PTY channel. */
+    private val pendingLocalCreations = mutableMapOf<String, PendingLocalCreation>()
     /** Tab ids that were created by the auto-open sync, not by the user. */
     private val autoOpenedTabs = mutableSetOf<String>()
     private var sessionCounter = 0
@@ -238,6 +262,7 @@ class ChatViewModel(
     private var boundConnectionScope: String? = null
     private var boundConnectionId: String? = null
     private var boundManagementProfile: String? = null
+    private var connectionScopeGeneration = 0L
     private var loadingConnectionScope = false
     private val inputHistoryStore = ChatInputHistoryStore(TalariaApp.instance)
     private val inputHistories = mutableMapOf<String, InputHistoryNavigator>()
@@ -248,8 +273,13 @@ class ChatViewModel(
      * servers without STT; it can fail with a client error on some devices. */
     private val voiceRecorder = VoiceRecorder(TalariaApp.instance)
     private var serverDictation = false
+    private var serverDictationTabId: String? = null
+    private var serverDictationScopeGeneration: Long? = null
     private var serverSttUnavailable = false
     private var serverSttChecked = false
+    private var serverSttScope: String? = null
+    private var serverSttProbeGeneration = 0L
+    private val serverSttCapabilities = mutableMapOf<String, CachedServerSttCapability>()
 
     /** Called by the screen: make sure at least one session exists (optionally resuming). */
     fun ensureStarted(resume: String? = null) {
@@ -324,6 +354,10 @@ class ChatViewModel(
 
     private fun bindManagementProfile(scopeId: String, profileName: String, resume: String?) {
         scopeLoadJob?.cancel()
+        connectionScopeGeneration += 1
+        cancelVoiceInput()
+        voiceRecorder.cancel()
+        resetServerSttForScope(scopeId)
         boundConnectionScope = scopeId
         boundManagementProfile = profileName
         loadingConnectionScope = true
@@ -344,18 +378,23 @@ class ChatViewModel(
     /** Tear down every socket and transient byte buffer before binding another Hermes home. */
     private fun resetForConnectionScope(scopeId: String) {
         scopeLoadJob?.cancel()
-        sttJob?.cancel()
+        connectionScopeGeneration += 1
+        cancelVoiceInput()
+        resetServerSttForScope(scopeId)
         slashCompletionJob?.cancel()
         runtimes.values.forEach {
             it.collectJob?.cancel()
             it.sideJob?.cancel()
             it.readingJob?.cancel()
+            it.readingRequestJob?.cancel()
             it.session.close()
             it.eventClient.dispose()
         }
         _ui.value.tabs.forEach { AgentTaskNotificationService.stopWatching(TalariaApp.instance, it.id) }
         runtimes.clear()
         claimedSessions.clear()
+        synchronized(sessionOwnershipLock) { sessionOwners.clear() }
+        pendingLocalCreations.clear()
         autoOpenedTabs.clear()
         pendingImages.clear()
         inputHistories.clear()
@@ -456,8 +495,10 @@ class ChatViewModel(
         old?.collectJob?.cancel()
         old?.sideJob?.cancel()
         old?.readingJob?.cancel()
+        old?.readingRequestJob?.cancel()
         old?.session?.close()
         old?.eventClient?.dispose()
+        removePendingLocalCreation(tabId)
 
         // The sidecar may expose a runtime id that is not accepted by the PTY
         // resume route; keep the durable branch id first when reconnecting.
@@ -472,8 +513,18 @@ class ChatViewModel(
             container.wsAuthHelper,
             profileName = tab.profileName,
         )
+        val baselineBeforeOpen = ProfileRegistry.state.value
+            .sessionsByProfile[tab.profileName]
+            .orEmpty()
+            .map { it.id }
+            .toSet()
         val (pty, flow) = chatRepository.openPty(resume, channel, lastCols, lastRows)
-        val rt = SessionRuntime(session = pty, eventClient = eventClient)
+        val rt = SessionRuntime(
+            session = pty,
+            eventClient = eventClient,
+            baselineSessions = old?.baselineSessions ?: baselineBeforeOpen,
+            baselineReady = old?.baselineReady ?: true,
+        )
         // Keep baseline from the prior runtime when present so we don't reclaim
         // unrelated sessions that appeared while we were disconnected.
         if (old != null) {
@@ -483,6 +534,13 @@ class ChatViewModel(
             rt.sidecarEventsSeen = old.sidecarEventsSeen
         }
         runtimes[tabId] = rt
+        if (resume.isNullOrBlank()) {
+            pendingLocalCreations[channel] = PendingLocalCreation(
+                tabId = tabId,
+                channelId = channel,
+                profileName = tab.profileName,
+            )
+        }
 
         updateTab(tabId) {
             it.copy(
@@ -514,12 +572,12 @@ class ChatViewModel(
         if (old == null || !rt.baselineReady) {
             viewModelScope.launch {
                 val list = sessionsForProfile(tab.profileName)
-                rt.baselineSessions = list.map { it.id }.toSet()
+                if (resume != null) rt.baselineSessions = list.map { it.id }.toSet()
                 rt.baselineReady = true
                 _ui.update { it.copy(sessions = list.take(40)) }
             }
         }
-        if (!resume.isNullOrBlank()) loadReading(tabId, resume)
+        if (!resume.isNullOrBlank()) requestReading(tabId, resume)
         startReadingPoll(tabId)
     }
 
@@ -536,9 +594,26 @@ class ChatViewModel(
             profileName = profileNameForActiveConnection(),
         )
         val profileName = profileNameForActiveConnection()
+        val baselineBeforeOpen = ProfileRegistry.state.value
+            .sessionsByProfile[profileName]
+            .orEmpty()
+            .map { it.id }
+            .toSet()
         val (pty, flow) = chatRepository.openPty(resume, channel, lastCols, lastRows)
-        val rt = SessionRuntime(session = pty, eventClient = eventClient)
+        val rt = SessionRuntime(
+            session = pty,
+            eventClient = eventClient,
+            baselineSessions = baselineBeforeOpen,
+            baselineReady = true,
+        )
         runtimes[id] = rt
+        if (resume.isNullOrBlank()) {
+            pendingLocalCreations[channel] = PendingLocalCreation(
+                tabId = id,
+                channelId = channel,
+                profileName = profileName,
+            )
+        }
 
         _ui.update {
             it.copy(
@@ -557,7 +632,7 @@ class ChatViewModel(
         }
         updateComposerAnalysis(draft)
         resume?.let { ProfileRegistry.markConnecting(profileName, it) }
-        resume?.let { claimedSessions.add(it) }
+        resume?.let { claimSession(id, it) }
 
         viewModelScope.launch {
             hermesRepository.getModelInfo().onSuccess { info ->
@@ -581,11 +656,12 @@ class ChatViewModel(
         // Snapshot existing sessions so this tab only claims the new one it creates.
         viewModelScope.launch {
             val list = hermesRepository.refreshSessions().getOrNull().orEmpty()
-            rt.baselineSessions = list.map { it.id }.toSet()
-            rt.baselineReady = true
+            // The registry snapshot above was captured before the PTY was
+            // opened. Replacing it with this later response would reclassify
+            // the just-created server session as pre-existing.
             _ui.update { it.copy(sessions = list.take(40)) }
         }
-        if (!resume.isNullOrBlank()) loadReading(id, resume)
+        if (!resume.isNullOrBlank()) requestReading(id, resume)
         startReadingPoll(id)
         persistChatState()
     }
@@ -599,16 +675,19 @@ class ChatViewModel(
 
     fun closeTab(tabId: String) {
         autoOpenedTabs.remove(tabId)
+        removePendingLocalCreation(tabId)
         AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
         pendingImages.remove(tabId)
         val rt = runtimes.remove(tabId)
         rt?.collectJob?.cancel()
         rt?.sideJob?.cancel()
         rt?.readingJob?.cancel()
+        rt?.readingRequestJob?.cancel()
         rt?.session?.close()
         rt?.eventClient?.dispose()
         _ui.value.tabs.firstOrNull { it.id == tabId }?.let { tab ->
-            tab.liveSessionId?.let { claimedSessions.remove(it) }
+            releaseSession(tabId, tab.liveSessionId)
+            releaseSession(tabId, tab.resumeSessionId)
             (tab.liveSessionId ?: tab.resumeSessionId)?.let {
                 ProfileRegistry.markDisconnected(tab.profileName, it)
             }
@@ -677,6 +756,7 @@ class ChatViewModel(
      * manually opening each one.
      */
     private fun syncActiveSessions(registry: ProfileRegistryState) {
+        reconcilePendingLocalCreations(registry)
         val activeProfile = profileNameForActiveConnection()
         val openSessionIds = _ui.value.tabs.mapNotNull { it.resumeSessionId ?: it.liveSessionId }.toSet()
         val autoSources = SessionFilters.AUTOMATION_SOURCES.toSet()
@@ -685,11 +765,16 @@ class ChatViewModel(
             // Only auto-open on the foreground profile; background-profile
             // sessions are visible through the merged rail.
             if (profileName != activeProfile) continue
+            val pendingCandidates = pendingLocalCandidateIds(profileName, sessions)
             for (s in sessions) {
                 val source = s.source.orEmpty().lowercase()
                 // Skip automation sessions and already-open tabs.
                 if (autoSources.any { source.contains(it) }) continue
                 if (s.id in openSessionIds) continue
+                // A newly-created local tab owns the first session(s) that
+                // appeared after its channel was opened. Let its discovery
+                // poll resolve that ownership before auto-open can claim it.
+                if (s.id in pendingCandidates) continue
                 // A session with no end marker is still open — the server's
                 // `is_active` flag alone would wrongly skip idle-but-running
                 // chats (it uses a 5-minute activity window).
@@ -712,7 +797,13 @@ class ChatViewModel(
                 val rt = SessionRuntime(session = pty, eventClient = eventClient)
                 runtimes[id] = rt
                 autoOpenedTabs.add(id)
-                claimedSessions.add(s.id)
+                if (!claimSession(id, s.id)) {
+                    runtimes.remove(id)
+                    rt.session.close()
+                    rt.eventClient.dispose()
+                    autoOpenedTabs.remove(id)
+                    continue
+                }
 
                 _ui.update {
                     it.copy(
@@ -743,7 +834,7 @@ class ChatViewModel(
                         }
                     }
                 }
-                loadReading(id, s.id)
+                requestReading(id, s.id)
                 startReadingPoll(id)
 
                 // Register for background notifications so the user gets alerts
@@ -779,6 +870,134 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * Claiming a server id is the one ownership operation used by both local
+     * discovery and the background auto-open poller. The callbacks normally
+     * run on the ViewModel dispatcher, but the lock also protects the race
+     * when two refresh completions arrive in the same frame.
+     */
+    private fun claimSession(tabId: String, sessionId: String): Boolean {
+        if (tabId.isBlank() || sessionId.isBlank()) return false
+        synchronized(sessionOwnershipLock) {
+            val owner = sessionOwners[sessionId]
+            if (owner != null && owner != tabId) return false
+            sessionOwners[sessionId] = tabId
+            claimedSessions.add(sessionId)
+            return true
+        }
+    }
+
+    private fun releaseSession(tabId: String, sessionId: String?) {
+        if (sessionId.isNullOrBlank()) return
+        synchronized(sessionOwnershipLock) {
+            if (sessionOwners[sessionId] == tabId) {
+                sessionOwners.remove(sessionId)
+                claimedSessions.remove(sessionId)
+            }
+        }
+    }
+
+    private fun removePendingLocalCreation(tabId: String) {
+        val channel = pendingLocalCreations.values
+            .firstOrNull { it.tabId == tabId }
+            ?.channelId
+        if (channel != null) pendingLocalCreations.remove(channel)
+    }
+
+    /**
+     * Return candidate ids that must stay out of auto-open while a local PTY
+     * still has no server id. A baseline that is not ready protects the whole
+     * current profile for one refresh; otherwise only ids newer than that
+     * tab's pre-open snapshot are protected.
+     */
+    private fun pendingLocalCandidateIds(
+        profileName: String,
+        sessions: List<SessionSummary>,
+    ): Set<String> {
+        val pending = pendingLocalCreations.values.filter { creation ->
+            if (creation.profileName != profileName) return@filter false
+            val tab = _ui.value.tabs.firstOrNull { it.id == creation.tabId } ?: return@filter false
+            val runtime = runtimes[creation.tabId] ?: return@filter false
+            tab.hasSent && tab.resumeSessionId == null && tab.liveSessionId == null &&
+                !runtime.baselineReady
+        }
+        if (pending.isNotEmpty()) return sessions.map { it.id }.toSet()
+
+        return pendingLocalCreations.values.asSequence()
+            .filter { it.profileName == profileName }
+            .mapNotNull { creation ->
+                val tab = _ui.value.tabs.firstOrNull { it.id == creation.tabId } ?: return@mapNotNull null
+                val runtime = runtimes[creation.tabId] ?: return@mapNotNull null
+                if (!tab.hasSent || tab.resumeSessionId != null || tab.liveSessionId != null) {
+                    return@mapNotNull null
+                }
+                val ids = sessions.asSequence()
+                    .filter { it.id !in runtime.baselineSessions }
+                    .map { it.id }
+                    .toSet()
+                ids
+            }
+            .flatten()
+            .toSet()
+    }
+
+    /**
+     * Resolve pending local channels before the next auto-open pass. If a
+     * transport died without ever yielding a session id, remove the runtime
+     * after a bounded wait so a permanently orphaned tab cannot reserve every
+     * future server session.
+     */
+    private fun reconcilePendingLocalCreations(registry: ProfileRegistryState) {
+        val now = System.currentTimeMillis()
+        pendingLocalCreations.values.toList().forEach { creation ->
+            val tab = _ui.value.tabs.firstOrNull { it.id == creation.tabId }
+            val runtime = runtimes[creation.tabId]
+            if (tab == null || runtime == null) {
+                pendingLocalCreations.remove(creation.channelId)
+                return@forEach
+            }
+            if (tab.resumeSessionId != null || tab.liveSessionId != null) {
+                pendingLocalCreations.remove(creation.channelId)
+                return@forEach
+            }
+            if (tab.hasSent && runtime.baselineReady) {
+                val candidate = registry.sessionsByProfile[creation.profileName]
+                    .orEmpty()
+                    .asSequence()
+                    .filter { it.id !in runtime.baselineSessions }
+                    .filter { it.id !in claimedSessions }
+                    .maxByOrNull { MultiProfileSession(creation.profileName, it).recency }
+                if (candidate != null && claimSession(creation.tabId, candidate.id)) {
+                    bindSession(creation.tabId, candidate.id)
+                    return@forEach
+                }
+            }
+            if (tab.hasSent && now - creation.startedAtMillis >= LOCAL_SESSION_DISCOVERY_TIMEOUT_MS) {
+                pendingLocalCreations.remove(creation.channelId)
+                runtimes.remove(creation.tabId)
+                runtime.readingJob?.cancel()
+                runtime.readingRequestJob?.cancel()
+                runtime.collectJob?.cancel()
+                runtime.sideJob?.cancel()
+                runtime.session.close()
+                runtime.eventClient.dispose()
+                AgentTaskNotificationService.stopWatching(TalariaApp.instance, creation.tabId)
+                updateTab(creation.tabId) {
+                    it.copy(
+                        connected = false,
+                        connecting = false,
+                        working = false,
+                        error = "Hermes did not expose the new chat session; reconnect and retry",
+                    )
+                }
+            } else if (!tab.hasSent && now - creation.startedAtMillis >= LOCAL_SESSION_DISCOVERY_TIMEOUT_MS) {
+                // Blank tabs do not reserve any server id. Drop their pending
+                // record, and re-register it when the user eventually sends.
+                pendingLocalCreations.remove(creation.channelId)
+            }
+        }
+    }
+
     /** Close an auto-opened tab without persisting it or opening a fallback. */
     private fun closeAutoTab(tabId: String) {
         autoOpenedTabs.remove(tabId)
@@ -788,10 +1007,12 @@ class ChatViewModel(
         rt?.collectJob?.cancel()
         rt?.sideJob?.cancel()
         rt?.readingJob?.cancel()
+        rt?.readingRequestJob?.cancel()
         rt?.session?.close()
         rt?.eventClient?.dispose()
         _ui.value.tabs.firstOrNull { it.id == tabId }?.let { tab ->
-            tab.liveSessionId?.let { claimedSessions.remove(it) }
+            releaseSession(tabId, tab.liveSessionId)
+            releaseSession(tabId, tab.resumeSessionId)
             (tab.liveSessionId ?: tab.resumeSessionId)?.let {
                 ProfileRegistry.markDisconnected(tab.profileName, it)
             }
@@ -1455,12 +1676,21 @@ class ChatViewModel(
         _ui.update { it.copy(transcriptMode = mode) }
         val tab = _ui.value.active ?: return
         val resume = tab.resumeSessionId ?: tab.liveSessionId
-        if (mode == TranscriptMode.READING && !resume.isNullOrBlank()) loadReading(tab.id, resume)
+        if (mode == TranscriptMode.READING && !resume.isNullOrBlank()) {
+            requestReading(tab.id, resume)
+        }
     }
 
     fun updateDraft(text: String) {
         val tabId = _ui.value.active?.id ?: return
-        _ui.value.active?.let { historyFor(it).onManualEdit() }
+        updateDraft(tabId, text, recordManualEdit = true)
+    }
+
+    /** Canonical draft mutation for producers that already know their tab. */
+    private fun updateDraft(tabId: String, text: String, recordManualEdit: Boolean) {
+        if (recordManualEdit) {
+            _ui.value.tabs.firstOrNull { it.id == tabId }?.let { historyFor(it).onManualEdit() }
+        }
         applyDraft(tabId, text)
     }
 
@@ -1629,6 +1859,15 @@ class ChatViewModel(
         val tab = _ui.value.active ?: return
         val tabId = tab.id
         val rt = runtimes[tabId] ?: return
+        if (tab.resumeSessionId == null && tab.liveSessionId == null &&
+            pendingLocalCreations.values.none { it.tabId == tabId }
+        ) {
+            pendingLocalCreations[tab.channelId] = PendingLocalCreation(
+                tabId = tabId,
+                channelId = tab.channelId,
+                profileName = tab.profileName,
+            )
+        }
         val attachments = tab.imageAttachments
         if (payload.isEmpty() && attachments.isEmpty()) return
         if (attachments.any { it.status == ChatImageAttachmentStatus.UPLOADING }) return
@@ -1864,6 +2103,10 @@ class ChatViewModel(
             if (serverDictation) stopServerDictation() else stopOnDeviceDictation()
             return
         }
+        val activeScope = activeChatScopeId()
+        if (activeScope != null && serverSttScope != activeScope) {
+            resetServerSttForScope(activeScope)
+        }
         if (!speech.hasMicPermission()) {
             reportError("Microphone permission required")
             return
@@ -1884,32 +2127,110 @@ class ChatViewModel(
         startOnDeviceDictation()
     }
 
+    private fun activeChatScopeId(): String? =
+        container.connectionStore.activeProfile()?.scopeId() ?: boundConnectionScope
+
+    /** Keep capability knowledge isolated to one immutable connection/profile scope. */
+    private fun resetServerSttForScope(scopeId: String?) {
+        serverSttProbeGeneration += 1
+        serverSttScope = scopeId
+        val cached = scopeId?.let { serverSttCapabilities[it] }
+            ?.takeIf { System.currentTimeMillis() - it.checkedAtMillis < SERVER_STT_CAPABILITY_TTL_MS }
+        if (scopeId != null && cached == null) serverSttCapabilities.remove(scopeId)
+        serverSttChecked = cached != null
+        serverSttUnavailable = cached?.supported == false
+    }
+
+    private fun invalidateServerStt(scopeId: String?) {
+        if (scopeId.isNullOrBlank()) return
+        serverSttCapabilities[scopeId] = CachedServerSttCapability(
+            supported = false,
+            checkedAtMillis = System.currentTimeMillis(),
+        )
+        if (serverSttScope == scopeId) {
+            serverSttChecked = true
+            serverSttUnavailable = true
+        }
+    }
+
+    private fun cancelVoiceInput() {
+        sttJob?.cancel()
+        sttJob = null
+        voiceRecorder.cancel()
+        serverDictation = false
+        serverDictationTabId = null
+        serverDictationScopeGeneration = null
+        _ui.update {
+            if (it.listening || it.partialDictation.isNotEmpty()) {
+                it.copy(listening = false, partialDictation = "")
+            } else {
+                it
+            }
+        }
+    }
+
+    private fun isCurrentVoiceScope(scopeId: String?, generation: Long, tabId: String): Boolean =
+        scopeId != null && scopeId == activeChatScopeId() &&
+            generation == connectionScopeGeneration &&
+            _ui.value.tabs.any { it.id == tabId }
+
     /** One-time capability probe: abort a recording if the server lacks STT. */
     private fun checkServerSttOnce() {
+        val scopeId = activeChatScopeId() ?: return
+        if (serverSttScope != scopeId) resetServerSttForScope(scopeId)
+        val cached = serverSttCapabilities[scopeId]
+            ?.takeIf { System.currentTimeMillis() - it.checkedAtMillis < SERVER_STT_CAPABILITY_TTL_MS }
+        if (cached != null) {
+            serverSttChecked = true
+            serverSttUnavailable = !cached.supported
+            return
+        }
         if (serverSttChecked) return
         serverSttChecked = true
+        val probeGeneration = ++serverSttProbeGeneration
         viewModelScope.launch {
             val capabilities = runCatching {
                 val root = container.clientFactory.api().getOpenApi()
                 VoiceCapabilities.fromOpenApiPaths(root["paths"]?.jsonObject?.keys.orEmpty())
             }.getOrNull()
-            if (capabilities != null && !capabilities.serverStt) {
-                serverSttUnavailable = true
-                if (_ui.value.listening && serverDictation) {
-                    voiceRecorder.cancel()
-                    serverDictation = false
-                    _ui.update { it.copy(listening = false, partialDictation = "") }
-                    reportError("Server speech-to-text is unavailable on this Hermes — tap the mic again for on-device dictation")
-                }
+            if (
+                probeGeneration != serverSttProbeGeneration ||
+                serverSttScope != scopeId ||
+                activeChatScopeId() != scopeId ||
+                !isActive
+            ) return@launch
+            if (capabilities == null) {
+                // A transport failure is not proof that this scope lacks STT;
+                // permit a later tap to retry the probe.
+                serverSttChecked = false
+                return@launch
+            }
+            serverSttCapabilities[scopeId] = CachedServerSttCapability(
+                supported = capabilities.serverStt,
+                checkedAtMillis = System.currentTimeMillis(),
+            )
+            serverSttUnavailable = !capabilities.serverStt
+            if (!capabilities.serverStt && _ui.value.listening && serverDictation) {
+                cancelVoiceInput()
+                reportError("Server speech-to-text is unavailable on this Hermes — tap the mic again for on-device dictation")
             }
         }
     }
 
     /** Records locally for server transcription (settings-test proven path). */
     private fun startServerDictation() {
+        val tabId = _ui.value.active?.id ?: return
+        val scopeId = activeChatScopeId()
+        val generation = connectionScopeGeneration
         voiceRecorder.start()
             .onSuccess {
+                if (!isCurrentVoiceScope(scopeId, generation, tabId)) {
+                    voiceRecorder.cancel()
+                    return@onSuccess
+                }
                 serverDictation = true
+                serverDictationTabId = tabId
+                serverDictationScopeGeneration = generation
                 _ui.update { it.copy(listening = true, partialDictation = "Listening…") }
             }
             .onFailure { reportError(it.message ?: "Could not start recording") }
@@ -1917,7 +2238,11 @@ class ChatViewModel(
 
     private fun stopServerDictation() {
         serverDictation = false
-        val tabId = _ui.value.active?.id
+        val tabId = serverDictationTabId ?: _ui.value.active?.id
+        val scopeId = activeChatScopeId()
+        val generation = serverDictationScopeGeneration ?: connectionScopeGeneration
+        serverDictationTabId = null
+        serverDictationScopeGeneration = null
         val recorded = voiceRecorder.stop()
         _ui.update { it.copy(listening = false, partialDictation = "") }
         if (recorded.isFailure) {
@@ -1944,17 +2269,23 @@ class ChatViewModel(
                 if (!response.ok || transcript.isBlank()) {
                     throw IllegalStateException(response.error ?: "Hermes returned no transcript")
                 }
+                if (!isCurrentVoiceScope(scopeId, generation, tabId)) return@launch
                 val merged = (_ui.value.tabs.firstOrNull { it.id == tabId }?.draft.orEmpty() + " " + transcript).trim()
-                updateTab(tabId) { it.copy(draft = merged) }
+                // STT is a tab-scoped producer, but it must use the same
+                // analysis/persistence path as ordinary composer edits.
+                updateDraft(tabId, merged, recordManualEdit = false)
             } catch (error: HttpException) {
+                if (!isCurrentVoiceScope(scopeId, generation, tabId)) return@launch
                 if (error.code() == 404) {
-                    serverSttUnavailable = true
-                    reportError("Server speech-to-text is unavailable on this Hermes")
+                    invalidateServerStt(scopeId)
+                    updateTab(tabId) { it.copy(error = "Server speech-to-text is unavailable on this Hermes") }
                 } else {
-                    reportError(error.message() ?: "Server transcription failed")
+                    updateTab(tabId) { it.copy(error = error.message() ?: "Server transcription failed") }
                 }
             } catch (error: Throwable) {
-                reportError(error.message ?: "Server transcription failed")
+                if (isCurrentVoiceScope(scopeId, generation, tabId)) {
+                    updateTab(tabId) { it.copy(error = error.message ?: "Server transcription failed") }
+                }
             }
         }
     }
@@ -2018,6 +2349,9 @@ class ChatViewModel(
             is PtyEvent.Closed -> {
                 AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
                 finalizeAssistant(tabId)
+                if (tab?.resumeSessionId == null && tab?.liveSessionId == null) {
+                    removePendingLocalCreation(tabId)
+                }
                 tab?.let { it.liveSessionId ?: it.resumeSessionId }
                     ?.let { ProfileRegistry.markDisconnected(profileName, it) }
                 updateTab(tabId) { it.copy(connected = false, connecting = false, working = false) }
@@ -2025,6 +2359,9 @@ class ChatViewModel(
             }
             is PtyEvent.Failure -> {
                 AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
+                if (tab?.resumeSessionId == null && tab?.liveSessionId == null) {
+                    removePendingLocalCreation(tabId)
+                }
                 tab?.let { it.liveSessionId ?: it.resumeSessionId }
                     ?.let { ProfileRegistry.markDisconnected(profileName, it) }
                 updateTab(tabId) { it.copy(error = event.message, connecting = false, connected = false, working = false) }
@@ -2039,7 +2376,7 @@ class ChatViewModel(
         val rt = runtimes[tabId] ?: return
         rt.readingJob?.cancel()
         rt.readingJob = viewModelScope.launch {
-            while (runtimes.containsKey(tabId)) {
+            while (runtimes[tabId] === rt && isActive) {
                 val id = discoverSessionForTab(tabId)
                 if (id != null) {
                     val tab = _ui.value.tabs.firstOrNull { it.id == tabId }
@@ -2049,7 +2386,20 @@ class ChatViewModel(
                         // resumes this thread (and every sibling) with its title.
                         persistChatState(tab?.profileName ?: profileNameForTab(tabId))
                     }
-                    loadReading(tabId, id)
+                    // Await each read in this poll job. One-shot refreshes
+                    // cancel their own request and advance the generation so
+                    // an older equal-length response cannot overwrite it.
+                    rt.readingRequestJob?.cancel()
+                    val generation = ++rt.readingGeneration
+                    val request = launch {
+                        loadReading(tabId, id, rt, generation)
+                    }
+                    rt.readingRequestJob = request
+                    try {
+                        request.join()
+                    } finally {
+                        if (rt.readingRequestJob === request) rt.readingRequestJob = null
+                    }
                 }
                 kotlinx.coroutines.delay(2500)
             }
@@ -2074,13 +2424,39 @@ class ChatViewModel(
             .filter { it.id !in claimedSessions && it.id !in rt.baselineSessions }
             .maxByOrNull { MultiProfileSession(tab.profileName, it).recency }
             ?: return null
-        claimedSessions.add(candidate.id)
+        if (!claimSession(tabId, candidate.id)) return null
         return candidate.id
     }
 
-    private fun loadReading(tabId: String, sessionId: String) {
-        viewModelScope.launch {
+    private fun requestReading(tabId: String, sessionId: String) {
+        val rt = runtimes[tabId] ?: return
+        rt.readingRequestJob?.cancel()
+        val generation = ++rt.readingGeneration
+        rt.readingRequestJob = viewModelScope.launch {
+            try {
+                loadReading(tabId, sessionId, rt, generation)
+            } finally {
+                if (rt.readingRequestJob === kotlinx.coroutines.currentCoroutineContext()[Job]) {
+                    rt.readingRequestJob = null
+                }
+            }
+        }
+    }
+
+    private suspend fun loadReading(
+        tabId: String,
+        sessionId: String,
+        rt: SessionRuntime,
+        generation: Long,
+    ) {
+        rt.readingMutex.withLock {
+            if (runtimes[tabId] !== rt || rt.readingGeneration != generation) {
+                return@withLock
+            }
             loadMessagesForProfile(tabId, sessionId).onSuccess { msgs ->
+                if (runtimes[tabId] !== rt || rt.readingGeneration != generation) {
+                    return@onSuccess
+                }
                 val lines = msgs.mapIndexed { idx, m ->
                     ChatLine(id = "$sessionId-$idx", role = m.role ?: "assistant", text = m.content.orEmpty())
                 }.filter {
@@ -2103,7 +2479,7 @@ class ChatViewModel(
                     // only replace when the server transcript is a superset of what we show.
                     // Equality guard: the 2.5s poll must not churn a full recomposition
                     // when nothing actually changed.
-                    if (lines.size >= tab.readingMessages.size && lines != tab.readingMessages) {
+                    if (lines.isNotEmpty() && lines != tab.readingMessages) {
                         rt.readingSessionId = sessionId
                         // The turn is done once the server transcript ends in an
                         // assistant message — drop the working indicator + tool.
@@ -2370,9 +2746,10 @@ class ChatViewModel(
         if (sessionId.isNullOrBlank()) return
         val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return
         if (tab.liveSessionId == sessionId) return
+        if (!claimSession(tabId, sessionId)) return
         val oldHistoryKey = historyKey(tab)
-        tab.liveSessionId?.let { claimedSessions.remove(it) }
-        claimedSessions.add(sessionId)
+        tab.liveSessionId?.let { releaseSession(tabId, it) }
+        removePendingLocalCreation(tabId)
         updateTab(tabId) { it.copy(liveSessionId = sessionId) }
         ProfileRegistry.markActive(tab.profileName, sessionId)
         migrateInputHistory(oldHistoryKey, sessionId)
@@ -2411,9 +2788,11 @@ class ChatViewModel(
     }
 
     override fun onCleared() {
-        sttJob?.cancel()
+        cancelVoiceInput()
+        voiceRecorder.cancel()
         slashCompletionJob?.cancel()
         scopeLoadJob?.cancel()
+        sessionPollJob?.cancel()
         _ui.value.tabs.forEach { tab ->
             (tab.liveSessionId ?: tab.resumeSessionId)?.let {
                 ProfileRegistry.markDisconnected(tab.profileName, it)
@@ -2423,16 +2802,24 @@ class ChatViewModel(
             it.collectJob?.cancel()
             it.sideJob?.cancel()
             it.readingJob?.cancel()
+            it.readingRequestJob?.cancel()
             it.session.close()
             it.eventClient.dispose()
         }
         runtimes.clear()
+        pendingLocalCreations.clear()
+        synchronized(sessionOwnershipLock) {
+            sessionOwners.clear()
+            claimedSessions.clear()
+        }
         pendingImages.clear()
         super.onCleared()
     }
 
     companion object {
         private const val SESSION_POLL_INTERVAL_MS = 30_000L
+        private const val LOCAL_SESSION_DISCOVERY_TIMEOUT_MS = 60_000L
+        private const val SERVER_STT_CAPABILITY_TTL_MS = 5 * 60 * 1000L
         private val ARGUMENT_HINT = Regex("""\[[^]]+]|<[^>]+>""")
 
         fun factory() = object : ViewModelProvider.Factory {

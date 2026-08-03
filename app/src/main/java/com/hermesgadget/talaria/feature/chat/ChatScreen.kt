@@ -254,12 +254,27 @@ fun ChatScreen(
 
     if (active?.prompt != null) {
         val prompt = active.prompt
-        var clarifyText by remember(prompt.message) { mutableStateOf("") }
+        val promptSessionId = active.liveSessionId ?: active.resumeSessionId
+        // Message text is not an identity: two consecutive secret/clarify
+        // requests can deliberately carry the same wording. The gateway
+        // request id is preferred, with the per-event instance id covering
+        // gateways that omit one; tab, kind, and session remain part of scope.
+        val promptStateKey = listOf(
+            active.id,
+            promptSessionId.orEmpty(),
+            prompt.kind.name,
+            prompt.requestId.orEmpty(),
+            prompt.instanceId,
+        )
+        var clarifyText by remember(promptStateKey) { mutableStateOf("") }
         val needsText = prompt.kind != com.hermesgadget.talaria.core.network.PromptKind.APPROVAL
         val masksText = prompt.kind == com.hermesgadget.talaria.core.network.PromptKind.SUDO ||
             prompt.kind == com.hermesgadget.talaria.core.network.PromptKind.SECRET
         AlertDialog(
-            onDismissRequest = { vm.respondPrompt(false) },
+            onDismissRequest = {
+                clarifyText = ""
+                vm.respondPrompt(false)
+            },
             title = { Text(prompt.kind.name) },
             text = {
                 Column {
@@ -296,7 +311,9 @@ fun ChatScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        if (needsText) vm.respondPrompt(true, clarifyText.ifBlank { null })
+                        val response = clarifyText.ifBlank { null }
+                        clarifyText = ""
+                        if (needsText) vm.respondPrompt(true, response)
                         else vm.respondPrompt(true)
                     },
                 ) {
@@ -304,7 +321,10 @@ fun ChatScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { vm.respondPrompt(false) }) {
+                TextButton(onClick = {
+                    clarifyText = ""
+                    vm.respondPrompt(false)
+                }) {
                     Text(stringResource(R.string.common_deny))
                 }
             },
