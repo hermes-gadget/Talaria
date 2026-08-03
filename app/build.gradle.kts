@@ -40,7 +40,9 @@ android {
 
     defaultConfig {
         applicationId = "com.hermesgadget.talaria"
-        minSdk = 28
+        // 29+ required by androidx.car.app:app-automotive (Android Auto car apps);
+        // Android 9 (API 28) reached EOL in 2022.
+        minSdk = 29
         targetSdk = 36
         versionCode = talariaVersionCode
         versionName = talariaVersionName
@@ -161,6 +163,11 @@ dependencies {
 
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("androidx.glance:glance-material3:1.1.1")
+
+    // Android Auto / Automotive OS car app library (sideloaded CarAppService).
+    // `app` is the core template library; `app-automotive` adds the AAOS host adapter.
+    implementation("androidx.car.app:app:1.7.0")
+    implementation("androidx.car.app:app-automotive:1.7.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

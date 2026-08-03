@@ -110,6 +110,19 @@
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false" />
 
+        <!-- Android Auto / Automotive OS car app (sideloaded, MESSAGING category). -->
+        <service
+            android:name=".car.TalariaCarService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService" />
+                <category android:name="androidx.car.app.category.MESSAGING" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.car.app.minCarAppApiLevel"
+                android:value="2" />
+        </service>
+
         <service
             android:name=".widget.TalariaTileService"
             android:exported="true"
