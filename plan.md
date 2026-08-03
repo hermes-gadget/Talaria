@@ -22,8 +22,9 @@ AAOS launches templated apps via an *activity* entry point —
 `androidx.car.app.activity.CarAppActivity` (from `app-automotive`) —
 not the CarAppService. Manifest now declares it (exported, no launcher
 filter) and `MainActivity.onCreate` hands off when
-`FEATURE_AUTOMOTIVE` is present. `minCarAppApiLevel` bumped 2 → 7
-(`ConversationItem` is `@RequiresCarApi(7)`). Pending: AAOS emulator
+`FEATURE_AUTOMOTIVE` is present. `minCarApiLevel` bumped 2 → 7
+(`ConversationItem` is `@RequiresCarApi(7)`; metadata key is
+`androidx.car.app.minCarApiLevel`). Pending: AAOS emulator
 re-verify + screenshots, commit/push, v0.8.0 tag.
 
 ---
