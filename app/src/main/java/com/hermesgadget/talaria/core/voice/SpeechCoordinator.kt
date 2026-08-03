@@ -76,9 +76,17 @@ class SpeechCoordinator(
         }
 
         val closed = AtomicBoolean(false)
+        val terminal = AtomicBoolean(false)
+        val cleanupScheduled = AtomicBoolean(false)
         val listening = AtomicBoolean(false)
         val transientFails = AtomicInteger(0)
         var recognizer: SpeechRecognizer? = null
+
+        fun finish(event: SttEvent? = null) {
+            if (!terminal.compareAndSet(false, true)) return
+            event?.let { trySend(it) }
+            close()
+        }
 
         fun intent(): Intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -91,9 +99,9 @@ class SpeechCoordinator(
         }
 
         fun scheduleListen(delayMs: Long = 0L) {
-            if (closed.get()) return
+            if (closed.get() || terminal.get()) return
             mainHandler.postDelayed({
-                if (closed.get()) return@postDelayed
+                if (closed.get() || terminal.get()) return@postDelayed
                 val r = recognizer ?: return@postDelayed
                 if (!listening.compareAndSet(false, true)) return@postDelayed
                 try {
@@ -103,8 +111,7 @@ class SpeechCoordinator(
                     if (continuous && !closed.get() && transientFails.incrementAndGet() <= MAX_TRANSIENT) {
                         scheduleListen(RESTART_DELAY_MS)
                     } else {
-                        trySend(SttEvent.Error("STT failed to start"))
-                        close()
+                        finish(SttEvent.Error("STT failed to start"))
                     }
                 }
             }, delayMs)
@@ -168,15 +175,20 @@ class SpeechCoordinator(
                         return
                     }
                 }
-                trySend(SttEvent.Error(explain(error)))
-                close()
+                finish(SttEvent.Error(explain(error)))
             }
             override fun onResults(results: Bundle?) {
                 listening.set(false)
                 transientFails.set(0)
                 val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                if (!text.isNullOrBlank()) trySend(SttEvent.Final(text))
-                if (continuous) scheduleListen(RESTART_DELAY_MS)
+                if (!continuous) {
+                    // A one-shot flow must have a terminal transition even when
+                    // Android returns no match or an empty result bundle.
+                    finish(SttEvent.Final(text.orEmpty()))
+                } else if (!terminal.get()) {
+                    if (!text.isNullOrBlank()) trySend(SttEvent.Final(text))
+                    scheduleListen(RESTART_DELAY_MS)
+                }
             }
             override fun onPartialResults(partialResults: Bundle?) {
                 val text = partialResults
@@ -197,21 +209,22 @@ class SpeechCoordinator(
                 r.setRecognitionListener(listener)
                 scheduleListen()
             } catch (t: Throwable) {
-                trySend(SttEvent.Error(t.message ?: "STT init failed"))
-                close()
+                finish(SttEvent.Error(t.message ?: "STT init failed"))
             }
         }
 
         awaitClose {
-            closed.set(true)
-            mainHandler.post {
-                listening.set(false)
-                runCatching {
-                    recognizer?.setRecognitionListener(null)
-                    recognizer?.cancel()
-                    recognizer?.destroy()
+            if (cleanupScheduled.compareAndSet(false, true)) {
+                closed.set(true)
+                mainHandler.post {
+                    listening.set(false)
+                    runCatching {
+                        recognizer?.setRecognitionListener(null)
+                        recognizer?.cancel()
+                        recognizer?.destroy()
+                    }
+                    recognizer = null
                 }
-                recognizer = null
             }
         }
     }

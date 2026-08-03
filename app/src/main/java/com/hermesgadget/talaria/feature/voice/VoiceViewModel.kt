@@ -85,7 +85,7 @@ class VoiceViewModel(
                     state.copy(
                         phase = VoiceStateMachine.reduce(
                             state.phase,
-                            if (capabilities.isComplete) VoiceEvent.ServerAvailable
+                            if (capabilities.serverStt || capabilities.serverTts) VoiceEvent.ServerAvailable
                             else VoiceEvent.ServerUnavailable,
                         ),
                         capabilityChecked = true,
@@ -146,13 +146,19 @@ class VoiceViewModel(
 
     fun startRecording() {
         val state = _ui.value
-        if (!state.capabilities.isComplete || state.phase != VoicePhase.IDLE) return
+        if (!state.capabilities.serverStt) {
+            _ui.update { it.copy(error = "Hermes server STT is unavailable") }
+            return
+        }
+        if (state.phase != VoicePhase.IDLE) return
         if (!speech.hasMicPermission()) {
             updateMicrophonePermission(false)
             return
         }
 
-        recorder.start()
+        recorder.start(onLimitReached = {
+            stopRecordingAndTranscribe(autoStopped = true)
+        })
             .onSuccess {
                 _ui.update { it.copy(
                     phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.StartRecording),
@@ -166,6 +172,10 @@ class VoiceViewModel(
     }
 
     fun stopRecordingAndTranscribe() {
+        stopRecordingAndTranscribe(autoStopped = false)
+    }
+
+    private fun stopRecordingAndTranscribe(autoStopped: Boolean) {
         if (_ui.value.phase != VoicePhase.RECORDING || _ui.value.fallbackListening) return
 
         val recorded = recorder.stop()
@@ -181,15 +191,24 @@ class VoiceViewModel(
 
         _ui.update { it.copy(
             phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.RecordingFinished),
-            error = null,
+            error = if (autoStopped) "Recording limit reached; transcribing…" else null,
         ) }
         val audio = recorded.getOrThrow()
+        if (!audio.file.isFile || audio.file.length() !in 1L..VoiceAudioLimits.MAX_RECORDING_BYTES) {
+            audio.file.delete()
+            _ui.update { state ->
+                state.copy(
+                    phase = VoiceStateMachine.reduce(state.phase, VoiceEvent.TranscriptionFinished),
+                    error = "Recording exceeded the ${VoiceAudioLimits.MAX_RECORDING_BYTES} byte audio limit",
+                )
+            }
+            return
+        }
         viewModelScope.launch {
             try {
                 val dataUrl = withContext(Dispatchers.IO) {
                     try {
-                        val encoded = java.util.Base64.getEncoder().encodeToString(audio.file.readBytes())
-                        "data:${audio.mimeType};base64,$encoded"
+                        encodeRecordedVoiceDataUrl(audio.file, audio.mimeType)
                     } finally {
                         audio.file.delete()
                     }
@@ -315,7 +334,11 @@ class VoiceViewModel(
     fun speakText() {
         val state = _ui.value
         val text = state.text.trim()
-        if (!state.capabilities.serverTts || state.phase != VoicePhase.IDLE) return
+        if (!state.capabilities.serverTts) {
+            _ui.update { it.copy(error = "Hermes server TTS is unavailable") }
+            return
+        }
+        if (state.phase != VoicePhase.IDLE) return
         if (text.isBlank()) {
             _ui.update { it.copy(error = "Enter text to speak") }
             return
@@ -373,7 +396,14 @@ class VoiceViewModel(
                 VoiceCapability.SERVER_TTS -> state.capabilities.copy(serverTts = false)
             }
             state.copy(
-                phase = VoiceStateMachine.reduce(state.phase, VoiceEvent.ServerUnavailable),
+                phase = VoiceStateMachine.reduce(
+                    state.phase,
+                    if (capabilities.serverStt || capabilities.serverTts) {
+                        VoiceEvent.ServerAvailable
+                    } else {
+                        VoiceEvent.ServerUnavailable
+                    },
+                ),
                 capabilityChecked = true,
                 capabilities = capabilities,
                 error = message,
@@ -392,7 +422,7 @@ class VoiceViewModel(
     override fun onCleared() {
         fallbackJob?.cancel()
         recorder.cancel()
-        audioPlayer.stop()
+        audioPlayer.close()
         super.onCleared()
     }
 

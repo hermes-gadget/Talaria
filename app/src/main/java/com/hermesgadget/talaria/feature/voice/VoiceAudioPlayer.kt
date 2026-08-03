@@ -18,52 +18,98 @@ package com.hermesgadget.talaria.feature.voice
 
 import android.content.Context
 import android.media.MediaPlayer
-import android.net.Uri
-import android.util.Base64
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
-/** Decodes Hermes' audio data URL into a cache file and plays it with Android MediaPlayer. */
+/** Decodes Hermes' audio data URL into a bounded cache file and plays it. */
 internal class VoiceAudioPlayer(
     context: Context,
 ) {
     private val cacheDir = context.applicationContext.cacheDir
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var decodeJob: Job? = null
     private var player: MediaPlayer? = null
     private var audioFile: File? = null
+    private var generation = 0L
 
+    /** Callback signatures stay synchronous; decoding and file IO happen off the main thread. */
     fun play(
         dataUrl: String,
         onCompleted: () -> Unit,
         onError: (String) -> Unit,
     ) {
         stop()
-        try {
-            val decoded = decodeDataUrl(dataUrl)
-            val file = File.createTempFile("talaria-tts-", extensionFor(decoded.mimeType), cacheDir)
-            file.writeBytes(decoded.bytes)
+        val requestGeneration = generation
+        decodeJob = scope.launch {
+            var decodedFile: File? = null
+            try {
+                val decoded = withContext(Dispatchers.IO) {
+                    decodeVoiceAudioDataUrl(dataUrl, cacheDir)
+                }
+                decodedFile = decoded.file
+                ensureActive()
+                if (requestGeneration != generation) {
+                    decoded.file.delete()
+                    return@launch
+                }
 
-            val next = MediaPlayer()
-            next.setDataSource(file.absolutePath)
-            next.setOnPreparedListener { prepared -> prepared.start() }
-            next.setOnCompletionListener {
-                release()
-                onCompleted()
+                val next = MediaPlayer()
+                player = next
+                audioFile = decoded.file
+                decodedFile = null
+                next.setDataSource(decoded.file.absolutePath)
+                next.setOnPreparedListener { prepared ->
+                    if (requestGeneration == generation && player === next) {
+                        prepared.start()
+                    }
+                }
+                next.setOnCompletionListener {
+                    if (requestGeneration == generation && player === next) {
+                        release()
+                        onCompleted()
+                    }
+                }
+                next.setOnErrorListener { _, what, extra ->
+                    if (requestGeneration != generation || player !== next) {
+                        true
+                    } else {
+                        release()
+                        onError("Android audio playback failed ($what/$extra)")
+                        true
+                    }
+                }
+                next.prepareAsync()
+            } catch (cancelled: CancellationException) {
+                decodedFile?.delete()
+                throw cancelled
+            } catch (error: Throwable) {
+                decodedFile?.delete()
+                if (requestGeneration == generation) {
+                    release()
+                    onError(error.message ?: "Could not prepare server audio")
+                }
             }
-            next.setOnErrorListener { _, what, extra ->
-                release()
-                onError("Android audio playback failed ($what/$extra)")
-                true
-            }
-            player = next
-            audioFile = file
-            next.prepareAsync()
-        } catch (error: Throwable) {
-            release()
-            onError(error.message ?: "Could not prepare server audio")
         }
     }
 
     fun stop() {
+        generation++
+        decodeJob?.cancel()
+        decodeJob = null
         release()
+    }
+
+    fun close() {
+        stop()
+        scope.cancel()
     }
 
     private fun release() {
@@ -73,40 +119,5 @@ internal class VoiceAudioPlayer(
         runCatching { active?.release() }
         audioFile?.delete()
         audioFile = null
-    }
-
-    private data class DecodedAudio(
-        val mimeType: String,
-        val bytes: ByteArray,
-    )
-
-    private fun decodeDataUrl(value: String): DecodedAudio {
-        val dataUrl = value.trim()
-        require(dataUrl.startsWith("data:", ignoreCase = true)) {
-            "Hermes returned an invalid audio data URL"
-        }
-        val comma = dataUrl.indexOf(',')
-        require(comma > "data:".length) { "Hermes returned an empty audio data URL" }
-        val metadata = dataUrl.substring("data:".length, comma)
-        val mimeType = metadata.substringBefore(';').trim().ifBlank { "audio/mpeg" }
-        val payload = dataUrl.substring(comma + 1)
-        val bytes = if (metadata.split(';').any { it.equals("base64", ignoreCase = true) }) {
-            Base64.decode(payload, Base64.DEFAULT)
-        } else {
-            Uri.decode(payload).orEmpty().toByteArray(Charsets.UTF_8)
-        }
-        require(bytes.isNotEmpty()) { "Hermes returned empty audio" }
-        return DecodedAudio(mimeType, bytes)
-    }
-
-    private fun extensionFor(mimeType: String): String = when {
-        mimeType.equals("audio/mp4", ignoreCase = true) ||
-            mimeType.equals("audio/x-m4a", ignoreCase = true) -> ".m4a"
-        mimeType.equals("audio/ogg", ignoreCase = true) -> ".ogg"
-        mimeType.equals("audio/wav", ignoreCase = true) ||
-            mimeType.equals("audio/x-wav", ignoreCase = true) -> ".wav"
-        mimeType.equals("audio/flac", ignoreCase = true) -> ".flac"
-        mimeType.equals("audio/3gpp", ignoreCase = true) -> ".3gp"
-        else -> ".mp3"
     }
 }
