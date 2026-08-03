@@ -18,26 +18,32 @@
 package com.hermesgadget.talaria.core.network
 
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
-import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
 import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.Response
 
 /**
- * Appends `?profile=` for Hermes management-profile-scoped endpoint families,
- * matching the dashboard SPA (`PROFILE_SCOPED_PREFIXES` in web/src/lib/api.ts).
+ * Appends `?profile=` to Hermes API requests by default. Only authentication,
+ * profile-catalog, static-schema, and OAuth-flow routes are exempt. Keeping
+ * the policy default-scoped means new files/media/audio endpoint variants do
+ * not silently fall back to Hermes' default profile.
  */
 class ProfileQueryInterceptor(
-    private val connectionStore: SecureConnectionStore,
+    private val snapshotProvider: () -> ConnectionSnapshot?,
 ) : Interceptor {
+    constructor(snapshot: ConnectionSnapshot) : this({ snapshot })
+
+    /** Compatibility constructor for legacy callers; the factory uses a fixed snapshot. */
+    constructor(connectionStore: SecureConnectionStore) : this({ connectionStore.activeSnapshot() })
+
     override fun intercept(chain: Interceptor.Chain): Response {
-        val profile = connectionStore.activeProfile()?.effectiveManagementProfile().orEmpty()
+        val profile = snapshotProvider()?.managementProfile.orEmpty()
         val request = chain.request()
         if (profile.isEmpty() || request.url.queryParameter("profile") != null) {
             return chain.proceed(request)
         }
         val path = "/" + request.url.pathSegments.joinToString("/")
-        if (PROFILE_SCOPED.none { path.startsWith(it) }) {
+        if (!path.startsWith("/api/") || PROFILE_UNSCOPED.any { path.startsWith(it) }) {
             return chain.proceed(request)
         }
         val url: HttpUrl = request.url.newBuilder().addQueryParameter("profile", profile).build()
@@ -45,13 +51,12 @@ class ProfileQueryInterceptor(
     }
 
     companion object {
-        private val PROFILE_SCOPED = listOf(
-            "/api/status", "/api/gateway", "/api/analytics", "/api/skills",
-            "/api/tools/toolsets", "/api/config", "/api/env", "/api/mcp",
-            "/api/messaging/platforms", "/api/model/", "/api/pairing",
-            "/api/sessions", "/api/logs", "/api/memory", "/api/portal",
-            "/api/cron", "/api/webhooks", "/api/ops", "/api/hermes",
-            "/api/curator", "/api/system", "/api/fs", "/api/learning",
+        private val PROFILE_UNSCOPED = listOf(
+            "/api/auth/",
+            "/api/profiles",
+            "/api/config/defaults",
+            "/api/config/schema",
+            "/api/mcp/oauth/flows",
         )
     }
 }

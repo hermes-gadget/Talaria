@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 package com.hermesgadget.talaria.core.network
 
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
@@ -25,62 +24,136 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
+/** Builds transport clients that are immutable with respect to one connection snapshot. */
 class HermesClientFactory(
     private val connectionStore: SecureConnectionStore,
     private val settingsStore: SettingsStore,
 ) {
-    val cookieJar = PersistentCookieJar()
-    private val oidcTokenRefresher = OidcTokenRefresher(connectionStore)
-    private val passwordSessionManager = PasswordSessionManager(connectionStore, cookieJar)
+    private data class ClientBundle(
+        val rest: OkHttpClient,
+        val webSocket: OkHttpClient,
+        val api: HermesApi,
+        val cookieJar: PersistentCookieJar,
+        val passwordSessionManager: SnapshotPasswordSessionManager,
+    )
 
-    @Volatile
-    private var cached: Pair<String, HermesApi>? = null
+    private val oidcTokenRefresher = SnapshotOidcTokenRefresher(connectionStore)
+    private val bundles = ConcurrentHashMap<ConnectionSnapshot, ClientBundle>()
 
-    fun okHttp(): OkHttpClient {
-        val profile = connectionStore.activeProfile()
-        val builder = OkHttpClient.Builder()
+    /** Capture the active profile, credentials, and logging policy before a request starts. */
+    fun snapshot(): ConnectionSnapshot? = connectionStore.activeSnapshot()
+        ?.withHttpLogging(settingsStore.httpLoggingEnabled)
+
+    /** Resolve a persisted connection without consulting the mutable active selection. */
+    fun snapshotFor(
+        connectionId: String,
+        managementProfile: String? = null,
+    ): ConnectionSnapshot? = connectionStore.snapshotFor(connectionId, managementProfile)
+        ?.withHttpLogging(settingsStore.httpLoggingEnabled)
+
+    fun okHttp(snapshot: ConnectionSnapshot? = snapshot()): OkHttpClient =
+        bundle(snapshot ?: ConnectionSnapshot.anonymous(settingsStore.httpLoggingEnabled)).rest
+
+    fun api(snapshot: ConnectionSnapshot? = snapshot()): HermesApi =
+        bundle(snapshot ?: ConnectionSnapshot.anonymous(settingsStore.httpLoggingEnabled)).api
+
+    /**
+     * Invalidate every old-scope client and cancel its calls. New calls must
+     * obtain a bundle from a newly captured snapshot.
+     */
+    fun invalidate() {
+        bundles.values.forEach { bundle ->
+            bundle.rest.dispatcher.cancelAll()
+            bundle.webSocket.dispatcher.cancelAll()
+            bundle.rest.connectionPool.evictAll()
+            bundle.webSocket.connectionPool.evictAll()
+            bundle.cookieJar.clear()
+            bundle.passwordSessionManager.clearFailure()
+        }
+        bundles.clear()
+    }
+
+    /** WebSocket clients intentionally have no HTTP logger: URLs carry auth queries. */
+    fun webSocketClient(snapshot: ConnectionSnapshot? = snapshot()): OkHttpClient =
+        bundle(snapshot ?: ConnectionSnapshot.anonymous(false)).webSocket
+
+    private fun bundle(snapshot: ConnectionSnapshot): ClientBundle {
+        // A refreshed token, edited URL, or profile switch creates a new key. Do
+        // not retain the old credential-bearing bundle for the same connection.
+        bundles.keys
+            .filter { it.connectionId == snapshot.connectionId && it != snapshot }
+            .forEach { old ->
+                bundles.remove(old)?.let { close(it) }
+            }
+        return bundles[snapshot] ?: synchronized(bundles) {
+            bundles[snapshot] ?: buildBundle(snapshot).also { bundles[snapshot] = it }
+        }
+    }
+
+    private fun close(bundle: ClientBundle) {
+        bundle.rest.dispatcher.cancelAll()
+        bundle.webSocket.dispatcher.cancelAll()
+        bundle.rest.connectionPool.evictAll()
+        bundle.webSocket.connectionPool.evictAll()
+        bundle.cookieJar.clear()
+        bundle.passwordSessionManager.clearFailure()
+    }
+
+    private fun buildBundle(snapshot: ConnectionSnapshot): ClientBundle {
+        val cookieJar = PersistentCookieJar()
+        val passwordSessionManager = SnapshotPasswordSessionManager(snapshot, cookieJar)
+        val auth = AuthInterceptor(
+            snapshot = snapshot,
+            connectionStore = connectionStore,
+            oidcTokenRefresher = oidcTokenRefresher::accessToken,
+            passwordSessionManager = { _, url -> passwordSessionManager.ensureSession(url) },
+        )
+
+        fun baseBuilder(): OkHttpClient.Builder = OkHttpClient.Builder()
             .cookieJar(cookieJar)
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(120, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
-            .addInterceptor(AuthInterceptor(connectionStore, oidcTokenRefresher, passwordSessionManager))
-            .addInterceptor(ProfileQueryInterceptor(connectionStore))
-            // Application interceptor also runs for WebSocket upgrades.
+            .addInterceptor(auth)
+            .addInterceptor(ProfileQueryInterceptor(snapshot))
+            .addInterceptor(CleartextPolicyInterceptor(snapshot))
             .addInterceptor(EmulatorLoopbackInterceptor())
 
-        if (settingsStore.httpLoggingEnabled) {
-            builder.addInterceptor(
-                HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC },
+        val restBuilder = baseBuilder()
+        if (snapshot.httpLoggingEnabled) {
+            restBuilder.addInterceptor(
+                HttpLoggingInterceptor().apply {
+                    level = HttpLoggingInterceptor.Level.BASIC
+                    redactHeader("Authorization")
+                    redactHeader(AuthInterceptor.SESSION_HEADER)
+                },
             )
         }
-        profile?.pinSha256?.takeIf { it.isNotBlank() }?.let { pin ->
-            builder.certificatePinner(CertificatePinnerFactory.forPin(profile.baseUrl, pin))
+        snapshot.pinSha256?.takeIf { it.isNotBlank() }?.let { pin ->
+            restBuilder.certificatePinner(CertificatePinnerFactory.forPin(snapshot.baseUrl, pin))
         }
-        return builder.build()
-    }
 
-    fun api(): HermesApi {
-        // Prefer the active profile. Fallback matches Connect defaults (emulator host loopback).
-        val base = connectionStore.activeProfile()?.baseUrl?.trimEnd('/')?.plus("/")
-            ?: "http://10.0.2.2:9119/"
-        cached?.let { if (it.first == base) return it.second }
+        val webSocketBuilder = baseBuilder()
+        snapshot.pinSha256?.takeIf { it.isNotBlank() }?.let { pin ->
+            webSocketBuilder.certificatePinner(CertificatePinnerFactory.forPin(snapshot.baseUrl, pin))
+        }
+
+        val rest = restBuilder.build()
+        val webSocket = webSocketBuilder.build()
         val retrofit = Retrofit.Builder()
-            .baseUrl(base)
-            .client(okHttp())
+            .baseUrl(snapshot.baseUrl.trimEnd('/').plus('/'))
+            .client(rest)
             .addConverterFactory(JsonConfig.json.asConverterFactory("application/json".toMediaType()))
             .build()
-        val api = retrofit.create(HermesApi::class.java)
-        cached = base to api
-        return api
+        return ClientBundle(
+            rest = rest,
+            webSocket = webSocket,
+            api = retrofit.create(HermesApi::class.java),
+            cookieJar = cookieJar,
+            passwordSessionManager = passwordSessionManager,
+        )
     }
-
-    fun invalidate() {
-        cached = null
-        cookieJar.clear()
-        passwordSessionManager.clearFailure()
-    }
-
-    fun webSocketClient(): OkHttpClient = okHttp()
 }

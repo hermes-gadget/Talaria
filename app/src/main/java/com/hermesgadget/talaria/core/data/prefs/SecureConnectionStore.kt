@@ -21,6 +21,7 @@ import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.hermesgadget.talaria.core.network.JsonConfig
+import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
 import com.hermesgadget.talaria.domain.model.ConnectionSecrets
 import com.hermesgadget.talaria.domain.model.normalizeManagementProfile
@@ -48,44 +49,77 @@ class SecureConnectionStore(context: Context) {
     )
 
     private val json = JsonConfig.json
+    /** One lock covers the logical profile + secret record, not just each pref call. */
+    private val mutationLock = Any()
     private val _profiles = MutableStateFlow(loadProfiles())
     val profiles: StateFlow<List<ConnectionProfile>> = _profiles.asStateFlow()
 
     private val _activeId = MutableStateFlow(prefs.getString(KEY_ACTIVE, null))
     val activeId: StateFlow<String?> = _activeId.asStateFlow()
 
-    fun activeProfile(): ConnectionProfile? {
+    fun activeProfile(): ConnectionProfile? = synchronized(mutationLock) {
         val id = _activeId.value ?: return _profiles.value.firstOrNull()
         return _profiles.value.find { it.id == id } ?: _profiles.value.firstOrNull()
     }
 
-    fun secretsFor(id: String): ConnectionSecrets {
-        val raw = prefs.getString(secretKey(id), null) ?: return ConnectionSecrets()
-        return runCatching { json.decodeFromString<ConnectionSecrets>(raw) }.getOrDefault(ConnectionSecrets())
+    fun profileFor(id: String): ConnectionProfile? = synchronized(mutationLock) {
+        _profiles.value.find { it.id == id }
     }
 
-    fun upsert(profile: ConnectionProfile, secrets: ConnectionSecrets? = null) {
+    fun secretsFor(id: String): ConnectionSecrets = synchronized(mutationLock) {
+        readSecrets(id)
+    }
+
+    /** Atomically captures one profile and its encrypted secret record. */
+    fun snapshotFor(
+        id: String,
+        expectedManagementProfile: String? = null,
+    ): ConnectionSnapshot? = synchronized(mutationLock) {
+        val profile = _profiles.value.find { it.id == id } ?: return null
+        if (expectedManagementProfile != null &&
+            normalizeManagementProfile(expectedManagementProfile) !=
+            normalizeManagementProfile(profile.managementProfile)
+        ) {
+            return null
+        }
+        ConnectionSnapshot.from(profile, readSecrets(id))
+    }
+
+    fun activeSnapshot(): ConnectionSnapshot? = synchronized(mutationLock) {
+        val profile = activeProfile() ?: return null
+        ConnectionSnapshot.from(profile, readSecrets(profile.id))
+    }
+
+    fun upsert(profile: ConnectionProfile, secrets: ConnectionSecrets? = null) = synchronized(mutationLock) {
         val list = _profiles.value.toMutableList()
         val idx = list.indexOfFirst { it.id == profile.id }
         if (idx >= 0) list[idx] = profile else list.add(profile)
-        persistProfiles(list)
+        val nextActiveId = _activeId.value ?: profile.id
+        val editor = prefs.edit()
+            .putString(KEY_PROFILES, json.encodeToString(list))
+            .putString(KEY_ACTIVE, nextActiveId)
         if (secrets != null) {
-            prefs.edit().putString(secretKey(profile.id), json.encodeToString(secrets)).apply()
+            editor.putString(secretKey(profile.id), json.encodeToString(secrets))
         }
-        if (_activeId.value == null) setActive(profile.id)
+        check(editor.commit()) { "Could not persist the Hermes connection" }
+        _profiles.value = list
+        if (_activeId.value != nextActiveId) _activeId.value = nextActiveId
     }
 
-    fun setActive(id: String) {
-        prefs.edit().putString(KEY_ACTIVE, id).apply()
+    fun setActive(id: String) = synchronized(mutationLock) {
+        check(_profiles.value.any { it.id == id }) { "Unknown Hermes connection" }
+        check(prefs.edit().putString(KEY_ACTIVE, id).commit()) {
+            "Could not select the Hermes connection"
+        }
         _activeId.value = id
     }
 
     /** Persist a freshly minted loopback `__HERMES_SESSION_TOKEN__` for [id]. */
-    fun updateSessionToken(id: String, token: String) {
+    fun updateSessionToken(id: String, token: String) = synchronized(mutationLock) {
         val trimmed = token.trim()
         if (trimmed.isEmpty()) return
         val profile = _profiles.value.find { it.id == id } ?: return
-        val prev = secretsFor(id)
+        val prev = readSecrets(id)
         upsert(
             profile.copy(hasSessionToken = true),
             prev.copy(sessionToken = trimmed),
@@ -99,10 +133,10 @@ class SecureConnectionStore(context: Context) {
         refreshToken: String,
         expiresAt: Long,
         provider: String,
-    ) {
+    ) = synchronized(mutationLock) {
         if (accessToken.isBlank()) return
         val profile = _profiles.value.find { it.id == id } ?: return
-        val prev = secretsFor(id)
+        val prev = readSecrets(id)
         upsert(
             profile.copy(hasBearerToken = true),
             prev.copy(
@@ -114,20 +148,46 @@ class SecureConnectionStore(context: Context) {
         )
     }
 
+    /** Persist a refresh result only if the captured profile and credentials are still current. */
+    fun updateOidcTokensIfSnapshot(
+        snapshot: ConnectionSnapshot,
+        accessToken: String,
+        refreshToken: String,
+        expiresAt: Long,
+        provider: String,
+    ): Boolean = synchronized(mutationLock) {
+        val profile = _profiles.value.find { it.id == snapshot.connectionId } ?: return false
+        val current = ConnectionSnapshot.from(profile, readSecrets(snapshot.connectionId))
+        if (!current.sameTransportAs(snapshot) || current.secrets != snapshot.secrets) return false
+        val previous = current.secrets
+        upsert(
+            profile.copy(hasBearerToken = true),
+            previous.copy(
+                bearerToken = accessToken,
+                oidcRefreshToken = refreshToken.ifBlank { previous.oidcRefreshToken },
+                oidcExpiresAt = expiresAt,
+                oidcProvider = provider.ifBlank { previous.oidcProvider },
+            ),
+        )
+        true
+    }
+
     /** Updates the Hermes management profile (`?profile=`) for the active connection. */
-    fun setManagementProfile(profileName: String) {
+    fun setManagementProfile(profileName: String) = synchronized(mutationLock) {
         val active = activeProfile() ?: return
         upsert(active.copy(managementProfile = normalizeManagementProfile(profileName)))
     }
 
-    fun delete(id: String) {
-        persistProfiles(_profiles.value.filterNot { it.id == id })
-        prefs.edit().remove(secretKey(id)).apply()
-        if (_activeId.value == id) {
-            val next = _profiles.value.firstOrNull()?.id
-            prefs.edit().putString(KEY_ACTIVE, next).apply()
-            _activeId.value = next
-        }
+    fun delete(id: String) = synchronized(mutationLock) {
+        val nextProfiles = _profiles.value.filterNot { it.id == id }
+        val nextActiveId = if (_activeId.value == id) nextProfiles.firstOrNull()?.id else _activeId.value
+        val editor = prefs.edit()
+            .putString(KEY_PROFILES, json.encodeToString(nextProfiles))
+            .remove(secretKey(id))
+        if (nextActiveId == null) editor.remove(KEY_ACTIVE) else editor.putString(KEY_ACTIVE, nextActiveId)
+        check(editor.commit()) { "Could not delete the Hermes connection" }
+        _profiles.value = nextProfiles
+        _activeId.value = nextActiveId
     }
 
     private fun loadProfiles(): List<ConnectionProfile> {
@@ -135,9 +195,10 @@ class SecureConnectionStore(context: Context) {
         return runCatching { json.decodeFromString<List<ConnectionProfile>>(raw) }.getOrDefault(emptyList())
     }
 
-    private fun persistProfiles(list: List<ConnectionProfile>) {
-        prefs.edit().putString(KEY_PROFILES, json.encodeToString(list)).apply()
-        _profiles.value = list
+    private fun readSecrets(id: String): ConnectionSecrets {
+        val raw = prefs.getString(secretKey(id), null) ?: return ConnectionSecrets()
+        return runCatching { json.decodeFromString<ConnectionSecrets>(raw) }
+            .getOrDefault(ConnectionSecrets())
     }
 
     private fun secretKey(id: String) = "secret_$id"

@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,9 +49,16 @@ object ProfileRegistry {
     private val mutex = Mutex()
     private val _state = MutableStateFlow(ProfileRegistryState())
     val state: StateFlow<ProfileRegistryState> = _state.asStateFlow()
+    private val _refreshErrors = MutableStateFlow<Map<String, String>>(emptyMap())
+    /** Per-profile failures do not masquerade as an empty session list. */
+    val refreshErrors: StateFlow<Map<String, String>> = _refreshErrors.asStateFlow()
+    private val _lastSuccessfulAt = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val lastSuccessfulAt: StateFlow<Map<String, Long>> = _lastSuccessfulAt.asStateFlow()
 
     fun reset() {
         _state.value = ProfileRegistryState()
+        _refreshErrors.value = emptyMap()
+        _lastSuccessfulAt.value = emptyMap()
     }
 
     /** Record a local transport transition without touching another profile. */
@@ -98,7 +106,7 @@ object ProfileRegistry {
         limit: Int = DEFAULT_SESSION_LIMIT,
     ): Result<ProfileRegistryState> = mutex.withLock {
         _state.updateLoading()
-        runCatching {
+        try {
             val profiles = withContext(Dispatchers.IO) {
                 api.getProfilesForMultiProfile().profiles
             }
@@ -108,25 +116,41 @@ object ProfileRegistry {
             val fetched = coroutineScope {
                 names.map { profile ->
                     async(Dispatchers.IO) {
-                        profile to runCatching {
-                            decodeSessions(
-                                api.getSessionsForProfile(
-                                    profile = profile,
-                                    limit = limit,
-                                    offset = 0,
-                                    order = "recent",
+                        val result = try {
+                            Result.success(
+                                decodeSessions(
+                                    api.getSessionsForProfile(
+                                        profile = profile,
+                                        limit = limit,
+                                        offset = 0,
+                                        order = "recent",
+                                    ),
                                 ),
                             )
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Throwable) {
+                            Result.failure(failure)
                         }
+                        profile to result
                     }
                 }.awaitAll()
             }
-            val sessionsByProfile = fetched.mapNotNull { (profile, result) ->
+            val previousSessions = _state.value.sessionsByProfile
+            val successful = fetched.mapNotNull { (profile, result) ->
                 result.getOrNull()?.let { profile to it }
             }.toMap()
+            // A failed request keeps the last-good list for that profile. Only
+            // profiles returned by the current profile catalog are reconciled.
+            val sessionsByProfile = names.associateWith { profile ->
+                successful[profile] ?: previousSessions[profile].orEmpty()
+            }
             val failures = fetched.mapNotNull { (profile, result) ->
                 result.exceptionOrNull()?.let { "$profile: ${it.message ?: "request failed"}" }
             }
+            val failureByProfile = fetched.mapNotNull { (profile, result) ->
+                result.exceptionOrNull()?.let { profile to (it.message ?: "request failed") }
+            }.toMap()
             val streams = mergeServerActivity(
                 existing = _state.value.streamingStates,
                 sessionsByProfile = sessionsByProfile,
@@ -138,13 +162,20 @@ object ProfileRegistry {
                 loading = false,
                 error = failures.takeIf { it.isNotEmpty() }?.joinToString("; "),
             )
+            _refreshErrors.value = failureByProfile
+            _lastSuccessfulAt.value = _lastSuccessfulAt.value + successful.keys.associateWith {
+                System.currentTimeMillis()
+            }
             _state.value = next
-            next
-        }.onFailure { failure ->
+            Result.success(next)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
             _state.value = _state.value.copy(
                 loading = false,
                 error = failure.message ?: "Profile registry refresh failed",
             )
+            Result.failure(failure)
         }
     }
 

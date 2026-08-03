@@ -19,58 +19,86 @@ package com.hermesgadget.talaria.core.network
 
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
 import com.hermesgadget.talaria.domain.model.AuthMode
+import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.Response
+import java.io.IOException
 
 /**
- * Attaches Hermes dashboard auth for the active connection profile.
+ * Attaches Hermes dashboard auth for one immutable connection snapshot.
  *
  * Loopback / token mode: `X-Hermes-Session-Token`
  * Gated password auth: Hermes session cookies minted by password-login
  * Gated native/bearer auth: Authorization bearer token
  */
 class AuthInterceptor(
+    private val snapshot: ConnectionSnapshot,
     private val connectionStore: SecureConnectionStore,
-    private val oidcTokenRefresher: OidcTokenRefresher,
-    private val passwordSessionManager: PasswordSessionManager,
+    private val oidcTokenRefresher: (ConnectionSnapshot) -> String?,
+    private val passwordSessionManager: (ConnectionSnapshot, HttpUrl) -> Unit,
 ) : Interceptor {
+    /** Compatibility constructor for callers that have not yet captured a snapshot. */
+    constructor(
+        connectionStore: SecureConnectionStore,
+        oidcTokenRefresher: OidcTokenRefresher,
+        passwordSessionManager: PasswordSessionManager,
+    ) : this(
+        snapshot = connectionStore.activeSnapshot() ?: ConnectionSnapshot.anonymous(),
+        connectionStore = connectionStore,
+        oidcTokenRefresher = { bound -> oidcTokenRefresher.accessToken(bound.profile) },
+        passwordSessionManager = { bound, url -> passwordSessionManager.ensureSession(bound.profile, url) },
+    )
+
     override fun intercept(chain: Interceptor.Chain): Response {
-        val active = connectionStore.activeProfile()
-        val secrets = active?.let { connectionStore.secretsFor(it.id) }
+        ensureSnapshotStillStored()
         val req = chain.request().newBuilder()
-        when (active?.authMode) {
-            AuthMode.SESSION_TOKEN -> secrets?.sessionToken?.takeIf { it.isNotBlank() }?.let {
+        when (snapshot.authMode) {
+            AuthMode.SESSION_TOKEN -> snapshot.sessionToken?.takeIf { it.isNotBlank() }?.let {
                 req.header(SESSION_HEADER, it)
             }
             AuthMode.BASIC -> {
                 if (!isPasswordBootstrapPath(chain.request().url.encodedPath)) {
-                    passwordSessionManager.ensureSession(active, chain.request().url)
+                    passwordSessionManager(snapshot, chain.request().url)
                 }
-                secrets?.sessionToken?.takeIf { it.isNotBlank() }?.let {
+                snapshot.sessionToken?.takeIf { it.isNotBlank() }?.let {
                     req.header(SESSION_HEADER, it)
                 }
             }
-            AuthMode.BEARER -> secrets?.bearerToken?.takeIf { it.isNotBlank() }?.let {
+            AuthMode.BEARER -> snapshot.bearerToken?.takeIf { it.isNotBlank() }?.let {
                 req.header("Authorization", "Bearer $it")
             }
             AuthMode.OIDC_BROWSER -> {
                 if (!chain.request().url.encodedPath.contains("/auth/native/")) {
-                    oidcTokenRefresher.accessToken(active)?.let {
+                    oidcTokenRefresher(snapshot)?.let {
                         req.header("Authorization", "Bearer $it")
                     }
                 }
-                secrets?.sessionToken?.takeIf { it.isNotBlank() }?.let {
-                    req.header(SESSION_HEADER, it)
-                }
             }
-            AuthMode.NONE, null -> {
-                secrets?.sessionToken?.takeIf { it.isNotBlank() }?.let {
-                    req.header(SESSION_HEADER, it)
-                }
-            }
+            // NONE is intentionally credential-free. A retained token must not
+            // follow a profile edited into an unauthenticated mode.
+            AuthMode.NONE -> Unit
         }
         // Match Host expectations for DNS-rebinding guards when operator set a custom host header — not used by default.
         return chain.proceed(req.build())
+    }
+
+    private fun ensureSnapshotStillStored() {
+        val currentProfile = connectionStore.profileFor(snapshot.connectionId)
+        if (currentProfile == null) {
+            if (snapshot.connectionId == "__anonymous__") return
+            throw IOException("The Hermes connection was deleted")
+        }
+        if (currentProfile.baseUrl != snapshot.profile.baseUrl ||
+            currentProfile.authMode != snapshot.profile.authMode ||
+            currentProfile.username != snapshot.profile.username ||
+            currentProfile.authProvider != snapshot.profile.authProvider ||
+            currentProfile.managementProfile != snapshot.profile.managementProfile ||
+            currentProfile.pinSha256 != snapshot.profile.pinSha256 ||
+            currentProfile.allowCleartext != snapshot.profile.allowCleartext ||
+            connectionStore.secretsFor(snapshot.connectionId) != snapshot.secrets
+        ) {
+            throw IOException("The Hermes connection changed while this request was starting")
+        }
     }
 
     companion object {

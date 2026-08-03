@@ -770,7 +770,10 @@ interface HermesApi {
 
     @Streaming
     @GET("api/files/download")
-    suspend fun downloadManagedFile(@Query("path") path: String): ResponseBody
+    suspend fun downloadManagedFile(
+        @Query("path") path: String,
+        @Query("profile") profile: String? = null,
+    ): ResponseBody
 
     @POST("api/files/upload")
     suspend fun uploadManagedFile(
@@ -784,6 +787,7 @@ interface HermesApi {
         @Part("path") path: RequestBody,
         @Part("overwrite") overwrite: RequestBody,
         @Part file: MultipartBody.Part,
+        @Query("profile") profile: String? = null,
     ): JsonElement
 
     @POST("api/files/mkdir")
@@ -1049,7 +1053,7 @@ interface HermesApi {
     suspend fun getAnalyticsModels(): JsonElement
 
     @GET("api/audio/elevenlabs/voices")
-    suspend fun getElevenLabsVoices(): JsonElement
+    suspend fun getElevenLabsVoices(@Query("profile") profile: String? = null): JsonElement
 
     @GET("api/egress/status")
     suspend fun getEgressStatus(): EgressStatusResponse

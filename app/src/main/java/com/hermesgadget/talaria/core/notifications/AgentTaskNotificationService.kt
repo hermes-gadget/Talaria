@@ -23,6 +23,7 @@ import android.os.IBinder
 import androidx.core.content.ContextCompat
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.prefs.PersistedAgentWatch
+import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.HermesEventClient
 import com.hermesgadget.talaria.core.network.HermesSideEvent
 import kotlinx.coroutines.CoroutineScope
@@ -30,6 +31,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
@@ -47,8 +50,21 @@ class AgentTaskNotificationService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val runtimes = linkedMapOf<String, Runtime>()
     private val container get() = TalariaApp.instance.container
+    private var scopeGuardJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        // HermesEventClient's public constructor follows the active store on
+        // reconnect. Stop a runtime as soon as its recorded connection ceases
+        // to be the foreground binding, rather than allowing a reconnect to
+        // attach to another server/profile.
+        scopeGuardJob = serviceScope.launch {
+            combine(container.connectionStore.activeId, container.connectionStore.profiles) { id, _ -> id }
+                .collect { verifyRuntimeScopes() }
+        }
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!container.notifier.canMonitorAgentTasks()) {
@@ -72,6 +88,7 @@ class AgentTaskNotificationService : Service() {
     }
 
     override fun onDestroy() {
+        scopeGuardJob?.cancel()
         runtimes.values.forEach {
             it.collectJob.cancel()
             it.client.dispose()
@@ -88,7 +105,10 @@ class AgentTaskNotificationService : Service() {
 
     private fun watch(record: PersistedAgentWatch) {
         val existing = runtimes[record.watcherId]
-        if (existing != null && existing.watch.channelId == record.channelId) {
+        if (existing != null &&
+            existing.watch.channelId == record.channelId &&
+            sameRecordedScope(existing.watch, record)
+        ) {
             existing.watch = merge(existing.watch, record)
             persistAndRefreshForeground()
             return
@@ -106,10 +126,20 @@ class AgentTaskNotificationService : Service() {
             container.notifier.buildAgentMonitorNotification(previewNames),
         )
 
+        val snapshot = container.clientFactory.snapshotFor(
+            connectionId = record.connectionId.orEmpty(),
+            managementProfile = record.managementProfile,
+        )
+        if (snapshot == null || !isForegroundBound(snapshot)) {
+            pause(record, "The saved Hermes connection is unavailable or is not the current bound connection")
+            return
+        }
+
         val client = HermesEventClient(
             container.clientFactory,
             container.connectionStore,
             container.wsAuthHelper,
+            profileName = record.managementProfile ?: snapshot.managementProfile,
         )
         // Monitoring only needs channel events. Avoid a second RPC socket and
         // its model/catalog probes for every active turn.
@@ -127,9 +157,64 @@ class AgentTaskNotificationService : Service() {
             watch(record)
             return
         }
+        if (!sameRecordedScope(runtime.watch, record)) {
+            watch(record)
+            return
+        }
         runtime.watch = merge(runtime.watch, record)
         persistAndRefreshForeground()
     }
+
+    private fun verifyRuntimeScopes() {
+        val paused = runtimes.values
+            .filter { runtime ->
+                val id = runtime.watch.connectionId
+                id.isNullOrBlank() ||
+                    container.clientFactory.snapshotFor(id, runtime.watch.managementProfile)
+                        ?.let(::isForegroundBound) != true
+            }
+            .map(Runtime::watch)
+        if (paused.isEmpty()) return
+        paused.forEach { record ->
+            runtimes.remove(record.watcherId)?.let {
+                it.collectJob.cancel()
+                it.client.dispose()
+            }
+            container.notifier.notifyError(
+                "${record.agentName} monitoring paused",
+                "The recorded Hermes connection is no longer the current connection",
+            )
+        }
+        persistAndRefreshForeground()
+        if (runtimes.isEmpty()) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+    }
+
+    private fun pause(record: PersistedAgentWatch, reason: String) {
+        val watches = (runtimes.values.map(Runtime::watch) + record)
+            .distinctBy(PersistedAgentWatch::watcherId)
+        container.settingsStore.saveAgentWatches(watches)
+        container.notifier.notifyError("${record.agentName} monitoring paused", reason)
+        if (runtimes.isEmpty()) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+    }
+
+    private fun isForegroundBound(snapshot: ConnectionSnapshot): Boolean {
+        val current = container.clientFactory.snapshot() ?: return false
+        return current.connectionId == snapshot.connectionId &&
+            current.managementProfile == snapshot.managementProfile &&
+            current.sameTransportAs(snapshot) &&
+            current.secrets == snapshot.secrets
+    }
+
+    private fun sameRecordedScope(old: PersistedAgentWatch, new: PersistedAgentWatch): Boolean =
+        old.connectionId == new.connectionId &&
+            (old.managementProfile.orEmpty().ifBlank { "default" }) ==
+            (new.managementProfile.orEmpty().ifBlank { "default" })
 
     private fun handle(watcherId: String, event: HermesSideEvent) {
         val runtime = runtimes[watcherId] ?: return

@@ -18,6 +18,7 @@
 package com.hermesgadget.talaria.core.data.repo
 
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
+import com.hermesgadget.talaria.core.network.CleartextPolicy
 import com.hermesgadget.talaria.core.network.HermesClientFactory
 import com.hermesgadget.talaria.core.network.WsAuthHelper
 import com.hermesgadget.talaria.core.security.CertificatePinnerFactory
@@ -54,6 +55,11 @@ class ConnectionRepository(
         managementProfile: String,
         pinSha256: String?,
         existingId: String? = null,
+        allowCleartext: Boolean? = null,
+        keepSessionToken: Boolean = true,
+        keepPassword: Boolean = true,
+        keepBearerToken: Boolean = true,
+        keepOidcTokens: Boolean = true,
     ): ConnectionProfile = withContext(Dispatchers.IO) {
         val id = existingId ?: UUID.randomUUID().toString()
         val normalizedBase = baseUrl.trim().trimEnd('/')
@@ -72,8 +78,52 @@ class ConnectionRepository(
             require(parsedBase.isHttps) { "TLS pinning requires an https:// dashboard URL" }
             CertificatePinnerFactory.normalizePin(pin)
         }
-        val previousProfile = existingId?.let { existing -> store.profiles.value.find { it.id == existing } }
-        val prev = if (existingId != null) store.secretsFor(id) else ConnectionSecrets()
+        val previousSnapshot = existingId?.let { existing -> store.snapshotFor(existing) }
+        val previousProfile = previousSnapshot?.profile
+        val previousSecrets = previousSnapshot?.secrets ?: ConnectionSecrets()
+        val sameBase = previousProfile?.baseUrl?.trim()?.trimEnd('/') == normalizedBase
+        val sameAuthMode = previousProfile?.authMode == authMode
+        val sameAuthProvider = authMode !in setOf(AuthMode.BASIC, AuthMode.OIDC_BROWSER) ||
+            previousProfile?.authProvider == authProvider.trim()
+        // A URL or auth-mode edit is a trust-boundary change. Blank fields may
+        // retain only secrets that still belong to the same boundary.
+        val retained = if (sameBase && sameAuthMode && sameAuthProvider) {
+            previousSecrets
+        } else {
+            ConnectionSecrets()
+        }
+        val cleartextAllowed = if (parsedBase.isHttps) {
+            false
+        } else {
+            allowCleartext
+                ?: previousProfile?.takeIf { sameBase }?.allowCleartext
+                ?: CleartextPolicy.isAutoApprovedLocalHost(parsedBase.host)
+        }
+        require(parsedBase.isHttps || (cleartextAllowed && CleartextPolicy.isVerifiedDestination(parsedBase.host))) {
+            "Cleartext is restricted to an explicitly confirmed local/private Hermes destination"
+        }
+        val secrets = when (authMode) {
+            AuthMode.NONE -> ConnectionSecrets()
+            AuthMode.SESSION_TOKEN -> ConnectionSecrets(
+                sessionToken = sessionToken?.takeIf { it.isNotBlank() }
+                    ?: retained.sessionToken?.takeIf { keepSessionToken },
+            )
+            AuthMode.BASIC -> ConnectionSecrets(
+                password = password?.takeIf { it.isNotBlank() }
+                    ?: retained.password?.takeIf { keepPassword },
+            )
+            AuthMode.BEARER -> ConnectionSecrets(
+                bearerToken = bearerToken?.takeIf { it.isNotBlank() }
+                    ?: retained.bearerToken?.takeIf { keepBearerToken },
+            )
+            AuthMode.OIDC_BROWSER -> ConnectionSecrets(
+                bearerToken = bearerToken?.takeIf { it.isNotBlank() }
+                    ?: retained.bearerToken?.takeIf { keepBearerToken },
+                oidcRefreshToken = retained.oidcRefreshToken?.takeIf { keepOidcTokens },
+                oidcExpiresAt = retained.oidcExpiresAt.takeIf { keepOidcTokens },
+                oidcProvider = retained.oidcProvider?.takeIf { keepOidcTokens },
+            )
+        }
         val profile = ConnectionProfile(
             id = id,
             name = name.ifBlank { normalizedBase },
@@ -81,22 +131,14 @@ class ConnectionRepository(
             authMode = authMode,
             username = username,
             authProvider = authProvider.trim(),
-            hasPassword = !password.isNullOrBlank() || !prev.password.isNullOrBlank(),
-            hasSessionToken = !sessionToken.isNullOrBlank() || !prev.sessionToken.isNullOrBlank(),
-            hasBearerToken = !bearerToken.isNullOrBlank() || !prev.bearerToken.isNullOrBlank(),
+            hasPassword = !secrets.password.isNullOrBlank(),
+            hasSessionToken = !secrets.sessionToken.isNullOrBlank(),
+            hasBearerToken = !secrets.bearerToken.isNullOrBlank(),
             managementProfile = normalizeManagementProfile(managementProfile),
             pinSha256 = normalizedPin,
-            allowCleartext = parsedBase.scheme == "http",
+            allowCleartext = cleartextAllowed,
             createdAt = previousProfile?.createdAt ?: System.currentTimeMillis(),
             lastConnectedAt = previousProfile?.lastConnectedAt,
-        )
-        val secrets = ConnectionSecrets(
-            sessionToken = sessionToken?.takeIf { it.isNotBlank() } ?: prev.sessionToken,
-            password = password?.takeIf { it.isNotBlank() } ?: prev.password,
-            bearerToken = bearerToken?.takeIf { it.isNotBlank() } ?: prev.bearerToken,
-            oidcRefreshToken = prev.oidcRefreshToken,
-            oidcExpiresAt = prev.oidcExpiresAt,
-            oidcProvider = prev.oidcProvider,
         )
         store.upsert(profile, secrets)
         clientFactory.invalidate()
@@ -115,10 +157,12 @@ class ConnectionRepository(
 
     suspend fun testConnection(): Result<StatusResponse> = withContext(Dispatchers.IO) {
         runCatching {
-            val api = clientFactory.api()
             val profile = store.activeProfile()
                 ?: error("Save a connection profile before testing it")
-            val status = api.getStatus()
+            val snapshot = clientFactory.snapshotFor(profile.id, profile.managementProfile)
+                ?: error("The selected Hermes connection is no longer available")
+            val api = clientFactory.api(snapshot)
+            val status = api.getStatus(profile = snapshot.managementProfile)
             if (status.auth_required == true) {
                 check(profile.authMode != AuthMode.NONE) {
                     "This Hermes dashboard requires authentication"
@@ -136,7 +180,7 @@ class ConnectionRepository(
                 wsAuthHelper.invalidate()
                 wsAuthHelper.authQueryParam()
                 // Prove the legacy session token/header on a protected endpoint.
-                api.getSessions(limit = 1)
+                api.getSessions(limit = 1, profile = snapshot.managementProfile)
             }
             store.profiles.value.find { it.id == profile.id }
                 ?.copy(lastConnectedAt = System.currentTimeMillis())

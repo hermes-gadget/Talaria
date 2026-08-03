@@ -21,6 +21,7 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.hermesgadget.talaria.TalariaApp
+import kotlinx.coroutines.CancellationException
 import retrofit2.HttpException
 
 /** Approves a pending pairing request straight from a notification action. */
@@ -34,22 +35,22 @@ class PairingApproveWorker(
         val container = TalariaApp.instance.container
         val expectedConnectionId = inputData.getString(KEY_CONNECTION_ID) ?: return Result.failure()
         val expectedProfile = inputData.getString(KEY_MANAGEMENT_PROFILE).orEmpty()
-        val active = container.connectionStore.activeProfile() ?: return Result.failure()
-        if (active.id != expectedConnectionId || active.managementProfile != expectedProfile) {
-            // Never approve a request against a different server/profile merely
-            // because the user switched connections after the notification arrived.
-            return Result.failure()
-        }
-        return container.hermesRepository.approvePairing(platform, code).fold(
+        val snapshot = container.clientFactory.snapshotFor(expectedConnectionId, expectedProfile)
+            ?: return Result.failure()
+        // The request and its auth/profile query are now bound to this snapshot;
+        // a foreground connection switch cannot redirect the approval.
+        return container.hermesRepository.approvePairing(platform, code, snapshot).fold(
             onSuccess = {
                 container.hermesRepository.recordActivity(
                     "pairing",
                     "Pairing approved",
                     "$platform approved from notification",
+                    snapshot,
                 )
                 Result.success()
             },
             onFailure = { error ->
+                if (error is CancellationException) throw error
                 val retriable = (error as? HttpException)?.code()?.let { it == 408 || it == 429 || it >= 500 }
                     ?: true
                 if (retriable && runAttemptCount < MAX_RETRIES - 1) Result.retry() else Result.failure()
