@@ -1,5 +1,45 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="app_name">Talaria</string>
+    <string name="widget_status_label">Hermes 状态</string>
+    <string name="qs_tile_label">Hermes</string>
+    <string name="notif_channel_replies">代理回复</string>
+    <string name="notif_channel_cron">Cron 任务</string>
+    <string name="notif_channel_gateway">网关状态</string>
+    <string name="notif_channel_pairing">配对请求</string>
+    <string name="notif_channel_errors">错误</string>
+    <string name="notif_channel_tasks">长任务</string>
+    <string name="notif_channel_sync">后台同步</string>
+    <string name="notif_channel_agent_permissions">代理需要关注</string>
+    <string name="notif_channel_agent_permissions_description">活动 Hermes 代理的权限、澄清、密码和密钥请求</string>
+    <string name="notif_channel_agent_tasks">代理任务完成</string>
+    <string name="notif_channel_agent_tasks_description">已完成和失败的 Hermes 代理任务</string>
+    <string name="notif_channel_agent_monitor">活动代理监控</string>
+    <string name="notif_channel_agent_monitor_description">Talaria 在后台运行时持续监控活动的 Hermes 任务</string>
+    <string name="notif_action_reply">回复</string>
+    <string name="notif_action_open">打开</string>
+    <string name="notif_action_dismiss">忽略</string>
+    <string name="notif_action_approve">批准</string>
+    <string name="shortcut_chat_short">新建聊天</string>
+    <string name="shortcut_chat_long">开始新的聊天</string>
+    <string name="shortcut_status_short">状态</string>
+    <string name="shortcut_status_long">网关状态</string>
+    <string name="shortcut_activity_short">活动</string>
+    <string name="shortcut_activity_long">活动动态</string>
+    <string name="shortcut_manage_short">管理</string>
+    <string name="shortcut_manage_long">管理 Hermes</string>
+    <string name="manage_command_center_subtitle">状态、日志、用量与维护</string>
+    <string name="manage_command_center_title">命令中心</string>
+    <string name="manage_extensions">扩展</string>
+    <string name="manage_kanban_subtitle">任务看板与任务</string>
+    <string name="manage_kanban_title">看板</string>
+    <string name="manage_plugins_subtitle">仪表盘与代理插件</string>
+    <string name="manage_plugins_title">插件</string>
+    <string name="manage_themes_subtitle">预设配色与服务器同步</string>
+    <string name="manage_themes_title">主题</string>
+    <string name="manage_voice_subtitle">服务器 STT/TTS 与听写</string>
+    <string name="manage_voice_title">语音</string>
+
     <string name="nav_chat">聊天</string>
     <string name="nav_activity">活动</string>
     <string name="nav_manage">管理</string>

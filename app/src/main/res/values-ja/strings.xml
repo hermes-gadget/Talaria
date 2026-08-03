@@ -1,5 +1,45 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="app_name">Talaria</string>
+    <string name="widget_status_label">Hermes の状態</string>
+    <string name="qs_tile_label">Hermes</string>
+    <string name="notif_channel_replies">エージェントの返信</string>
+    <string name="notif_channel_cron">Cron ジョブ</string>
+    <string name="notif_channel_gateway">ゲートウェイの状態</string>
+    <string name="notif_channel_pairing">ペアリング要求</string>
+    <string name="notif_channel_errors">エラー</string>
+    <string name="notif_channel_tasks">長時間タスク</string>
+    <string name="notif_channel_sync">バックグラウンド同期</string>
+    <string name="notif_channel_agent_permissions">エージェントの対応が必要</string>
+    <string name="notif_channel_agent_permissions_description">アクティブな Hermes エージェントからの権限、確認、パスワード、シークレットの要求</string>
+    <string name="notif_channel_agent_tasks">エージェントタスクの完了</string>
+    <string name="notif_channel_agent_tasks_description">完了または失敗した Hermes エージェントタスク</string>
+    <string name="notif_channel_agent_monitor">アクティブなエージェントの監視</string>
+    <string name="notif_channel_agent_monitor_description">Talaria がバックグラウンドにある間、アクティブな Hermes タスクを監視します</string>
+    <string name="notif_action_reply">返信</string>
+    <string name="notif_action_open">開く</string>
+    <string name="notif_action_dismiss">閉じる</string>
+    <string name="notif_action_approve">承認</string>
+    <string name="shortcut_chat_short">新しいチャット</string>
+    <string name="shortcut_chat_long">新しいチャットを開始</string>
+    <string name="shortcut_status_short">状態</string>
+    <string name="shortcut_status_long">ゲートウェイの状態</string>
+    <string name="shortcut_activity_short">アクティビティ</string>
+    <string name="shortcut_activity_long">アクティビティフィード</string>
+    <string name="shortcut_manage_short">管理</string>
+    <string name="shortcut_manage_long">Hermes を管理</string>
+    <string name="manage_command_center_subtitle">ステータス、ログ、使用量、メンテナンス</string>
+    <string name="manage_command_center_title">コマンドセンター</string>
+    <string name="manage_extensions">拡張機能</string>
+    <string name="manage_kanban_subtitle">ミッションボードとタスク</string>
+    <string name="manage_kanban_title">カンバン</string>
+    <string name="manage_plugins_subtitle">ダッシュボードとエージェントのプラグイン</string>
+    <string name="manage_plugins_title">プラグイン</string>
+    <string name="manage_themes_subtitle">プリセットパレットとサーバー同期</string>
+    <string name="manage_themes_title">テーマ</string>
+    <string name="manage_voice_subtitle">サーバー STT/TTS と音声入力</string>
+    <string name="manage_voice_title">音声</string>
+
     <string name="nav_chat">チャット</string>
     <string name="nav_activity">アクティビティ</string>
     <string name="nav_manage">管理</string>

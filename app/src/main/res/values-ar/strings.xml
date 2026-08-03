@@ -1,5 +1,45 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="app_name">Talaria</string>
+    <string name="widget_status_label">حالة Hermes</string>
+    <string name="qs_tile_label">Hermes</string>
+    <string name="notif_channel_replies">ردود الوكلاء</string>
+    <string name="notif_channel_cron">مهام Cron</string>
+    <string name="notif_channel_gateway">حالة البوابة</string>
+    <string name="notif_channel_pairing">طلبات الاقتران</string>
+    <string name="notif_channel_errors">الأخطاء</string>
+    <string name="notif_channel_tasks">المهام الطويلة</string>
+    <string name="notif_channel_sync">المزامنة في الخلفية</string>
+    <string name="notif_channel_agent_permissions">الوكيل يحتاج إلى انتباه</string>
+    <string name="notif_channel_agent_permissions_description">طلبات الأذونات والتوضيح وكلمات المرور والأسرار من وكيل Hermes نشط</string>
+    <string name="notif_channel_agent_tasks">إكمال مهام الوكيل</string>
+    <string name="notif_channel_agent_tasks_description">مهام وكيل Hermes المكتملة والفاشلة</string>
+    <string name="notif_channel_agent_monitor">مراقبة الوكلاء النشطين</string>
+    <string name="notif_channel_agent_monitor_description">يبقي مهام Hermes النشطة قيد المراقبة أثناء عمل Talaria في الخلفية</string>
+    <string name="notif_action_reply">رد</string>
+    <string name="notif_action_open">فتح</string>
+    <string name="notif_action_dismiss">تجاهل</string>
+    <string name="notif_action_approve">موافقة</string>
+    <string name="shortcut_chat_short">محادثة جديدة</string>
+    <string name="shortcut_chat_long">بدء محادثة جديدة</string>
+    <string name="shortcut_status_short">الحالة</string>
+    <string name="shortcut_status_long">حالة البوابة</string>
+    <string name="shortcut_activity_short">النشاط</string>
+    <string name="shortcut_activity_long">موجز النشاط</string>
+    <string name="shortcut_manage_short">إدارة</string>
+    <string name="shortcut_manage_long">إدارة Hermes</string>
+    <string name="manage_command_center_subtitle">الحالة والسجلات والاستخدام والصيانة</string>
+    <string name="manage_command_center_title">مركز الأوامر</string>
+    <string name="manage_extensions">الإضافات</string>
+    <string name="manage_kanban_subtitle">لوحة المهمات والمهام</string>
+    <string name="manage_kanban_title">كانبان</string>
+    <string name="manage_plugins_subtitle">إضافات لوحة التحكم والوكلاء</string>
+    <string name="manage_plugins_title">الإضافات</string>
+    <string name="manage_themes_subtitle">لوحات الألوان الجاهزة ومزامنة الخادم</string>
+    <string name="manage_themes_title">السمات</string>
+    <string name="manage_voice_subtitle">تحويل الكلام إلى نص ونطقه على الخادم والإملاء</string>
+    <string name="manage_voice_title">الصوت</string>
+
     <string name="nav_chat">الدردشة</string>
     <string name="nav_activity">النشاط</string>
     <string name="nav_manage">الإدارة</string>

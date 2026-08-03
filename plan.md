@@ -1,9 +1,52 @@
 # Talaria Android Auto / Car Experience — Implementation Plan
 
-**Status:** ACTIVE — implementation started 2026-08-03
-**Last updated:** 2026-08-03 (agent creation live end-to-end)
+**Status:** CURRENT — car implementation through Phase 4 is recorded complete; notification polish and release validation are deferred
+**Last updated:** 2026-08-03 (status reconciliation and repository evidence)
 **Owner:** Ben + Hermes
 **Distribution model:** APK-only via GitHub releases — **no Play Store** (this is a hard constraint, see [Distribution](#distribution-model))
+
+## Authoritative status
+
+This is the single source of truth for phase status. Runtime claims in the
+evidence record below were recorded on 2026-08-03; this audit zone did not
+launch an emulator, AVD, device, `adb`, or instrumentation test.
+
+### Completed
+
+- [x] **Phase 0 — toolchain validation:** the prior evidence record documents
+  a capped `talaria_auto` AAOS boot/install/screencap loop. It is not rerun here
+  because emulator and device execution are prohibited for this worktree.
+- [x] **Phase 2 — car-app skeleton:** `TalariaCarService`, the car intent
+  filter, application `minCarApiLevel`, and `SessionListScreen` are present in
+  `AndroidManifest.xml`, `car/TalariaCarService.kt`, and
+  `car/SessionListScreen.kt`.
+- [x] **Phase 3 — active session list:** `CarSessionsRepository.activeSessions`
+  filters end markers and automation sources, and the car list consumes that
+  projection; the evidence record says the real list rendered.
+- [x] **Phase 4 — voice-first agent creation:** the car repository exposes
+  `createSession`/`sendText`; the evidence record says a quick-start prompt
+  created a server session and the run survived socket close via an attach token.
+- [x] **PTY startup ordering:** the current car and notification paths wait for
+  first PTY output, apply the 350 ms settle interval, and use an attach token.
+
+### Current
+
+- [ ] **Phase 1 — notification presentation:** existing Talaria notifications
+  remain the Android Auto notification surface; MessagingStyle/CarAppExtender
+  conversion and a car round-trip check are not landed.
+- [ ] **Phase 4 residual — live response state:** the car conversation path has
+  creation and history delivery, but a live streaming/"thinking" indicator is
+  not evidenced in the current repository.
+- [ ] **Phase 5 — notification pairing and playback polish:** unread pairing,
+  duplicate-tab handling, offline UX, and the full notification/car loop remain.
+
+### Deferred
+
+- [ ] **Phase 6 — release validation:** real-car testing, optional App Host
+  validation, screenshots, and the `v0.8.0` tag are deferred to Ben's release
+  decision. No emulator/device validation is authorized in this audit zone.
+- [ ] **Play Store/developer-program work:** remains out of scope under the
+  APK-only distribution decision.
 
 ## 0. Locked decisions (Ben, 2026-08-03)
 
@@ -14,10 +57,10 @@
 | Create agent | **"New agent" button in the car UI** — voice prompt starts a fresh session |
 | Input model | **Voice-first** — dictation (`requestInput(VOICE)`) is the primary input; no keyboard in the car |
 | Notifications | **Unchanged** — existing Talaria notifications surface on Android Auto as normal notifications; no MessagingStyle conversion work |
-| Emulator testing | Android Automotive OS AVD (`talaria_auto`, android-34-ext9 automotive x86_64) — **capped resources only** (full AAOS boot crashes the VM; regular phone AVDs are fine) |
+| Emulator testing | Prior AAOS evidence is retained above; no emulator/device execution is permitted in this audit zone |
 | Delegation | MissionDeck agents allowed if needed; Hermes monitors in-session |
 
-**Status update (2026-08-03):** ✅ VERIFIED on the AAOS emulator (capped
+**Historical evidence record (2026-08-03):** ✅ VERIFIED on the AAOS emulator (capped
 boot, no crash): car launcher → CarAppActivity → template host renders
 the real session list (live sessions from the Hermes dashboard, "New
 agent" mic entry, active-only filtering). Fixes: CarAppActivity
@@ -28,7 +71,7 @@ added debug hook `--ez force_phone_ui true` to reach the phone UI on
 AAOS (used to configure the connection on the emulator — SESSION_TOKEN
 auth auto-mints against the local dashboard via `adb reverse`).
 
-**Agent creation — LIVE end-to-end (2026-08-03):** car list has a
+**Historical evidence record — agent creation (2026-08-03):** car list has a
 "Create new agent" entry (distinct + avatar, voice via framework mic)
 plus 3 one-tap quick-start actions. Verified on the AAOS emulator:
 tapping a quick action created a real session on the Hermes dashboard
@@ -115,10 +158,10 @@ Two complementary layers, designed as a pair (Google's own model):
 
 ### Phase 0 — Toolchain validation (quick, do first)
 
-- [ ] Download `system-images;android-34-ext9;android-automotive;x86_64` via sdkmanager
-- [ ] Create `talaria_auto` AVD (Automotive OS head-unit emulator)
-- [ ] Boot it headless (KVM, `-no-window`), confirm `sys.boot_completed`
-- [ ] Confirm we can install an APK and screencap it
+- [x] Download `system-images;android-34-ext9;android-automotive;x86_64` via sdkmanager (historical evidence; do not rerun in this zone)
+- [x] Create `talaria_auto` AVD (historical evidence; do not rerun in this zone)
+- [x] Boot it headless (KVM, `-no-window`), confirm `sys.boot_completed` (historical evidence; do not rerun in this zone)
+- [x] Confirm we can install an APK and screencap it (historical evidence; do not rerun in this zone)
 - **Exit criteria:** automotive AVD boots and installs APKs; we have a repeatable test loop.
 
 ### Phase 1 — MessagingStyle notifications (1 day)
@@ -133,28 +176,28 @@ The immediate car experience, no car-app code needed. Reuses `AgentTaskNotificat
 
 ### Phase 2 — CarAppService skeleton (1 day)
 
-- [ ] Add dependency `androidx.car.app:app-automotive` (+ version catalog entry)
-- [ ] Create `TalariaCarService : CarAppService`
-- [ ] Manifest: service + intent filter (`androidx.car.app.CarAppService` action, `androidx.car.app.category.MESSAGING` category) + `androidx.car.app.minCarAppApiLevel` metadata
-- [ ] Wire minimal `SessionListScreen` (empty state) so the service is discoverable
-- [ ] Test on `talaria_auto` AVD: app appears in car launcher, empty list renders
+- [x] Add dependency `androidx.car.app:app-automotive` (+ version catalog entry)
+- [x] Create `TalariaCarService : CarAppService`
+- [x] Manifest: service + intent filter (`androidx.car.app.CarAppService` action, `androidx.car.app.category.MESSAGING` category) + `androidx.car.app.minCarAppApiLevel` metadata
+- [x] Wire minimal `SessionListScreen` (empty state) so the service is discoverable
+- [x] Test on `talaria_auto` AVD: app appears in car launcher, empty list renders (historical evidence; no rerun in this zone)
 - **Exit criteria:** car app launches on the automotive emulator and shows a session list skeleton.
 
 ### Phase 3 — Session list (2 days)
 
-- [ ] Map Hermes `SessionSummary` → car conversation rows (title, source platform, unread indicator, active badge)
-- [ ] Reuse `ProfileRegistry`/`HermesApi` session fetch (already built for the app) — a thin `CarSessionsRepository` wrapper
-- [ ] `ListTemplate` with `ItemList` (driver-safe: title + subtitle, no dense metadata)
-- [ ] Filter: show only non-automation, active/ended sessions (same `SessionFilters.matchesTab` logic as the app)
-- [ ] Tap → open `MessageTemplate` conversation view
+- [x] Map Hermes `SessionSummary` → car conversation rows (title, source platform, unread indicator, active badge)
+- [x] Reuse `ProfileRegistry`/`HermesApi` session fetch (already built for the app) — a thin `CarSessionsRepository` wrapper
+- [x] `ListTemplate` with `ItemList` (driver-safe: title + subtitle, no dense metadata)
+- [x] Filter: show only non-automation, active sessions (same source classification as the app)
+- [x] Tap → open `MessageTemplate` conversation view
 - **Exit criteria:** real sessions from the connected Hermes instance render in the car list.
 
 ### Phase 4 — Message view + voice compose (2 days)
 
-- [ ] `MessageTemplate`-based conversation screen (or `ListTemplate` fallback for message history if template limits bite)
-- [ ] Voice compose: template input callback → dictation → send prompt to agent via existing Hermes API path (reuse `HermesRepository`/chat send)
+- [x] `MessageTemplate`-based conversation screen (or `ListTemplate` fallback for message history if template limits bite)
+- [x] Voice compose: template input callback → dictation → send prompt to agent via existing Hermes API path (reuse `HermesRepository`/chat send)
 - [ ] Show streaming/working state (agent is "thinking") using existing event/streaming plumbing where feasible
-- [ ] "New message" action to start a fresh session
+- [x] "New message" action to start a fresh session
 - **Exit criteria:** voice dictation sends a prompt to an agent from the car UI; response renders in the conversation.
 
 ### Phase 5 — Notification pairing + playback polish (1 day)
@@ -179,7 +222,7 @@ The immediate car experience, no car-app code needed. Reuses `AgentTaskNotificat
 
 ```kotlin
 // libs.versions.toml
-androidx-car = "1.8.0"   // pin actual latest at implementation time
+androidx-car = "1.7.0"   // matches the current app dependency/catalog pin
 car-app = { id = "androidx.car.app:app-automotive", version.ref = "androidx-car" }
 ```
 
@@ -244,9 +287,9 @@ car-app = { id = "androidx.car.app:app-automotive", version.ref = "androidx-car"
 - Custom TTS voices or wake words
 - Media/navigation car categories
 
-## 9. Open questions for Ben
+## 9. Remaining release decisions
 
-1. Target version number for the car release — `v0.8.0`? (Current: v0.7.0 released.)
-2. Which sessions should appear in the car — all non-automation sessions, or only currently-active ones?
-3. Should the car list show a "start new agent" voice flow, or only existing sessions?
-4. Priority: Phase 1 (notifications, quick win) before Phase 2+ (car app), or build the car app first?
+1. Ben decides when to tag `v0.8.0` (or a later release) after Phase 1, the
+   Phase 4 residual, and Phase 5 are complete.
+2. Ben decides whether to add optional phone-projection/App Host validation;
+   it is not required for the APK-only distribution model.

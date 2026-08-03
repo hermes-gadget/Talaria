@@ -1,5 +1,45 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="app_name">Talaria</string>
+    <string name="widget_status_label">Hermes 狀態</string>
+    <string name="qs_tile_label">Hermes</string>
+    <string name="notif_channel_replies">代理程式回覆</string>
+    <string name="notif_channel_cron">Cron 工作</string>
+    <string name="notif_channel_gateway">閘道狀態</string>
+    <string name="notif_channel_pairing">配對要求</string>
+    <string name="notif_channel_errors">錯誤</string>
+    <string name="notif_channel_tasks">長時間工作</string>
+    <string name="notif_channel_sync">背景同步</string>
+    <string name="notif_channel_agent_permissions">代理程式需要注意</string>
+    <string name="notif_channel_agent_permissions_description">作用中 Hermes 代理程式的權限、釐清、密碼與密鑰要求</string>
+    <string name="notif_channel_agent_tasks">代理程式工作完成</string>
+    <string name="notif_channel_agent_tasks_description">已完成與失敗的 Hermes 代理程式工作</string>
+    <string name="notif_channel_agent_monitor">作用中代理程式監控</string>
+    <string name="notif_channel_agent_monitor_description">Talaria 在背景執行時持續監控作用中的 Hermes 工作</string>
+    <string name="notif_action_reply">回覆</string>
+    <string name="notif_action_open">開啟</string>
+    <string name="notif_action_dismiss">關閉</string>
+    <string name="notif_action_approve">核准</string>
+    <string name="shortcut_chat_short">新增聊天</string>
+    <string name="shortcut_chat_long">開始新的聊天</string>
+    <string name="shortcut_status_short">狀態</string>
+    <string name="shortcut_status_long">閘道狀態</string>
+    <string name="shortcut_activity_short">活動</string>
+    <string name="shortcut_activity_long">活動資訊</string>
+    <string name="shortcut_manage_short">管理</string>
+    <string name="shortcut_manage_long">管理 Hermes</string>
+    <string name="manage_command_center_subtitle">狀態、記錄、用量與維護</string>
+    <string name="manage_command_center_title">指令中心</string>
+    <string name="manage_extensions">擴充功能</string>
+    <string name="manage_kanban_subtitle">任務看板與工作項目</string>
+    <string name="manage_kanban_title">看板</string>
+    <string name="manage_plugins_subtitle">儀表板與代理程式外掛</string>
+    <string name="manage_plugins_title">外掛程式</string>
+    <string name="manage_themes_subtitle">預設配色與伺服器同步</string>
+    <string name="manage_themes_title">主題</string>
+    <string name="manage_voice_subtitle">伺服器 STT/TTS 與聽寫</string>
+    <string name="manage_voice_title">語音</string>
+
     <string name="nav_chat">聊天</string>
     <string name="nav_activity">活動</string>
     <string name="nav_manage">管理</string>
