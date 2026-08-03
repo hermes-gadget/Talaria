@@ -156,7 +156,14 @@ private fun collectTextCandidates(text: String, add: (String) -> Unit) {
     PATH_TOKEN_RE.findAll(text).forEach { add(it.groupValues[1]) }
 }
 
+/** Max stringified-JSON unwrap depth. Real tool payloads rarely nest beyond one or two levels. */
+private const val MAX_STRINGIFIED_JSON_DEPTH = 16
+
 private fun collectJsonCandidates(element: JsonElement, keyPath: String, add: (String) -> Unit) {
+    collectJsonCandidates(element, keyPath, add, 0)
+}
+
+private fun collectJsonCandidates(element: JsonElement, keyPath: String, add: (String) -> Unit, depth: Int) {
     when (element) {
         is JsonPrimitive -> {
             val value = element.contentOrNull ?: return
@@ -168,7 +175,18 @@ private fun collectJsonCandidates(element: JsonElement, keyPath: String, add: (S
             }
 
             // Tool arguments frequently put a JSON object in a string field.
-            parseJson(value)?.let { nested -> collectJsonCandidates(nested, keyPath, add) }
+            // Only unwrap values that actually look like a JSON object/array:
+            // parseToJsonElement also accepts bare unquoted strings as JSON
+            // literals (e.g. "report.txt"), which would re-parse to themselves
+            // and recurse without bound.
+            if (depth < MAX_STRINGIFIED_JSON_DEPTH) {
+                val trimmed = value.trimStart()
+                if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+                    parseJson(value)?.let { nested ->
+                        collectJsonCandidates(nested, keyPath, add, depth + 1)
+                    }
+                }
+            }
         }
 
         is JsonArray -> element.forEachIndexed { index, child ->
