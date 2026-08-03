@@ -33,11 +33,11 @@ class QuickEntryWidgetIntentTest {
     }
 
     @Test
-    fun talkIntentTargetsConnectionScreen() {
+    fun talkIntentTargetsVoiceScreen() {
         val intent = QuickEntryWidgetIntents.talk(packageName)
 
         assertEquals(Intent.ACTION_VIEW, intent.action)
-        assertEquals("connect", intent.data?.host)
+        assertEquals("voice", intent.data?.host)
         assertTrue((intent.flags and Intent.FLAG_ACTIVITY_NEW_TASK) != 0)
     }
 }

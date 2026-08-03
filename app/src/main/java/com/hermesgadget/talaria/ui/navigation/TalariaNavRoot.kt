@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -75,6 +76,7 @@ import com.hermesgadget.talaria.feature.manage.skills.SkillsScreen
 import com.hermesgadget.talaria.feature.manage.status.StatusScreen
 import com.hermesgadget.talaria.feature.manage.curator.CuratorScreen
 import com.hermesgadget.talaria.feature.manage.files.FilesScreen
+import com.hermesgadget.talaria.feature.manage.files.FilesViewModel
 import com.hermesgadget.talaria.feature.manage.learning.LearningScreen
 import com.hermesgadget.talaria.feature.manage.kanban.KanbanScreen
 import com.hermesgadget.talaria.feature.manage.memory.MemoryScreen
@@ -88,6 +90,54 @@ import com.hermesgadget.talaria.feature.settings.NotificationSettingsScreen
 import com.hermesgadget.talaria.feature.terminal.TerminalScreen
 import com.hermesgadget.talaria.feature.you.YouScreen
 import com.hermesgadget.talaria.domain.model.scopeId
+import kotlinx.coroutines.flow.first
+
+private const val FILES_PATH_ARGUMENT = "path"
+private const val FILES_WITH_PATH_ROUTE = "files?path={path}"
+private const val FILES_ROUTE_PREFIX = "files?path="
+
+private sealed interface PendingDeepLinkDestination {
+    data class Parsed(val value: TalariaDeepLink) : PendingDeepLinkDestination
+    data object Voice : PendingDeepLinkDestination
+}
+
+private data class PendingDeepLink(
+    val destination: PendingDeepLinkDestination,
+    val expectedScope: String?,
+)
+
+private fun parseDeepLinkDestination(raw: String): PendingDeepLinkDestination? {
+    val uri = runCatching { Uri.parse(raw) }.getOrNull()
+    if (
+        uri?.scheme?.equals("talaria", ignoreCase = true) == true &&
+        uri?.host?.equals("voice", ignoreCase = true) == true &&
+        uri?.path.isNullOrBlank()
+    ) {
+        return PendingDeepLinkDestination.Voice
+    }
+    return TalariaDeepLinkParser.parse(raw)?.let(PendingDeepLinkDestination::Parsed)
+}
+
+private suspend fun applyDeepLinkScope(connectionId: String?, profile: String?) {
+    val container = TalariaApp.instance.container
+    val validConnectionId = connectionId?.takeIf { candidate ->
+        candidate.isNotBlank() && container.connectionStore.profiles.value.any { it.id == candidate }
+    }
+    if (validConnectionId != null) {
+        container.connectionRepository.setActive(validConnectionId)
+    }
+    // A profile is scoped to whichever connection is active after the optional
+    // connection switch. It must not be nested under the connection-id check:
+    // notification links often carry only `?profile=`.
+    profile?.takeIf(String::isNotBlank)?.let(container.connectionStore::setManagementProfile)
+    container.hermesRepository.clearCache()
+    container.wsAuthHelper.invalidate()
+}
+
+private fun filesRoute(path: String?): String = path
+    ?.takeIf(String::isNotBlank)
+    ?.let { "$FILES_ROUTE_PREFIX${Uri.encode(it)}" }
+    ?: Routes.FILES
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -101,6 +151,8 @@ fun TalariaNavRoot(
     val profiles by TalariaApp.instance.container.connectionStore.profiles.collectAsState()
     val activeId by TalariaApp.instance.container.connectionStore.activeId.collectAsState()
     val activeScope = (profiles.find { it.id == activeId } ?: profiles.firstOrNull())?.scopeId()
+    var pendingDeepLink by remember { mutableStateOf<PendingDeepLink?>(null) }
+    var connectProfile by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(activeScope) {
         val container = TalariaApp.instance.container
@@ -109,6 +161,37 @@ fun TalariaNavRoot(
         container.clientFactory.invalidate()
         container.wsAuthHelper.invalidate()
         if (activeScope != null) container.eventClient.start()
+    }
+
+    // Scope selection belongs to the stable parent of the keyed NavHost. A
+    // scoped link can replace the host, so only queue its destination after
+    // the target connection/profile has been applied; the new host consumes it
+    // once its graph exists.
+    LaunchedEffect(deepLink) {
+        val link = deepLink ?: return@LaunchedEffect
+        val destination = parseDeepLinkDestination(link) ?: return@LaunchedEffect
+        val container = TalariaApp.instance.container
+        val parsed = (destination as? PendingDeepLinkDestination.Parsed)?.value
+        when (parsed) {
+            is TalariaDeepLink.Pairing -> {
+                applyDeepLinkScope(
+                    connectionId = parsed.connectionId,
+                    profile = parsed.profile,
+                )
+            }
+            is TalariaDeepLink.Session -> {
+                applyDeepLinkScope(
+                    connectionId = parsed.connectionId,
+                    profile = parsed.profile,
+                )
+            }
+            is TalariaDeepLink.Connect -> connectProfile = parsed.profile
+            else -> connectProfile = null
+        }
+        pendingDeepLink = PendingDeepLink(
+            destination = destination,
+            expectedScope = container.connectionStore.activeProfile()?.scopeId(),
+        )
     }
 
     // A connection/profile switch is a hard data boundary. Recreate navigation
@@ -123,55 +206,6 @@ fun TalariaNavRoot(
         if (!shareText.isNullOrBlank() || shareImage != null) {
             navController.navigate(Routes.chat()) { launchSingleTop = true }
         }
-    }
-    var connectProfile by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(deepLink) {
-        val link = deepLink ?: return@LaunchedEffect
-        suspend fun applyScope(connectionId: String?, profile: String?) {
-            val container = TalariaApp.instance.container
-            val validConnectionId = connectionId?.takeIf { candidate ->
-                candidate.isNotBlank() && container.connectionStore.profiles.value.any { it.id == candidate }
-            }
-            if (validConnectionId != null) {
-                container.connectionRepository.setActive(validConnectionId)
-                if (profile != null) container.connectionStore.setManagementProfile(profile)
-            }
-            container.hermesRepository.clearCache()
-            container.wsAuthHelper.invalidate()
-        }
-        when (val target = TalariaDeepLinkParser.parse(link)) {
-            is TalariaDeepLink.Pairing -> {
-                applyScope(target.connectionId, target.profile)
-                navController.navigate(Routes.PAIRING)
-            }
-            is TalariaDeepLink.Connect -> {
-                connectProfile = target.profile
-                navController.navigate(Routes.CONNECT)
-            }
-            is TalariaDeepLink.Session -> {
-                applyScope(target.connectionId, target.profile)
-                navController.navigate(Routes.sessionDetail(target.id))
-            }
-            // Launcher long-press shortcuts (res/xml/shortcuts.xml).
-            TalariaDeepLink.Status -> {
-                currentTop = TopDest.Manage.route
-                navController.navigate(Routes.STATUS)
-            }
-            TalariaDeepLink.Activity -> {
-                currentTop = TopDest.Activity.route
-                navController.navigate(TopDest.Activity.route) { launchSingleTop = true }
-            }
-            TalariaDeepLink.Manage -> {
-                currentTop = TopDest.Manage.route
-                navController.navigate(TopDest.Manage.route) { launchSingleTop = true }
-            }
-            TalariaDeepLink.Chat -> {
-                currentTop = TopDest.Chats.route
-                navController.navigate(Routes.chat()) { launchSingleTop = true }
-            }
-            null -> Unit
-        }
-        onDeepLinkConsumed()
     }
 
     // Keep the scaffold type stable while the IME opens. Switching between a
@@ -370,8 +404,27 @@ fun TalariaNavRoot(
                 composable(Routes.SYSTEM) { SystemScreen() }
                 composable(Routes.MEMORY) { MemoryScreen() }
                 composable(Routes.CURATOR) { CuratorScreen() }
-                composable(Routes.FILES) { FilesScreen() }
-                composable(Routes.REVIEW) { ReviewScreen(onOpenFile = { _ -> navController.navigate(Routes.FILES) }) }
+                composable(
+                    route = FILES_WITH_PATH_ROUTE,
+                    arguments = listOf(
+                        navArgument(FILES_PATH_ARGUMENT) {
+                            type = NavType.StringType
+                            defaultValue = ""
+                        },
+                    ),
+                ) { entry ->
+                    val initialPath = entry.arguments
+                        ?.getString(FILES_PATH_ARGUMENT)
+                        ?.takeIf(String::isNotBlank)
+                    val filesViewModel: FilesViewModel = viewModel(factory = FilesViewModel.factory())
+                    LaunchedEffect(initialPath) {
+                        initialPath?.let { filesViewModel.open(it) }
+                    }
+                    FilesScreen(vm = filesViewModel)
+                }
+                composable(Routes.REVIEW) {
+                    ReviewScreen(onOpenFile = { path -> navController.navigate(filesRoute(path)) })
+                }
                 composable(Routes.MODELS) { ModelsScreen() }
                 composable(Routes.LEARNING) { LearningScreen() }
                 composable(Routes.ARTIFACTS) {
@@ -381,6 +434,46 @@ fun TalariaNavRoot(
                 }
                 composable(Routes.PLUGINS) { PluginsScreen() }
                 composable(Routes.KANBAN) { KanbanScreen() }
+            }
+
+            // This effect is deliberately below the NavHost declaration. The
+            // current-entry flow waits until the replacement host has installed
+            // its graph, so a scoped link cannot navigate a disposed controller.
+            LaunchedEffect(pendingDeepLink, activeScope) {
+                val pending = pendingDeepLink ?: return@LaunchedEffect
+                if (pending.expectedScope != null && pending.expectedScope != activeScope) return@LaunchedEffect
+                val navigated = runCatching {
+                    navController.currentBackStackEntryFlow.first()
+                    when (val destination = pending.destination) {
+                        PendingDeepLinkDestination.Voice -> navController.navigate(Routes.VOICE)
+                        is PendingDeepLinkDestination.Parsed -> when (val target = destination.value) {
+                            is TalariaDeepLink.Pairing -> navController.navigate(Routes.PAIRING)
+                            is TalariaDeepLink.Connect -> navController.navigate(Routes.CONNECT)
+                            is TalariaDeepLink.Session -> navController.navigate(Routes.sessionDetail(target.id))
+                            // Launcher long-press shortcuts (res/xml/shortcuts.xml).
+                            TalariaDeepLink.Status -> {
+                                currentTop = TopDest.Manage.route
+                                navController.navigate(Routes.STATUS)
+                            }
+                            TalariaDeepLink.Activity -> {
+                                currentTop = TopDest.Activity.route
+                                navController.navigate(TopDest.Activity.route) { launchSingleTop = true }
+                            }
+                            TalariaDeepLink.Manage -> {
+                                currentTop = TopDest.Manage.route
+                                navController.navigate(TopDest.Manage.route) { launchSingleTop = true }
+                            }
+                            TalariaDeepLink.Chat -> {
+                                currentTop = TopDest.Chats.route
+                                navController.navigate(Routes.chat()) { launchSingleTop = true }
+                            }
+                        }
+                    }
+                }.isSuccess
+                if (navigated) {
+                    pendingDeepLink = null
+                    onDeepLinkConsumed()
+                }
             }
         }
     }

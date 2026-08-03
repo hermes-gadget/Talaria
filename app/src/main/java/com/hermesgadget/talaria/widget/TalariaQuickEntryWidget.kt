@@ -16,6 +16,7 @@
 
 package com.hermesgadget.talaria.widget
 
+import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.runtime.Composable
@@ -42,11 +43,12 @@ import androidx.glance.layout.width
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
+import com.hermesgadget.talaria.MainActivity
 
 /** The two launcher-safe actions exposed by the quick-entry widget. */
 object QuickEntryWidgetIntents {
     const val NEW_CHAT_URI = "talaria://chat?focus=composer"
-    const val TALK_URI = "talaria://connect"
+    const val TALK_URI = "talaria://voice"
 
     fun newChat(packageName: String? = null): Intent = deepLink(NEW_CHAT_URI, packageName)
 
@@ -56,7 +58,13 @@ object QuickEntryWidgetIntents {
         Intent.ACTION_VIEW,
         Uri.parse(uri),
     ).apply {
-        packageName?.let(::setPackage)
+        packageName?.let { targetPackage ->
+            // MainActivity's legacy intent filter predates the Voice host. Keep
+            // the URI for app routing while targeting the app explicitly so the
+            // widget action is not rejected by host matching at resolution time.
+            setPackage(targetPackage)
+            component = ComponentName(targetPackage, MainActivity::class.java.name)
+        }
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
     }
 }

@@ -54,7 +54,43 @@ data class PipChatSnapshot(
     val title: String = "Chat",
     val messages: List<PipChatMessage> = emptyList(),
     val streamingText: String = "",
+    /** True when the snapshot was bounded and the visible transcript is partial. */
+    val hasMore: Boolean = false,
 )
+
+/** Returns a prefix that never exceeds [maxBytes] when encoded as UTF-8. */
+private fun String.utf8Prefix(maxBytes: Int): String {
+    if (maxBytes <= 0) return ""
+    var bytes = 0
+    var end = 0
+    while (end < length) {
+        val codePoint = Character.codePointAt(this, end)
+        val charCount = Character.charCount(codePoint)
+        val codePointBytes = codePoint.utf8ByteWidth()
+        if (bytes + codePointBytes > maxBytes) break
+        bytes += codePointBytes
+        end += charCount
+    }
+    return substring(0, end)
+}
+
+private fun String.utf8ByteCount(): Int {
+    var bytes = 0
+    var index = 0
+    while (index < length) {
+        val codePoint = Character.codePointAt(this, index)
+        bytes += codePoint.utf8ByteWidth()
+        index += Character.charCount(codePoint)
+    }
+    return bytes
+}
+
+private fun Int.utf8ByteWidth(): Int = when {
+    this <= 0x7F -> 1
+    this <= 0x7FF -> 2
+    this <= 0xFFFF -> 3
+    else -> 4
+}
 
 /** Small, explicit contract so widget/activity and UI code share no mutable chat state. */
 object PipChatIntent {
@@ -62,16 +98,27 @@ object PipChatIntent {
     const val EXTRA_ROLES = "com.hermesgadget.talaria.pip.ROLES"
     const val EXTRA_MESSAGES = "com.hermesgadget.talaria.pip.MESSAGES"
     const val EXTRA_STREAMING = "com.hermesgadget.talaria.pip.STREAMING"
+    const val EXTRA_CONTINUATION = "com.hermesgadget.talaria.pip.CONTINUATION"
     const val EXTRA_PIP_RETURNED = "com.hermesgadget.talaria.pip.RETURNED"
 
-    fun create(context: Context, snapshot: PipChatSnapshot): Intent =
-        Intent(context, PipChatActivity::class.java).apply {
-            putExtra(EXTRA_TITLE, snapshot.title)
-            putStringArrayListExtra(EXTRA_ROLES, ArrayList(snapshot.messages.map { it.role }))
-            putStringArrayListExtra(EXTRA_MESSAGES, ArrayList(snapshot.messages.map { it.text }))
-            putExtra(EXTRA_STREAMING, snapshot.streamingText)
+    // Keep the raw string payload far below Binder's transaction limit. The
+    // message-count cap also bounds Parcel array/object overhead for snapshots
+    // made up of many short or empty strings.
+    const val MAX_SNAPSHOT_UTF8_BYTES = 48 * 1024
+    const val MAX_SNAPSHOT_MESSAGES = 128
+    const val CONTINUATION_INDICATOR = "Transcript continues…"
+
+    fun create(context: Context, snapshot: PipChatSnapshot): Intent {
+        val bounded = snapshot.boundedForIntent()
+        return Intent(context, PipChatActivity::class.java).apply {
+            putExtra(EXTRA_TITLE, bounded.title)
+            putStringArrayListExtra(EXTRA_ROLES, ArrayList(bounded.messages.map { it.role }))
+            putStringArrayListExtra(EXTRA_MESSAGES, ArrayList(bounded.messages.map { it.text }))
+            putExtra(EXTRA_STREAMING, bounded.streamingText)
+            putExtra(EXTRA_CONTINUATION, bounded.hasMore)
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
+    }
 
     fun read(intent: Intent?): PipChatSnapshot {
         val roles = intent?.getStringArrayListExtra(EXTRA_ROLES).orEmpty()
@@ -83,8 +130,58 @@ object PipChatIntent {
                 PipChatMessage(roles[index], messages[index])
             },
             streamingText = intent?.getStringExtra(EXTRA_STREAMING).orEmpty(),
+            hasMore = intent?.getBooleanExtra(EXTRA_CONTINUATION, false) == true,
         )
     }
+
+    private fun PipChatSnapshot.boundedForIntent(): PipChatSnapshot {
+        val budget = Utf8Budget(MAX_SNAPSHOT_UTF8_BYTES)
+        var hasMore = this.hasMore
+
+        val title = budget.take(this.title).also { hasMore = hasMore || it.wasTruncated }.value
+        val sourceMessages = if (this.messages.size > MAX_SNAPSHOT_MESSAGES) {
+            hasMore = true
+            this.messages.takeLast(MAX_SNAPSHOT_MESSAGES)
+        } else {
+            this.messages
+        }
+        val boundedMessages = ArrayList<PipChatMessage>(sourceMessages.size)
+        for (message in sourceMessages) {
+            if (budget.isExhausted) {
+                hasMore = true
+                break
+            }
+            val role = budget.take(message.role)
+            val text = budget.take(message.text)
+            hasMore = hasMore || role.wasTruncated || text.wasTruncated
+            boundedMessages += PipChatMessage(role.value, text.value)
+        }
+
+        val streaming = budget.take(this.streamingText)
+        hasMore = hasMore || streaming.wasTruncated
+        return copy(
+            title = title,
+            messages = boundedMessages,
+            streamingText = streaming.value,
+            hasMore = hasMore,
+        )
+    }
+
+    private class Utf8Budget(private val limit: Int) {
+        private var used = 0
+
+        val isExhausted: Boolean get() = used >= limit
+
+        fun take(value: String): BoundedText {
+            if (value.isEmpty()) return BoundedText(value = value, wasTruncated = false)
+            val available = (limit - used).coerceAtLeast(0)
+            val prefix = value.utf8Prefix(available)
+            used += prefix.utf8ByteCount()
+            return BoundedText(value = prefix, wasTruncated = prefix.length < value.length)
+        }
+    }
+
+    private data class BoundedText(val value: String, val wasTruncated: Boolean)
 }
 
 data class PipModeState(
@@ -192,6 +289,13 @@ private fun PipChatContent(snapshot: PipChatSnapshot) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (snapshot.hasMore) {
+                Text(
+                    PipChatIntent.CONTINUATION_INDICATOR,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             LazyColumn(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 contentPadding = PaddingValues(vertical = 2.dp),
