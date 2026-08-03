@@ -4,9 +4,40 @@ All notable Talaria changes are documented here. Versions below correspond to re
 
 ## [Unreleased]
 
+## [0.8.3] — 2026-08-04
+
 ### Added
 
-- Thread-aware agent notifications for permission/clarification/secret requests and foreground or background task completion; dedicated notification controls and Android 13+ runtime permission onboarding (rolled up from 0.4.0-era work).
+- Android Auto (phone projection) discovery: `com.google.android.gms.car.application` application metadata plus `res/xml/automotive_app_desc.xml` declaring `notification` + `template` capabilities, so the app is discoverable in the vehicle launcher when the phone is connected to a real head unit (AAOS discovers via the `CarAppService` intent filter; the projection host additionally requires this descriptor).
+
+## [0.8.2] — 2026-08-03
+
+### Changed
+
+- Car host compatibility: release builds now accept any car host (`ALLOW_ALL_HOSTS_VALIDATOR`). The AndroidX sample allowlist rejected OEM-signed Android Auto hosts, which made the car app invisible on real vehicles with sideloaded distribution. Accepted-risk tradeoff for a sideload-only APK; replacement host-enrollment policy tracked in ROADMAP P0.2.
+
+## [0.8.1] — 2026-08-03
+
+### Fixed
+
+- Restore cleartext to LAN Hermes hosts (v0.8 regression): `network_security_config.xml` permits cleartext again, with the app-layer `CleartextPolicy` as the real gate (private/link-local destinations + persisted per-profile consent; system-only CAs in release).
+- Bound stringified-JSON unwrap in artifact extraction — a flaky `StackOverflowError` caused by re-parsing plain path strings (`report.txt`) as JSON literals and recursing on them.
+
+## [0.8.0] — 2026-08-03
+
+### Added
+
+- Car: driving-safe agent creation, quick-start rows, AAOS launcher opens `CarAppActivity` (with `force_phone_ui` emulator test hook), `minCarApiLevel` on `<application>`, end-to-end PTY prompt delivery (`PtyPromptDelivery` ack protocol, `PtySendReceipt`).
+- Voice: server STT as primary dictation with on-device fallback, periodic session auto-open sync.
+- Thread-aware agent notifications for permission/clarification/secret requests and foreground/background task completion; dedicated notification channels and Android 13+ runtime permission onboarding.
+- Full code audit (`audit.md`, 65 findings: 13 high / 42 medium / 10 low) and remediation wave: multi-profile connection safety (immutable `ConnectionSnapshot`, client eviction, same-origin guards), PTY delivery and car transport hardening, voice lifecycle/data bounds, artifact and managed-file transfer lifecycles, manage-screen hardening (system/config editors), PiP and navigation deep-link handoffs, chat session ownership and dictation state, complete localization catalog, transport tests.
+- Version defaults bumped to 0.8.0 (versionCode 800).
+
+## [0.7.0] — 2026-08-02
+
+### Added
+
+- Auto-open active sessions across platforms with `end_reason` tracking; filter tool/system messages from the chat transcript; bubble styling polish.
 
 ## [0.6.0] — 2026-08-02
 

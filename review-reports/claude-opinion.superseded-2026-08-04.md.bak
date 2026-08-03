@@ -1,0 +1,198 @@
+# Talaria — Independent Engineering Opinion
+
+**Reviewer:** Claude (Opus 5), acting as an independent principal Android engineer
+**Scope:** `app/src/main/java` (chat, manage, car, voice, widget, worker; core network/data/notifications), `app/build.gradle.kts`, `AndroidManifest.xml`, `app/src/main/res/xml`, `app/src/test`
+**Basis:** source only. I did not read other reviewers' reports or any external notes.
+**Size:** 48,581 lines of Kotlin in `main`, 4,685 in `test` (214 `@Test` methods), 235 Kotlin files.
+
+---
+
+## Overall verdict
+
+This is a **good codebase written by someone who has actually shipped and debugged this thing against a real server**, wrapped around **one module that has grown past what a single person can hold in their head**.
+
+The transport layer is the strongest part and is genuinely above the bar for a hobby-scale Android client: `ConnectionSnapshot` (`core/network/ConnectionSnapshot.kt:35`) is a real immutable-transport-identity design, and `AuthInterceptor.ensureSnapshotStillStored()` (`core/network/AuthInterceptor.kt:85`) actively *fails* a request whose profile changed mid-flight rather than quietly sending stale credentials. Most apps I review don't get within a mile of that. The comments are the other standout: they explain *why*, and several of them encode protocol knowledge that clearly cost real debugging hours (`core/network/PtyWebSocketSession.kt:243`, `:263`; `core/network/HermesEventClient.kt:199`; `AndroidManifest.xml:28`).
+
+Against that, `feature/chat/ChatViewModel.kt` is 2,830 lines holding a distributed-systems problem — mapping local tabs onto server-assigned session ids across multiple management profiles — solved with nine mutable side-maps and six generation counters, and it is effectively **untested**. The project's own test file says so out loud (`app/src/test/.../SessionAutoOpenOwnershipBehaviorTest.kt:18-27`). That file is the most honest artifact in the repo and also the clearest indictment: it can't test the production logic, so it re-implements the filter inline and asserts against itself.
+
+My summary judgment: **the plumbing is production-grade; the chat orchestration is prototype-grade at production scale.** Everything I'd change first lives in that gap.
+
+---
+
+## What is genuinely good
+
+**1. The connection-snapshot model is the right abstraction, applied consistently.**
+`ConnectionSnapshot` (`core/network/ConnectionSnapshot.kt:35-72`) freezes URL + profile + credentials + pin + cleartext decision + logging policy into one value. `HermesClientFactory` keys its client bundles on it and *evicts* the old bundle when any field changes (`core/network/HermesClientFactory.kt:83-94`), cancelling calls and clearing cookies. `sameTransportAs()` (`:57`) is a precise definition of "unsafe to reuse." This is what stops the classic multi-profile bug where profile B's request goes out with profile A's cookie jar, and it's enforced at four independent layers (factory key, interceptor guard, `snapshotFor(expectedManagementProfile)` in `core/data/prefs/SecureConnectionStore.kt:74`, and `isForegroundBound` checks in the worker and notification service).
+
+**2. `PtyPromptDelivery` replaces a sleep with a real acknowledgement protocol.**
+`core/network/PtyPromptDelivery.kt:56-155` merges PTY output and sidecar events into one signal flow, sends only after the terminal proves it mounted, and waits for `message.start`/transcript activity. Crucially, `PtySendReceipt.frameAccepted` (`core/network/PtyWebSocketSession.kt:42-55`) distinguishes "never left the device" from "may have been delivered," and `ReplyWorker` uses exactly that to decide `Result.retry()` vs `Result.failure()` (`worker/ReplyWorker.kt:98-105`). That is careful, at-most-once-aware thinking about a protocol that gives you nothing for free.
+
+**3. Streaming text was deliberately moved out of the message list.**
+`ChatTab.streamingText` with the comment at `feature/chat/ChatViewModel.kt:121-127` — "every PTY chunk used to rebuild the whole list (dropLast + copy) which recomposed the entire transcript at stream rate" — is a real, correctly-diagnosed Compose perf fix. Paired with `remember(markdown) { parseMarkdown(markdown) }` (`ui/components/SimpleMarkdown.kt:89`) and the `lines != tab.readingMessages` equality guard on the poll (`ChatViewModel.kt:2482`), someone was profiling, not guessing.
+
+**4. Socket lifecycle in `HermesEventClient` is unusually disciplined.**
+Exponential backoff with a cap (`core/network/HermesEventClient.kt:101, 300-336`), identity checks so a *stale* socket's close callback can't reconnect (`:492`), a 5-second stability window before resetting the attempt counter (`:463-472`), and a terminal-close-code set (`:505`) so a 4401 auth rejection stops rather than hammering. The `stopped` flag is set *first* in `stop()` with a comment explaining the ordering (`:161-163`). These are the details that separate a reconnect loop that works from one that DDoSes your own server.
+
+**5. Security posture is thought through and documented, not cargo-culted.**
+`res/xml/network_security_config.xml:3-18` explains why cleartext stays permitted in XML (arbitrary LAN self-hosts) and where the real gate lives — `CleartextPolicy` (`ConnectionSnapshot.kt:98-138`) requires both a private/link-local destination *and* a persisted per-profile opt-in, enforced as an interceptor before OkHttp opens the socket. User CAs are debug-only. `CertificatePinnerFactory.normalizePin` (`core/security/CertificatePinnerFactory.kt:32-43`) rejects `sha1/` prefixes and anything that isn't a 32-byte digest. WebSocket clients deliberately get no HTTP logger because the URL carries the ticket (`HermesClientFactory.kt:79`). Secrets live in `EncryptedSharedPreferences`, never Room.
+
+**6. Pure logic is extracted where it was extractable, and it's tested.**
+`SidecarFrameParser` (`HermesEventClient.kt:540`), `ChatTranscriptPolicy.kt`, `ComposerRefs`, `SessionFilters`, `MultiProfileSessionMerger`, `QuietHoursPolicy`, `AnsiStripper`, `CleartextPolicy` — all side-effect-free and all covered. The instinct is right.
+
+**7. The car integration is real, not a checkbox.**
+`car/SessionListScreen.kt` uses `ConversationItem` + `ConversationCallback` so the framework mic drives replies, and adds one-tap quick-starts (`:85-98`) specifically so a driver doesn't have to dictate. `AndroidManifest.xml:28-35` documents that `minCarApiLevel` must sit on `<application>`, with the exact host error you get otherwise. The AAOS handoff in `MainActivity.kt:71-77` keeps phone and car in one APK. This is someone who put the emulator through its paces.
+
+---
+
+## What concerns me
+
+### A. `ChatViewModel` is a god object solving a consensus problem by heuristic
+
+2,830 lines. It owns: `runtimes`, `claimedSessions`, `sessionOwners`, `pendingLocalCreations`, `autoOpenedTabs`, `pendingImages`, `inputHistories`, `serverSttCapabilities` — plus `connectionScopeGeneration`, `slashRequestGeneration`, `serverSttProbeGeneration`, `readingGeneration`, `sessionCounter`, and per-runtime `baselineSessions`/`baselineReady`/`sidecarEventsSeen`.
+
+The core algorithm — deciding which server session belongs to which local tab — is a **guess**:
+
+```kotlin
+// ChatViewModel.kt:2423
+val candidate = list
+    .filter { it.id !in claimedSessions && it.id !in rt.baselineSessions }
+    .maxByOrNull { MultiProfileSession(tab.profileName, it).recency }
+```
+
+"The newest session that appeared after I opened and nobody else claimed." If two tabs send within one 2.5-second poll window, or another platform (Discord/CLI) creates a session in that window, the mapping is a coin flip. The code *knows* this — `pendingLocalCandidateIds()` (`:913-942`), `reconcilePendingLocalCreations()` (`:950-999`), and a 60-second `LOCAL_SESSION_DISCOVERY_TIMEOUT_MS` bail-out exist purely to paper over it. Three layers of mitigation for a race that a server-assigned correlation id would eliminate outright. The `attach=` token already exists in the protocol (`PtyWebSocketSession.kt:117`, used by `ReplyWorker` and the car) — the foreground path doesn't use it.
+
+**Concrete bug candidate:** `sessionOwners` is keyed by bare session id (`:243`, `:879-888`), but the rest of the app is explicitly profile-scoped — `MultiProfileSessionMerger` produces keys of the form `"profile id"`, and `SessionAutoOpenOwnershipBehaviorTest.kt:47-61` asserts that the same id in two profiles must stay distinct. Background-profile tabs survive a profile switch (`bindManagementProfile()` at `:355` deliberately does *not* tear down runtimes), so two tabs on different profiles can coexist and collide on one ownership map. The invariant the test guards is violated by the ownership store.
+
+### B. Polling is load-bearing, and auto-open multiplies it
+
+Per open tab: one PTY WebSocket, one `/api/events` WebSocket, one `/api/ws` RPC WebSocket, and a REST transcript poll every **2.5 seconds** (`ChatViewModel.kt:2404`). Plus a global 30-second registry refresh (`:2820`) that itself fans out to one request per management profile (`ProfileRegistry.kt:116-138`).
+
+Then `syncActiveSessions()` (`:758-871`) **auto-opens a tab for every active non-automation session on the foreground profile**, unconditionally, with no user opt-in and no cap. Ten agents running on the server means ~30 sockets and 4 HTTP requests/second from a phone. On mobile data, in Doze, this is a battery and quota problem, and the comment at `:752-757` frames it as a feature ("the user gets live visibility... without manually opening each one"). I'd call it a default that will eventually generate a bad review, not a feature.
+
+The sidecar already emits `message.complete` — `loadReading` even branches on `!rt.sidecarEventsSeen` (`:2487`) because it knows the poll is redundant when events flow. The poll should be a fallback with backoff, not the steady state.
+
+### C. `runCatching` swallows `CancellationException` in 83 places
+
+`HermesRepository.kt` has 83 `runCatching` sites, nearly all of the form `runCatching { withContext(Dispatchers.IO) { api.foo() } }`. When a `viewModelScope` is cancelled (screen closed, profile switched — which this app does aggressively at `ui/navigation/TalariaNavRoot.kt:200`), the `CancellationException` is captured into `Result.failure` and the *non-suspending* continuation still runs, writing something like "StandaloneCoroutine was cancelled" into `_ui.error`. The user sees a spurious error banner for an operation they cancelled by navigating.
+
+The team knows the fix — it's applied correctly in `ProfileRegistry.kt:130-134`, `car/CarSessionsRepository.kt:112`, `worker/ReplyWorker.kt:106`, `worker/HermesSyncWorker.kt:118`, and even twice *inside* `HermesRepository.kt:1027, 1034`. It just wasn't applied to the other ~80 sites. `ResponseCache.readThrough` (`core/data/repo/ResponseCache.kt:74`) has the same hole and additionally would cache nothing on cancel — fine — but returns the cancellation as a value.
+
+### D. Cold start does Keystore + crypto + JSON on the main thread
+
+`TalariaApp.onCreate` (`TalariaApp.kt:29-37`) constructs `AppContainer` synchronously, which builds a `MasterKey` (Android Keystore round-trip), opens `EncryptedSharedPreferences` (`core/data/prefs/SecureConnectionStore.kt:39-49`), and immediately decodes the profiles JSON (`:54`, `loadProfiles()` at `:193`). Keystore init is routinely 50–200 ms and is notoriously variable across OEM implementations. This is on the critical path of every cold start, before the first frame. It should be `by lazy` behind a coroutine, with the Connect screen the only thing that blocks on it.
+
+Related: `SecureConnectionStore.upsert` uses `editor.commit()` (`:104`), a synchronous disk write, and it's called from network-adjacent paths — `updateSessionToken` from `WsAuthHelper.authQueryParam()` (`WsAuthHelper.kt:74`) and `updateOidcTokens` from the refresher. `commit()` is defensible for a credential (you want the failure signal), but it should not be reachable from the main thread.
+
+### E. Two Compose hot spots in the busiest screen
+
+`feature/chat/ChatScreen.kt:1274`:
+```kotlin
+val originalIndex = displayLines.indexOfFirst { it.id == line.id }
+```
+inside `itemsIndexed` — an O(n) scan per visible item, and it re-runs on every recomposition of that item. On a 500-message transcript this is meaningful work per frame, and it exists only to feed a long-press handler. A `Map<String, Int>` built once with `remember` fixes it.
+
+`ChatScreen.kt:219-226`: `visibleTranscriptLines()` and `filterTranscriptLines()` allocate a new list on every recomposition (no `remember`/`derivedStateOf`), and the follow-scroll `LaunchedEffect` is keyed on `searchedLines.lastOrNull()?.let { it.id to it.text }` — which changes on every streamed token, relaunching the effect at stream rate. The streaming-text refactor at `ChatViewModel.kt:121` was done precisely to avoid this class of work; the screen partially gives it back.
+
+### F. Car and widget are not localized; everything else is
+
+The app ships `values-ar`, `values-ja`, `values-zh`, `values-zh-rTW` and has ~20 `strings_*.xml` files. Then:
+- `car/SessionListScreen.kt:87-98` — quick-start titles and prompts, hardcoded English
+- `:124` "Loading your agents…", `:142` "Tap the mic and say what you want this agent to do.", `:171` "Untitled agent", `:183` "Talaria agents", `:219`/`:265` toasts
+- `car/CarSessionsRepository.kt:99, 283` — user-visible error strings
+- `widget/TalariaQuickEntryWidget.kt:92, 101, 107` — "Talaria quick entry", "New chat", "Talk"
+
+An Arabic-locale user gets a fully translated phone app and an English car head unit. It also means no RTL consideration in the car surface at all.
+
+### G. The car screen blocks a single thread on 20-second network calls
+
+`car/SessionListScreen.kt:57` creates a **single-thread** executor, and every callback wraps a suspend call in `runBlocking` (`:211, 240, 257, 281`). `CarSessionsRepository.PROMPT_TIMEOUT_MS` is 20 s (`car/CarSessionsRepository.kt:248`). So: tap a quick-start, then dictate a reply to a different conversation — the reply sits in the queue for up to 20 seconds before the executor is free. In a car. The `Screen` has a `lifecycleScope` available; `runBlocking` on a hand-rolled executor is the wrong tool here.
+
+### H. Release build is minified with essentially no app-specific keep rules
+
+`app/build.gradle.kts:78-88` enables `isMinifyEnabled` **and** `isShrinkResources`. `app/proguard-rules.pro` contains:
+
+```
+-keepclassmembers class * { @kotlinx.serialization.Serializable <fields>; }
+-keep class com.hermesgadget.talaria.core.network.dto.** { *; }
+```
+
+The first is a legacy rule — `@Serializable` annotates *classes*, not fields, so this matches nothing. The second points at `com.hermesgadget.talaria.core.network.dto`, **a package that does not exist** (models live in `domain.model`). So both meaningful app rules are dead. The build survives on kotlinx-serialization 1.8.0's and Retrofit's bundled consumer rules — which is probably fine today, but it's fine *by accident*, and there is no release-variant smoke test to catch the day it isn't. Reflective surfaces the app does use (Glance receivers, `CarAppActivity`, Room, `WorkManager` workers instantiated by name) rely entirely on library rules.
+
+### I. Test coverage is inverted relative to risk
+
+4,685 test lines against 48,581 main lines (~10%), 214 tests. The tested things are the pure helpers that were easy to extract. The untested things are:
+- `ChatViewModel` (2,830 lines) — the ownership state machine, reconnect paths, image attach, STT scope generations
+- `HermesEventClient` (798 lines) — reconnect/backoff/stability, the exact logic where a bug means a socket storm
+- `AgentTaskNotificationService` (373 lines) — foreground-service lifecycle, the thing Android will kill you for
+- `HermesRepository` (1,048 lines) — one test file, `ResponseCacheTest`
+
+And `SessionAutoOpenOwnershipBehaviorTest.kt:18-27` states the reason plainly: *"ChatViewModel.syncActiveSessions is private and constructs its transport from the process singleton, so its claim/creation race is not directly injectable without changing a production interface."* The test then re-implements the filter inline (`:38-44`) and asserts on its own copy. That test passes whether or not the production code is correct. **Untestability is the design defect; the thin test is the symptom.**
+
+### J. Smaller things that are still real
+
+- **An invisible control character in source.** `ChatViewModel.kt:2050` is `session?.sendRaw("␃")` — a literal `0x03` ETX byte embedded in the string. It works today. Any formatter, editor, or copy-paste that normalizes it turns Ctrl-C into a silent no-op with **no compile error** (`sendRawChecked` returns a failure that `sendRaw` discards). Use `""`.
+- **The foreground send path throws away its delivery receipt.** `commitSend` calls `runtime.session.sendText(prompt)` (`:2041`), and `sendText` discards the `Result` (`PtyWebSocketSession.kt:243-251`). The whole `PtySendReceipt` machinery exists and is used by the background paths; interactive chat — where the user is watching — is the one place that doesn't check.
+- **`error("")`** in `feature/manage/files/FilesTransfer.kt` (`readContent`, ~line 100) produces an `IllegalStateException` with an empty message, which surfaces to the user as a blank error.
+- **`WsAuthHelper.authQueryParam()`** (`WsAuthHelper.kt:49-84`) always reads `connectionStore.activeProfile()`, ignoring any pinned profile. `PtyWebSocketSession` accepts a `fixedProfile` but falls back to `wsAuth.authQueryParam()` when `fixedAuthQuery` is null (`PtyWebSocketSession.kt:107`) — so the *API* permits minting a ticket for the active profile and using it on a socket pinned to a different one. Every current caller passes both together; the type doesn't require it.
+- **`fetchLoopbackSessionToken`** (`WsAuthHelper.kt:86-100`) scrapes the SPA HTML of any host with `auth_required=false` — not just loopback, despite the name and comment — and persists the regex match as a secret.
+- **`stopWatching` uses `context.startService`** (`core/notifications/AgentTaskNotificationService.kt:343`). From a background process that throws `IllegalStateException`, which `runCatching` swallows — leaving a foreground service and its sockets running with no user-visible failure.
+- **Dead code:** `feature/manage/SimpleManageViewModel.kt` (65 lines) has zero call sites. Its `SimpleUiState<Any>` + `Result<*>` erasure would have forced unchecked casts at every screen anyway.
+- **`HermesApi` is 246 endpoints in one interface** (1,075 lines), wrapped by an `HermesRepository` of 1,048 lines that is largely 83 near-identical `runCatching` bodies. This is where a small `apiCall {}` helper would delete several hundred lines *and* fix concern C in one edit.
+
+---
+
+## What I would change first
+
+If I had two weeks on this codebase, in this order:
+
+**Week 1 — stop the bleeding, cheap and high-value.**
+
+1. **Fix cancellation, once, centrally.** Add `private suspend fun <T> call(block: suspend (HermesApi) -> T): Result<T>` to `HermesRepository` that does `withContext(IO)` + try/catch with `CancellationException` rethrown, and mechanically replace all 83 sites. One afternoon, removes an entire class of phantom error banners, and shrinks the file.
+2. **Make DI lazy.** `AppContainer` fields → `by lazy`, and move `SecureConnectionStore` construction off `Application.onCreate`. Measure cold start before and after.
+3. **De-`runBlocking` the car screen** and give it the `Screen`'s lifecycle scope, or at minimum a bounded pool instead of `newSingleThreadExecutor`.
+4. **Extract car + widget strings to resources.** Mechanical, and it's the only thing standing between this app and being genuinely multilingual end-to-end.
+5. **Fix the ProGuard file** — delete the two dead rules, add explicit keeps for `domain.model`, workers, Glance receivers — and add one release-variant instrumented smoke test that launches, connects to a `MockWebServer`, and opens Chat.
+
+**Week 2 — the structural one.**
+
+6. **Extract session ownership from `ChatViewModel`.** Pull `sessionOwners`/`claimedSessions`/`pendingLocalCreations`/`baselineSessions` into a `SessionOwnershipRegistry` class keyed by `(profile, sessionId)` — matching what `MultiProfileSessionMerger` already does — with no Android and no singleton dependencies. Then write the test that `SessionAutoOpenOwnershipBehaviorTest` wanted to write: two tabs, one poll window, one new session, assert exactly one claims it.
+7. **Inject transports into `ChatViewModel`.** It already takes `chatRepository`/`hermesRepository`/`speech`/`tts` as constructor params with singleton defaults (`:229-234`) — but then reaches around them via `private val container = TalariaApp.instance.container` (`:235`) for `clientFactory`, `connectionStore`, `settingsStore`, `wsAuthHelper`, `notifier`, `agentAlertDispatcher`. Close that back door and the class becomes testable without Robolectric.
+8. **Turn the 2.5 s poll into a fallback.** Drive the transcript from `message.complete`; poll only when `sidecarEventsSeen == false`, with backoff. The condition is already computed at `:2487`.
+9. **Put auto-open behind a setting**, defaulted off or capped at N tabs.
+
+---
+
+## Surprises and ideas
+
+**The comments are an undocumented protocol spec.** `PtyWebSocketSession.kt:243-251` (body and `\r` must be *separate* frames or the TUI reads a bracketed paste), `:263-279` (only `\x1b[RESIZE:c;r]` is consumed; anything else echoes as garbage and corrupts input), `HermesEventClient.kt:199-202` (unquoted method names produce `Expecting value` on every connect), `EmulatorLoopbackInterceptor.kt:22-31` (must be an *application* interceptor because WebSocket skips network interceptors). That is a real reverse-engineered spec scattered across four files. I'd lift it into `docs/hermes-pty-protocol.md` — it is the highest-value institutional knowledge in the repo and right now it's only discoverable by grepping.
+
+**Driving an agent from a car is a genuinely novel product idea, and the distraction thinking is right.** The quick-start rows (`SessionListScreen.kt:85-98`) show real empathy for the use case — no dictation needed at 70 mph. Two ideas: (a) make quick-starts user-editable, since "Draft a release note" is one person's workflow; (b) `TtsSpeaker` is already in the container and the car never uses it — reading the agent's reply aloud closes the loop and is the actual killer feature. Right now the car can send but the driver has to look at a screen to read the answer.
+
+**`ProfileRegistry` keeps last-good sessions per profile when a refresh fails** (`ProfileRegistry.kt:143-147`), with per-profile error tracking so one dead profile doesn't blank the whole rail. Most apps show an empty list and call it a day. Nice.
+
+**The app is quietly two products.** Chat is ~6,000 lines; `feature/manage` is ~14,000 across 26 sections (kanban, MCP, skills, cron, webhooks, learning graph, git review, analytics, plugins…). That's the differentiator versus a web dashboard — but it's also 60% of a codebase maintained by, as far as I can tell, one person. `ManageCatalog.kt` + `SimpleManageViewModel` look like the start of a declarative registry that was abandoned (the latter is dead code). I'd finish that idea: a `ManageSection(id, title, loader, renderer)` table would let most of those 26 screens collapse into data, and would make adding section 27 a ten-line change instead of a 700-line screen.
+
+**`PtySendReceipt` deserves promotion to a UI concept.** The app can distinguish "your message never left the phone" from "it may have landed." That's better information than most chat clients have, and it's currently thrown away in the one place a human is watching. A ✓/⚠ on the user's message bubble would be a small change with a large trust payoff.
+
+**One thing I expected to find and didn't:** any analytics, crash reporting, or third-party SDK. `BuildConfig.DEFAULT_TELEMETRY = false`, `telemetryEnabled` defaults false, and `HermesSyncWorker`'s KDoc says "never phones home outside the user Hermes URL" — and as far as I can tell that's literally true. For a self-hosted-agent client that is exactly the right call, and it's rarer than it should be.
+
+---
+
+## Top 10 recommendations (ranked)
+
+| # | Recommendation | Why it's ranked here | Where |
+|---|---|---|---|
+| **1** | **Extract session↔tab ownership into a testable, profile-keyed registry** and write the race test the repo admits it can't write. Key on `(profile, sessionId)`, not bare id. | Highest-risk logic in the app, zero coverage, and a real cross-profile key inconsistency. Everything else is recoverable; a wrong tab↔session mapping shows one user's agent output in another's thread. | `feature/chat/ChatViewModel.kt:243, 879-888, 913-999, 2414-2429`; `app/src/test/.../SessionAutoOpenOwnershipBehaviorTest.kt:18-27` |
+| **2** | **Rethrow `CancellationException`** — add one `call {}` helper in `HermesRepository` and replace all 83 `runCatching` sites. | Cheapest high-impact fix in the repo (hours), removes phantom error banners on every navigation, and the correct pattern already exists in 5 other files. | `core/data/repo/HermesRepository.kt` (83 sites); correct form at `core/network/ProfileRegistry.kt:130` |
+| **3** | **Demote the 2.5 s transcript poll to a fallback and cap/gate auto-open.** | Battery, mobile data, and server load scale linearly with open agents, with no ceiling. The condition to skip the poll is already computed. | `feature/chat/ChatViewModel.kt:2375-2407, 2487, 758-871, 2820` |
+| **4** | **Move `AppContainer` / Keystore / EncryptedSharedPreferences off the cold-start main thread** (`by lazy` + coroutine init). | Every launch pays a variable 50–200 ms Keystore cost before first frame; worst on the cheap OEM devices most likely to sideload this. | `TalariaApp.kt:29-37`; `di/AppContainer.kt:45-52`; `core/data/prefs/SecureConnectionStore.kt:39-54` |
+| **5** | **Fix `proguard-rules.pro` and add one release-variant smoke test.** Both app-specific keep rules are dead (`dto` package doesn't exist; the `@Serializable <fields>` rule matches nothing). | Minify + resource shrink are on. Today it works on library consumer rules alone — by luck, unverified, with a reflective car/Glance/Room surface. A release-only crash is the worst failure mode to discover from a user. | `app/proguard-rules.pro:2, 6`; `app/build.gradle.kts:78-88` |
+| **6** | **Close the singleton back door in `ChatViewModel`** — inject `clientFactory`, `connectionStore`, `settingsStore`, `wsAuthHelper`, `notifier` instead of `TalariaApp.instance.container`. | This single line is why the app's most complex class can't be unit tested. It's a precondition for #1 and unlocks coverage for the other large ViewModels too. | `feature/chat/ChatViewModel.kt:229-235` |
+| **7** | **Localize car and widget surfaces; extract every hardcoded string to resources.** | The app ships four non-English locales and then serves English-only in the car and on the home screen. Mechanical fix, immediately visible quality gain, and it forces an RTL pass on the car UI. | `car/SessionListScreen.kt:87-98, 124, 142, 171, 183, 219, 265`; `car/CarSessionsRepository.kt:99, 283`; `widget/TalariaQuickEntryWidget.kt:92, 101, 107` |
+| **8** | **Replace `runBlocking` on a single-thread executor in the car screen** with the `Screen`'s coroutine scope. | A 20 s network timeout serialized behind one thread, in a driving context, is the worst place in the app for a UI stall. | `car/SessionListScreen.kt:57, 211, 240, 257, 281`; `car/CarSessionsRepository.kt:248` |
+| **9** | **Fix the two Compose hot spots in `ChatScreen`**: replace `indexOfFirst` per item with a remembered id→index map, and `remember`/`derivedStateOf` the transcript filter + scroll key. | The transcript is the screen users live in. The ViewModel already paid for this optimization once; the screen gives part of it back. | `feature/chat/ChatScreen.kt:219-226, 1274` |
+| **10** | **Small correctness/robustness batch:** `""` instead of the literal ETX byte; surface `sendTextChecked`'s receipt in the interactive send path; give `error("")` a message; require `fixedAuthQuery` whenever `fixedProfile` is set; delete `SimpleManageViewModel`. | Individually minor, collectively a half-day, and each one removes a silent-failure mode. The ETX byte in particular is a bug waiting for a formatter to introduce it. | `ChatViewModel.kt:2050, 2041`; `PtyWebSocketSession.kt:107, 243`; `feature/manage/files/FilesTransfer.kt` (~100); `feature/manage/SimpleManageViewModel.kt` |
+
+---
+
+*This opinion was formed exclusively from reading the source. I did not build, run, or modify the project, and I did not consult any other review.*

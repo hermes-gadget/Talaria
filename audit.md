@@ -2,6 +2,8 @@
 
 Reviewed: 2026-08-03
 
+> **STATUS — 2026-08-04:** superseded as the risk statement. The v0.8.0 remediation wave + follow-ups resolved **41 of the 52 remaining Medium/Low findings** (13 High all fixed); 4 remain present and 7 are only partially resolved. Full re-verification per finding is in `review-reports/improvements.md`; remaining work is tracked in `ROADMAP.md` (P0/P1). This file is preserved as the original finding record.
+
 This was a manual, read-only review of every Kotlin source file under app/src/main/java, every resource under app/src/main/res, every unit test under app/src/test, AndroidManifest.xml, the Gradle configuration, and plan.md. No build, test, scanner, fuzzer, SAST tool, Codex Security workflow, or other automated analysis was run. The requested gradle/libs.versions.toml file does not exist in this repository; dependency versions are declared inline in app/build.gradle.kts.
 
 ### BUG-001: [High] Network clients can combine one server URL with another profile's credentials

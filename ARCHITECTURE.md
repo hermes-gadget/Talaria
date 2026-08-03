@@ -69,6 +69,18 @@ Reply and pairing notification actions carry the expected connection/profile sco
 
 Android backup and device transfer exclude encrypted connection state and Room databases. Talaria includes no analytics or crash-upload SDK.
 
+## Car surface
+
+`car/` implements a Car App Library service (`TalariaCarService`) shared by Android Auto projection and AAOS: an active-agent list, voice replies, one-tap quick starts, and driving-safe agent creation, backed by `CarSessionsRepository`. Discovery: AAOS binds the `CarAppService` intent filter; Android Auto additionally requires the `com.google.android.gms.car.application` metadata + `automotive_app_desc.xml` capabilities (v0.8.3). The release host validator is `ALLOW_ALL` for sideload compatibility (accepted risk — see ROADMAP P0.2).
+
+## Voice
+
+`feature/voice/` implements server STT as primary dictation (`/api/voice/transcribe`) with on-device `SpeechRecognizer` fallback, continuous dictation with partials, and Android TTS of replies. Server capabilities are probed with generation guards; recording is bounded and lifecycle-scoped.
+
+## Widgets, tile, and PiP
+
+Two Glance widgets (status + quick entry), a Quick Settings tile, and picture-in-picture chat all read from the same profile-scoped state as the app. Widget summaries are refreshed via `HermesSyncWorker`; taps deep-link to exact connection/profile/session.
+
 ## UI adaptation boundary
 
 Talaria implements remote agent/chat and dashboard management workflows in touch-native Compose screens. Desktop-only host integrations—local Electron window management, desktop quick-entry/pet overlays, native terminal multiplexing, and local drag/drop shell integration—are not meaningful Android parity targets. The mobile equivalents are Android shares, notifications, widgets, app shortcuts, the Quick Settings tile, photo picker, SAF import/export, and on-device speech APIs.

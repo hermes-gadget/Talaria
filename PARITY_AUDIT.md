@@ -5,6 +5,8 @@
 **Method:** Source-grounded inventories of both trees (desktop: ~700 files walked, 100+ features; Talaria: 99 Kotlin files walked, ~95 features), then cross-mapped.
 **Legend:** ✅ present · 🟡 partial · ❌ missing · ⚙️ not applicable on phone (desktop/Electron-local; adaptation suggested where sensible)
 
+> **STATUS — 2026-08-04:** snapshot audit as of 2026-08-01 (Talaria @ `b173d8e`). Since then Talaria shipped v0.7–v0.8.3: Android Auto/AAOS car app, server-STT voice, artifacts browser, PiP, foldable layouts, second widget, Quick Settings tile, session auto-open, and the 65-finding audit remediation. Re-run the parity matrix against `main` before treating any ❌/🟡 cell as current; the live plan lives in `ROADMAP.md`.
+
 ---
 
 ## 1. Chat & composer
