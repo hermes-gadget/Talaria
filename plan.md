@@ -1,7 +1,7 @@
 # Talaria Android Auto / Car Experience — Implementation Plan
 
 **Status:** ACTIVE — implementation started 2026-08-03
-**Last updated:** 2026-08-03
+**Last updated:** 2026-08-03 (launcher→car-UI binding fixed)
 **Owner:** Ben + Hermes
 **Distribution model:** APK-only via GitHub releases — **no Play Store** (this is a hard constraint, see [Distribution](#distribution-model))
 
@@ -14,8 +14,17 @@
 | Create agent | **"New agent" button in the car UI** — voice prompt starts a fresh session |
 | Input model | **Voice-first** — dictation (`requestInput(VOICE)`) is the primary input; no keyboard in the car |
 | Notifications | **Unchanged** — existing Talaria notifications surface on Android Auto as normal notifications; no MessagingStyle conversion work |
-| Emulator testing | Android Automotive OS AVD (`talaria_auto`, android-34-ext9 automotive x86_64) |
+| Emulator testing | Android Automotive OS AVD (`talaria_auto`, android-34-ext9 automotive x86_64) — **capped resources only** (full AAOS boot crashes the VM; regular phone AVDs are fine) |
 | Delegation | MissionDeck agents allowed if needed; Hermes monitors in-session |
+
+**Status update (2026-08-03):** launcher binding FIXED. Root cause:
+AAOS launches templated apps via an *activity* entry point —
+`androidx.car.app.activity.CarAppActivity` (from `app-automotive`) —
+not the CarAppService. Manifest now declares it (exported, no launcher
+filter) and `MainActivity.onCreate` hands off when
+`FEATURE_AUTOMOTIVE` is present. `minCarAppApiLevel` bumped 2 → 7
+(`ConversationItem` is `@RequiresCarApi(7)`). Pending: AAOS emulator
+re-verify + screenshots, commit/push, v0.8.0 tag.
 
 ---
 

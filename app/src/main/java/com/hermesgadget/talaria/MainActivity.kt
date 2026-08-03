@@ -29,6 +29,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.car.app.activity.CarAppActivity
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -60,6 +61,16 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Android Automotive OS: the car launcher starts this activity
+        // (it owns the MAIN/LAUNCHER filter), but on head units the car
+        // experience must be the templated CarAppActivity rendered by the
+        // template host. Hand off before any phone UI work — this activity
+        // is a no-op on automotive devices.
+        if (packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
+            startActivity(Intent(this, CarAppActivity::class.java))
+            finish()
+            return
+        }
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(
                 lightScrim = Color.Transparent.toArgb(),
