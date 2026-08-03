@@ -39,6 +39,9 @@ import com.hermesgadget.talaria.core.notifications.AgentThreadIdentity
 import com.hermesgadget.talaria.core.voice.SpeechCoordinator
 import com.hermesgadget.talaria.core.voice.SttEvent
 import com.hermesgadget.talaria.core.voice.TtsSpeaker
+import com.hermesgadget.talaria.domain.model.VoiceCapabilities
+import com.hermesgadget.talaria.domain.model.VoiceTranscriptionRequest
+import com.hermesgadget.talaria.feature.voice.VoiceRecorder
 import com.hermesgadget.talaria.domain.model.ChatLine
 import com.hermesgadget.talaria.domain.model.HERMES_DEFAULT_PROFILE
 import com.hermesgadget.talaria.domain.model.ModelOption
@@ -61,6 +64,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
@@ -68,8 +72,10 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import retrofit2.HttpException
 import java.util.Base64
 import java.util.UUID
 
@@ -223,6 +229,7 @@ class ChatViewModel(
     private var sttJob: Job? = null
     private var slashCompletionJob: Job? = null
     private var scopeLoadJob: Job? = null
+    private var sessionPollJob: Job? = null
     private var lastCols = 80
     private var lastRows = 24
     private var initialDraft: String = ""
@@ -236,6 +243,13 @@ class ChatViewModel(
     private val inputHistories = mutableMapOf<String, InputHistoryNavigator>()
     /** Raw picker bytes stay outside StateFlow so Compose never copies or compares them. */
     private val pendingImages = mutableMapOf<String, LinkedHashMap<String, PendingChatImage>>()
+    /** Server STT dictation (the primary voice path — same engine the Voice
+     * settings test uses). On-device Android dictation is the fallback for
+     * servers without STT; it can fail with a client error on some devices. */
+    private val voiceRecorder = VoiceRecorder(TalariaApp.instance)
+    private var serverDictation = false
+    private var serverSttUnavailable = false
+    private var serverSttChecked = false
 
     /** Called by the screen: make sure at least one session exists (optionally resuming). */
     fun ensureStarted(resume: String? = null) {
@@ -286,6 +300,25 @@ class ChatViewModel(
                 restorePersistedTabs()
             }
             refreshSessions()
+            startSessionPolling()
+        }
+    }
+
+    /**
+     * Periodically re-sync the profile registry so sessions started on other
+     * platforms (Discord, Telegram, CLI…) auto-open as tabs and ended sessions
+     * auto-close while the app is open — without requiring a manual refresh.
+     * Deliberately bypasses refreshSessions() so the rail doesn't flash its
+     * loading state every tick.
+     */
+    private fun startSessionPolling() {
+        if (sessionPollJob?.isActive == true) return
+        sessionPollJob = viewModelScope.launch {
+            while (isActive) {
+                kotlinx.coroutines.delay(SESSION_POLL_INTERVAL_MS)
+                ProfileRegistry.refresh(container.clientFactory.api())
+                    .onSuccess { applyProfileRegistry(it) }
+            }
         }
     }
 
@@ -1828,18 +1861,106 @@ class ChatViewModel(
 
     fun toggleListen() {
         if (_ui.value.listening) {
-            sttJob?.cancel()
-            _ui.update { it.copy(listening = false, partialDictation = "") }
+            if (serverDictation) stopServerDictation() else stopOnDeviceDictation()
             return
         }
         if (!speech.hasMicPermission()) {
             reportError("Microphone permission required")
             return
         }
+        // Server STT is the primary dictation path — the same engine the Voice
+        // settings test exercises. On-device Android dictation is only the
+        // fallback for Hermes installs that don't expose server STT; on some
+        // devices the on-device recognizer errors out ("speech client error").
+        if (!serverSttUnavailable) {
+            startServerDictation()
+            checkServerSttOnce()
+            return
+        }
         if (!speech.isAvailable()) {
             reportError("Speech recognition unavailable on this device")
             return
         }
+        startOnDeviceDictation()
+    }
+
+    /** One-time capability probe: abort a recording if the server lacks STT. */
+    private fun checkServerSttOnce() {
+        if (serverSttChecked) return
+        serverSttChecked = true
+        viewModelScope.launch {
+            val capabilities = runCatching {
+                val root = container.clientFactory.api().getOpenApi()
+                VoiceCapabilities.fromOpenApiPaths(root["paths"]?.jsonObject?.keys.orEmpty())
+            }.getOrNull()
+            if (capabilities != null && !capabilities.serverStt) {
+                serverSttUnavailable = true
+                if (_ui.value.listening && serverDictation) {
+                    voiceRecorder.cancel()
+                    serverDictation = false
+                    _ui.update { it.copy(listening = false, partialDictation = "") }
+                    reportError("Server speech-to-text is unavailable on this Hermes — tap the mic again for on-device dictation")
+                }
+            }
+        }
+    }
+
+    /** Records locally for server transcription (settings-test proven path). */
+    private fun startServerDictation() {
+        voiceRecorder.start()
+            .onSuccess {
+                serverDictation = true
+                _ui.update { it.copy(listening = true, partialDictation = "Listening…") }
+            }
+            .onFailure { reportError(it.message ?: "Could not start recording") }
+    }
+
+    private fun stopServerDictation() {
+        serverDictation = false
+        val tabId = _ui.value.active?.id
+        val recorded = voiceRecorder.stop()
+        _ui.update { it.copy(listening = false, partialDictation = "") }
+        if (recorded.isFailure) {
+            reportError(recorded.exceptionOrNull()?.message ?: "Could not save recording")
+            return
+        }
+        if (tabId == null) return
+        val audio = recorded.getOrThrow()
+        viewModelScope.launch {
+            try {
+                val dataUrl = withContext(Dispatchers.IO) {
+                    try {
+                        val encoded = Base64.getEncoder().encodeToString(audio.file.readBytes())
+                        "data:${audio.mimeType};base64,$encoded"
+                    } finally {
+                        audio.file.delete()
+                    }
+                }
+                val response = container.clientFactory.api().transcribeAudio(
+                    VoiceTranscriptionRequest(dataUrl = dataUrl, mimeType = audio.mimeType),
+                    profile = profileNameForTab(tabId),
+                )
+                val transcript = response.transcript.trim()
+                if (!response.ok || transcript.isBlank()) {
+                    throw IllegalStateException(response.error ?: "Hermes returned no transcript")
+                }
+                val merged = (_ui.value.tabs.firstOrNull { it.id == tabId }?.draft.orEmpty() + " " + transcript).trim()
+                updateTab(tabId) { it.copy(draft = merged) }
+            } catch (error: HttpException) {
+                if (error.code() == 404) {
+                    serverSttUnavailable = true
+                    reportError("Server speech-to-text is unavailable on this Hermes")
+                } else {
+                    reportError(error.message() ?: "Server transcription failed")
+                }
+            } catch (error: Throwable) {
+                reportError(error.message ?: "Server transcription failed")
+            }
+        }
+    }
+
+    /** On-device Android dictation fallback for servers without STT. */
+    private fun startOnDeviceDictation() {
         _ui.update { it.copy(listening = true) }
         sttJob = viewModelScope.launch {
             speech.listen(continuous = true).collect { event ->
@@ -1858,6 +1979,12 @@ class ChatViewModel(
                 }
             }
         }
+    }
+
+    private fun stopOnDeviceDictation() {
+        sttJob?.cancel()
+        sttJob = null
+        _ui.update { it.copy(listening = false, partialDictation = "") }
     }
 
     private fun updateTab(tabId: String, transform: (ChatTab) -> ChatTab) {
@@ -2305,6 +2432,7 @@ class ChatViewModel(
     }
 
     companion object {
+        private const val SESSION_POLL_INTERVAL_MS = 30_000L
         private val ARGUMENT_HINT = Regex("""\[[^]]+]|<[^>]+>""")
 
         fun factory() = object : ViewModelProvider.Factory {
