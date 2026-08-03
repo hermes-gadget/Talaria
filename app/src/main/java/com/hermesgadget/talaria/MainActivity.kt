@@ -66,7 +66,11 @@ class MainActivity : ComponentActivity() {
         // experience must be the templated CarAppActivity rendered by the
         // template host. Hand off before any phone UI work — this activity
         // is a no-op on automotive devices.
-        if (packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
+        // Test hook: `am start ... --ez force_phone_ui true` keeps the
+        // phone UI (e.g. to configure a connection on the AAOS emulator).
+        if (packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE) &&
+            !intent.getBooleanExtra(EXTRA_FORCE_PHONE_UI, false)
+        ) {
             startActivity(Intent(this, CarAppActivity::class.java))
             finish()
             return
@@ -225,3 +229,7 @@ private fun SystemBarsForTheme(activity: ComponentActivity) {
         onDispose { }
     }
 }
+
+/** Debug/test hook: `am start ... --ez force_phone_ui true` keeps the
+ *  phone UI on automotive devices (AAOS emulator connection setup). */
+private const val EXTRA_FORCE_PHONE_UI = "force_phone_ui"
