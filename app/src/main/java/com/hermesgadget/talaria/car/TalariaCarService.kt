@@ -20,6 +20,7 @@ import android.content.Intent
 import androidx.car.app.CarAppService
 import androidx.car.app.Session
 import androidx.car.app.validation.HostValidator
+import com.hermesgadget.talaria.BuildConfig
 
 /**
  * Android Auto / Automotive OS entry point for Talaria.
@@ -31,11 +32,18 @@ import androidx.car.app.validation.HostValidator
 class TalariaCarService : CarAppService() {
 
     /**
-     * Sideloaded distribution: accept any host. If Talaria ever moves to
-     * Play distribution this must switch to [HostValidator.Builder]
-     * with the signed host allowlist (see Android Auto docs).
+     * AndroidX ships the package/signature pairs for the supported Android
+     * Auto and Automotive Templates Hosts in its sample allowlist. Keep the
+     * permissive validator available only for local development and testing.
      */
-    override fun createHostValidator(): HostValidator = HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
+    override fun createHostValidator(): HostValidator =
+        if (BuildConfig.DEBUG) {
+            HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
+        } else {
+            HostValidator.Builder(applicationContext)
+                .addAllowedHosts(androidx.car.app.R.array.hosts_allowlist_sample)
+                .build()
+        }
 
     override fun onCreateSession(): Session = object : Session() {
         override fun onCreateScreen(intent: Intent) = SessionListScreen(carContext)

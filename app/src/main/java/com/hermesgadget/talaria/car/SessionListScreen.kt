@@ -33,10 +33,14 @@ import androidx.car.app.messaging.model.ConversationCallback
 import androidx.car.app.messaging.model.ConversationItem
 import androidx.core.app.Person
 import androidx.core.graphics.drawable.IconCompat
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.domain.model.SessionSummary
 import java.util.concurrent.Executor
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 /**
  * Car home screen, designed for minimal glances while driving:
@@ -50,8 +54,11 @@ import java.util.concurrent.Executors
  */
 class SessionListScreen(carContext: CarContext) : Screen(carContext) {
 
-    private val executor: Executor = Executors.newSingleThreadExecutor()
+    private val executor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainExecutor: Executor = carContext.mainExecutor
+
+    @Volatile
+    private var destroyed = false
 
     private var conversations: List<CarConversation>? = null
     private var error: String? = null
@@ -89,6 +96,15 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
             "Plan today's work based on my recent activity.",
         ),
     )
+
+    init {
+        lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onDestroy(owner: LifecycleOwner) {
+                destroyed = true
+                executor.shutdownNow()
+            }
+        })
+    }
 
     override fun onGetTemplate(): Template {
         if (conversations == null) {
@@ -191,11 +207,11 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
             override fun onTextReply(text: String) {
                 val prompt = text.trim()
                 if (prompt.isEmpty()) return
-                executor.execute {
+                executeInBackground {
                     val result = kotlinx.coroutines.runBlocking {
                         CarSessionsRepository.createSession(prompt)
                     }
-                    mainExecutor.execute {
+                    postToMain {
                         result.fold(
                             onSuccess = {
                                 CarToast.makeText(
@@ -220,11 +236,11 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
             override fun onTextReply(text: String) {
                 val prompt = text.trim()
                 if (prompt.isEmpty()) return
-                executor.execute {
+                executeInBackground {
                     val result = kotlinx.coroutines.runBlocking {
                         CarSessionsRepository.sendText(session.id, prompt)
                     }
-                    mainExecutor.execute {
+                    postToMain {
                         if (result.isFailure) error = result.exceptionOrNull()?.message
                         conversations = null // reload — new reply shows in the preview
                         invalidate()
@@ -237,11 +253,11 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
 
     /** One-tap kick-off: create a fresh agent with a canned prompt. */
     private fun startQuickAction(quick: QuickStart) {
-        executor.execute {
+        executeInBackground {
             val result = kotlinx.coroutines.runBlocking {
                 CarSessionsRepository.createSession(quick.prompt)
             }
-            mainExecutor.execute {
+            postToMain {
                 result.fold(
                     onSuccess = {
                         CarToast.makeText(
@@ -261,7 +277,7 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
     private fun loadConversations() {
         loading = true
         invalidate()
-        executor.execute {
+        executeInBackground {
             val result = kotlinx.coroutines.runBlocking {
                 if (!CarSessionsRepository.hasConnection()) {
                     Result.failure(IllegalStateException("Connect Talaria to Hermes on your phone first"))
@@ -269,7 +285,7 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
                     CarSessionsRepository.conversations()
                 }
             }
-            mainExecutor.execute {
+            postToMain {
                 loading = false
                 result.fold(
                     onSuccess = { conversations = it },
@@ -277,6 +293,30 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
                 )
                 invalidate()
             }
+        }
+    }
+
+    /**
+     * The car host can destroy a screen while a repository call is running.
+     * Avoid starting new work after that point and tolerate the shutdown race
+     * between the lifecycle callback and executor submission.
+     */
+    private fun executeInBackground(block: () -> Unit) {
+        if (destroyed) return
+        try {
+            executor.execute {
+                if (!destroyed) block()
+            }
+        } catch (_: RejectedExecutionException) {
+            // The screen was destroyed between the flag check and submission.
+        }
+    }
+
+    /** Never apply a result to a screen after its lifecycle has ended. */
+    private fun postToMain(block: () -> Unit) {
+        if (destroyed) return
+        mainExecutor.execute {
+            if (!destroyed) block()
         }
     }
 
