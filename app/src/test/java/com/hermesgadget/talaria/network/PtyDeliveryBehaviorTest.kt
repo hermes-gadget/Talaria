@@ -66,10 +66,26 @@ class PtyDeliveryBehaviorTest {
     fun `PTY reports connected before output and sends body and enter as separate frames`() = runBlocking {
         val frames = Channel<String>(Channel.UNLIMITED)
         val serverSocket = CompletableDeferred<WebSocket>()
+        val serverClosed = CompletableDeferred<Unit>()
         server.enqueue(
             MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     serverSocket.complete(webSocket)
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    serverClosed.complete(Unit)
+                }
+
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    // Complete the close handshake from the server side —
+                    // MockWebServer does not auto-reply to close frames.
+                    webSocket.close(code, reason)
+                    serverClosed.complete(Unit)
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    serverClosed.complete(Unit)
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
@@ -108,6 +124,10 @@ class PtyDeliveryBehaviorTest {
         session.close()
         session.sendText("late")
         assertNull(frames.tryReceive().getOrNull())
+
+        // Wait for the close handshake to complete server-side before the
+        // mock server shuts down, otherwise its queue never drains.
+        withTimeout(5_000) { serverClosed.await() }
         collector.cancelAndJoin()
     }
 }

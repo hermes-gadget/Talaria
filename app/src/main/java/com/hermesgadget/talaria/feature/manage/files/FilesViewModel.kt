@@ -678,10 +678,10 @@ class FilesViewModel(
                                 mimeType = payload.mimeType,
                             ),
                         )
-                                        }
-                                    }
-                                }
-                            })
+                    }
+                }
+            }
+        }
     }
 
     /** Alias for callers that expose a retry action after a failed SAF save. */
