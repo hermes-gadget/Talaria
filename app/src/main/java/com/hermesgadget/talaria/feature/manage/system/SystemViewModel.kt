@@ -38,6 +38,10 @@ import com.hermesgadget.talaria.domain.model.OpsRawConfigUpdate
 import com.hermesgadget.talaria.domain.model.SystemStats
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -163,6 +167,8 @@ sealed interface RawConfigUiState {
         val savedYaml: String = yaml,
         val saving: Boolean = false,
         val message: String? = null,
+        /** Monotonically increases whenever the visible draft changes. */
+        val generation: Long = 0L,
     ) : RawConfigUiState
     data class Unsupported(val message: String) : RawConfigUiState
     data class Failed(val message: String) : RawConfigUiState
@@ -203,6 +209,11 @@ class SystemViewModel(
 ) : ViewModel() {
     private val _ui = MutableStateFlow(SystemUiState())
     val ui: StateFlow<SystemUiState> = _ui.asStateFlow()
+
+    /** Only one import preparation/upload owns a temp file at a time. */
+    private var importJob: Job? = null
+    private var importGeneration = 0L
+    private var importTempFile: File? = null
 
     init {
         if (autoRefresh) refresh()
@@ -392,7 +403,7 @@ class SystemViewModel(
         viewModelScope.launch {
             _ui.update { it.copy(hooksBusy = true, hooksMessage = null) }
             runCatching {
-                gateway.createOpsHook(request)
+                requireOpsMutationSuccess(gateway.createOpsHook(request), "Could not save hook")
                 gateway.getOpsHooks()
             }.fold(
                 onSuccess = { response ->
@@ -423,7 +434,10 @@ class SystemViewModel(
         viewModelScope.launch {
             _ui.update { it.copy(hooksBusy = true, hooksMessage = null) }
             runCatching {
-                gateway.deleteOpsHook(OpsHookDeleteRequest(entry.event, command))
+                requireOpsMutationSuccess(
+                    gateway.deleteOpsHook(OpsHookDeleteRequest(entry.event, command)),
+                    "Could not delete hook",
+                )
                 gateway.getOpsHooks()
             }.fold(
                 onSuccess = { response ->
@@ -445,68 +459,85 @@ class SystemViewModel(
     }
 
     fun selectImport(uri: Uri, displayName: String, resolver: ContentResolver) {
-        val oldFile = (_ui.value.importState as? ImportUiState.Ready)?.file
-        oldFile?.delete()
+        val generation = beginImport()
         _ui.update { it.copy(importState = ImportUiState.Preparing(displayName)) }
-        viewModelScope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    val safeName = displayName.ifBlank { "import.json" }
-                    val extension = safeName.substringAfterLast('.', "").lowercase()
-                    val suffix = if (extension.isBlank()) ".bin" else ".${extension.take(8)}"
-                    val directory = File(cacheDirectory, "ops-import").apply { mkdirs() }
-                    val file = File.createTempFile("hermes-import-", suffix, directory)
-                    try {
-                        val input = resolver.openInputStream(uri)
-                            ?: error("Could not open the selected file")
-                        input.use { source ->
-                            file.outputStream().use { destination -> source.copyTo(destination) }
-                        }
-                        OpsImportFileValidation.validate(safeName, file)?.let(::error)
-                        file
-                    } catch (error: Throwable) {
-                        file.delete()
-                        throw error
+        importJob = viewModelScope.launch {
+            var preparedFile: File? = null
+            try {
+                val safeName = displayName.ifBlank { "import.json" }
+                preparedFile = prepareImportFile(generation, uri, safeName, resolver)
+                if (generation != importGeneration) {
+                    preparedFile?.delete()
+                    return@launch
+                }
+                importTempFile = preparedFile
+                _ui.update {
+                    it.copy(importState = ImportUiState.Ready(preparedFile!!, safeName))
+                }
+            } catch (error: CancellationException) {
+                preparedFile?.delete()
+                throw error
+            } catch (error: Throwable) {
+                preparedFile?.delete()
+                if (generation == importGeneration) {
+                    importTempFile = null
+                    _ui.update {
+                        it.copy(importState = ImportUiState.Failed(error.message ?: "Could not read import file"))
                     }
                 }
-            }.fold(
-                onSuccess = { file -> _ui.update { it.copy(importState = ImportUiState.Ready(file, displayName)) } },
-                onFailure = { error -> _ui.update { it.copy(importState = ImportUiState.Failed(error.message ?: "Could not read import file")) } },
-            )
+            }
         }
     }
 
     fun cancelImport() {
-        (_ui.value.importState as? ImportUiState.Ready)?.file?.delete()
+        importGeneration += 1
+        importJob?.cancel()
+        importJob = null
+        val stateFile = (_ui.value.importState as? ImportUiState.Ready)?.file
+        if (stateFile != null && stateFile != importTempFile) stateFile.delete()
+        importTempFile?.delete()
+        importTempFile = null
         _ui.update { it.copy(importState = ImportUiState.Idle) }
     }
 
     fun confirmImport() {
         val pending = _ui.value.importState as? ImportUiState.Ready ?: return
+        val generation = importGeneration
+        val pendingFile = pending.file
         _ui.update { it.copy(importState = ImportUiState.Running(pending.displayName)) }
-        viewModelScope.launch {
-            runCatching {
-                val mediaType = when (pending.displayName.substringAfterLast('.', "").lowercase()) {
-                    "json" -> "application/json"
-                    "zip" -> "application/zip"
-                    else -> "application/octet-stream"
-                }.toMediaType()
-                val filePart = MultipartBody.Part.createFormData(
-                    "file",
-                    pending.displayName,
-                    pending.file.asRequestBody(mediaType),
-                )
-                val forcePart = "true".toRequestBody("text/plain".toMediaType())
-                gateway.importOpsUpload(filePart, forcePart)
-            }.fold(
-                onSuccess = { response ->
-                    pending.file.delete()
-                    _ui.update { it.copy(importState = ImportUiState.Complete(response)) }
-                },
-                onFailure = { error ->
-                    _ui.update { it.copy(importState = ImportUiState.Failed(error.message ?: "Import failed")) }
-                },
-            )
+        importJob = viewModelScope.launch {
+            try {
+                val response = withContext(Dispatchers.IO) {
+                    val mediaType = when (pending.displayName.substringAfterLast('.', "").lowercase()) {
+                        "json" -> "application/json"
+                        "zip" -> "application/zip"
+                        else -> "application/octet-stream"
+                    }.toMediaType()
+                    val filePart = MultipartBody.Part.createFormData(
+                        "file",
+                        pending.displayName,
+                        pendingFile.asRequestBody(mediaType),
+                    )
+                    val forcePart = "true".toRequestBody("text/plain".toMediaType())
+                    gateway.importOpsUpload(filePart, forcePart)
+                }
+                requireOpsMutationSuccess(response, "Import failed")
+                pendingFile.delete()
+                if (generation != importGeneration) return@launch
+                importTempFile = null
+                _ui.update { it.copy(importState = ImportUiState.Complete(response)) }
+            } catch (error: CancellationException) {
+                pendingFile.delete()
+                throw error
+            } catch (error: Throwable) {
+                pendingFile.delete()
+                if (generation == importGeneration) {
+                    importTempFile = null
+                    _ui.update {
+                        it.copy(importState = ImportUiState.Failed(error.message ?: "Import failed"))
+                    }
+                }
+            }
         }
     }
 
@@ -615,24 +646,57 @@ class SystemViewModel(
     }
 
     fun updateRawConfig(yaml: String) {
-        val current = _ui.value.rawConfig as? RawConfigUiState.Ready ?: return
-        _ui.update { it.copy(rawConfig = current.copy(yaml = yaml, message = null)) }
+        _ui.update { state ->
+            val current = state.rawConfig as? RawConfigUiState.Ready ?: return@update state
+            state.copy(
+                rawConfig = current.copy(
+                    yaml = yaml,
+                    message = null,
+                    generation = if (yaml == current.yaml) {
+                        current.generation
+                    } else {
+                        current.generation + 1
+                    },
+                ),
+            )
+        }
     }
 
     fun saveRawConfig() {
         val current = _ui.value.rawConfig as? RawConfigUiState.Ready ?: return
+        if (current.saving) return
         if (current.yaml == current.savedYaml) {
             _ui.update { it.copy(rawConfig = current.copy(message = "No changes to save")) }
             return
         }
+        val submittedYaml = current.yaml
+        val submittedGeneration = current.generation
         _ui.update { it.copy(rawConfig = current.copy(saving = true, message = null)) }
         viewModelScope.launch {
-            runCatching { gateway.putOpsRawConfig(OpsRawConfigUpdate(current.yaml)) }
+            runCatching {
+                requireOpsMutationSuccess(
+                    gateway.putOpsRawConfig(OpsRawConfigUpdate(submittedYaml)),
+                    "Could not save raw config",
+                )
+            }
                 .fold(
                     onSuccess = {
                         _ui.update {
                             val ready = it.rawConfig as? RawConfigUiState.Ready ?: return@update it
-                            it.copy(rawConfig = ready.copy(savedYaml = ready.yaml, saving = false, message = "Saved"))
+                            val newerDraft = ready.generation != submittedGeneration && ready.yaml != submittedYaml
+                            it.copy(
+                                rawConfig = ready.copy(
+                                    // The server acknowledged exactly what was submitted, not
+                                    // whatever the editor contains when this callback runs.
+                                    savedYaml = submittedYaml,
+                                    saving = false,
+                                    message = if (newerDraft) {
+                                        "Saved; newer edits remain unsaved"
+                                    } else {
+                                        "Saved"
+                                    },
+                                ),
+                            )
                         }
                     },
                     onFailure = { error ->
@@ -656,12 +720,91 @@ class SystemViewModel(
             RawConfigUiState.Failed(error.message ?: "Could not load raw config")
         }
 
+    private fun beginImport(): Long {
+        importGeneration += 1
+        importJob?.cancel()
+        importJob = null
+        val stateFile = (_ui.value.importState as? ImportUiState.Ready)?.file
+        if (stateFile != null && stateFile != importTempFile) stateFile.delete()
+        importTempFile?.delete()
+        importTempFile = null
+        return importGeneration
+    }
+
+    private suspend fun prepareImportFile(
+        generation: Long,
+        uri: Uri,
+        safeName: String,
+        resolver: ContentResolver,
+    ): File = withContext(Dispatchers.IO) {
+        val extension = safeName.substringAfterLast('.', "").lowercase()
+        val suffix = if (extension.isBlank()) ".bin" else ".${extension.take(8)}"
+        val directory = File(cacheDirectory, "ops-import").apply { mkdirs() }
+        val file = File.createTempFile("hermes-import-$generation-", suffix, directory)
+        try {
+            val input = resolver.openInputStream(uri)
+                ?: error("Could not open the selected file")
+            input.use { source ->
+                file.outputStream().use { destination ->
+                    copyBounded(source, destination, MAX_SYSTEM_IMPORT_BYTES)
+                }
+            }
+            OpsImportFileValidation.validate(safeName, file)?.let(::error)
+            file
+        } catch (error: Throwable) {
+            file.delete()
+            throw error
+        }
+    }
+
+    private suspend fun copyBounded(
+        source: java.io.InputStream,
+        destination: java.io.OutputStream,
+        maxBytes: Long,
+    ) {
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0L
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            val count = source.read(buffer)
+            if (count < 0) return
+            if (total > maxBytes - count) {
+                error("The selected import is larger than ${maxBytes / (1024 * 1024)} MB")
+            }
+            destination.write(buffer, 0, count)
+            total += count
+        }
+    }
+
+    override fun onCleared() {
+        importGeneration += 1
+        importJob?.cancel()
+        importJob = null
+        importTempFile?.delete()
+        importTempFile = null
+        super.onCleared()
+    }
+
     companion object {
         fun factory() = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = SystemViewModel() as T
         }
     }
+}
+
+private const val MAX_SYSTEM_IMPORT_BYTES = 25L * 1024 * 1024
+
+private fun requireOpsMutationSuccess(
+    response: OpsActionResponse,
+    fallback: String,
+): OpsActionResponse {
+    if (!response.ok || !response.error.isNullOrBlank()) {
+        val detail = response.error?.takeIf { it.isNotBlank() }
+            ?: response.message?.takeIf { it.isNotBlank() }
+        error(detail ?: fallback)
+    }
+    return response
 }
 
 private fun errorText(error: Throwable): String = error.message ?: error.toString()

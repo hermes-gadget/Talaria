@@ -57,9 +57,16 @@ import com.hermesgadget.talaria.domain.model.ConfigSchemaResponse
 import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import com.hermesgadget.talaria.ui.components.UnsavedChangesGuard
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -82,26 +89,73 @@ fun ConfigScreen() {
     var selectedCategory by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var importText by remember { mutableStateOf<String?>(null) }
+    var importing by remember { mutableStateOf(false) }
+    var importJob by remember { mutableStateOf<Job?>(null) }
+    var importGeneration by remember { mutableStateOf(0L) }
+    var fieldDrafts by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var fieldErrors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+
+    fun replaceConfigText(newText: String) {
+        text = newText
+        fieldDrafts = emptyMap()
+        fieldErrors = emptyMap()
+    }
+
+    fun updateSchemaField(key: String, newValue: String, expectedType: String?) {
+        // Keep the user's display text even when it is not yet a valid typed
+        // value (for example "-" while entering a negative number).
+        fieldDrafts = fieldDrafts + (key to newValue)
+        val value = runCatching { parseConfigDraft(newValue, expectedType) }
+            .getOrElse { error ->
+                fieldErrors = fieldErrors +
+                    (key to (error.message ?: "Invalid value"))
+                return
+            }
+        val updatedText = runCatching {
+            val root = JsonConfig.json.parseToJsonElement(text).jsonObject
+            JsonConfig.json.encodeToString(setConfigValueAtPath(root, key.split('.'), value))
+        }.getOrElse { error ->
+            fieldErrors = fieldErrors +
+                (key to (error.message ?: "Current config is not valid JSON"))
+            return
+        }
+        text = updatedText
+        fieldErrors = fieldErrors - key
+    }
 
     val importFileLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        runCatching {
-            val raw = context.contentResolver.openInputStream(uri)
-                ?.bufferedReader()?.use { it.readText() }.orEmpty()
-            JsonConfig.json.parseToJsonElement(raw).jsonObject // validate
-            text = raw
-            message = "Imported from file (not saved)"
-        }.onFailure { message = "Invalid config file: ${it.message}" }
+        importJob?.cancel()
+        val generation = importGeneration + 1
+        importGeneration = generation
+        importing = true
+        importJob = scope.launch {
+            try {
+                val raw = readAndValidateConfigImport(context.contentResolver, uri)
+                if (generation != importGeneration) return@launch
+                replaceConfigText(raw)
+                message = "Imported from file (not saved)"
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                if (generation == importGeneration) {
+                    message = "Invalid config file: ${error.message}"
+                }
+            } finally {
+                if (generation == importGeneration) importing = false
+            }
+        }
     }
 
     fun load() {
         scope.launch {
             repo.getConfig()
-                .onSuccess {
-                    text = JsonConfig.json.encodeToString(it)
-                    savedText = text
+                .onSuccess { config ->
+                    val loadedText = JsonConfig.json.encodeToString(config)
+                    replaceConfigText(loadedText)
+                    savedText = loadedText
                 }
                 .onFailure { message = it.message }
             repo.getConfigDefaults()
@@ -123,7 +177,7 @@ fun ConfigScreen() {
 
     LaunchedEffect(Unit) { load() }
 
-    val dirty = text != savedText
+    val dirty = text != savedText || fieldErrors.isNotEmpty()
     UnsavedChangesGuard(hasUnsavedChanges = dirty)
 
     val categories = remember(schema) {
@@ -134,6 +188,7 @@ fun ConfigScreen() {
     }
 
     val useForm = !schemaFailed && schema != null && categories.isNotEmpty()
+    val hasFieldErrors = fieldErrors.isNotEmpty()
 
     val subtitle = buildString {
         append(if (useForm) "Schema-driven editor" else "Raw JSON editor")
@@ -170,7 +225,7 @@ fun ConfigScreen() {
                 if (!useForm || selectedCategory == "__json__") {
                     OutlinedTextField(
                         value = text,
-                        onValueChange = { text = it },
+                        onValueChange = ::replaceConfigText,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 280.dp),
@@ -198,6 +253,8 @@ fun ConfigScreen() {
                                     null -> ""
                                     else -> currentElement.toString()
                                 }
+                                val draft = fieldDrafts[key] ?: current
+                                val fieldError = fieldErrors[key]
                                 val enumValues = meta?.let { enumOptions(it) }
                                 when {
                                     !enumValues.isNullOrEmpty() -> {
@@ -208,7 +265,7 @@ fun ConfigScreen() {
                                             modifier = Modifier.fillMaxWidth(),
                                         ) {
                                             OutlinedTextField(
-                                                value = current,
+                                                value = draft,
                                                 onValueChange = {},
                                                 readOnly = true,
                                                 label = { Text(key) },
@@ -231,7 +288,7 @@ fun ConfigScreen() {
                                                     DropdownMenuItem(
                                                         text = { Text(option) },
                                                         onClick = {
-                                                            text = updateConfigKey(text, key, option, type)
+                                                            updateSchemaField(key, option, type)
                                                             expanded = false
                                                         },
                                                     )
@@ -240,7 +297,7 @@ fun ConfigScreen() {
                                         }
                                     }
                                     type == "boolean" || type == "bool" -> {
-                                        val checked = current.equals("true", ignoreCase = true)
+                                        val checked = draft.equals("true", ignoreCase = true)
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -256,19 +313,32 @@ fun ConfigScreen() {
                                             androidx.compose.material3.Switch(
                                                 checked = checked,
                                                 onCheckedChange = { on ->
-                                                    text = updateConfigKey(text, key, on.toString(), "boolean")
+                                                    updateSchemaField(key, on.toString(), "boolean")
                                                 },
                                             )
+                                        }
+                                        fieldError?.let {
+                                            Text(it, color = MaterialTheme.colorScheme.error)
                                         }
                                     }
                                     else -> {
                                         OutlinedTextField(
-                                            value = current,
+                                            value = draft,
                                             onValueChange = { newVal ->
-                                                text = updateConfigKey(text, key, newVal, type)
+                                                updateSchemaField(key, newVal, type)
                                             },
                                             label = { Text(key) },
-                                            supportingText = desc?.let { { Text(it) } },
+                                            isError = fieldError != null,
+                                            supportingText = if (desc != null || fieldError != null) {
+                                                {
+                                                    desc?.let { Text(it) }
+                                                    fieldError?.let {
+                                                        Text(it, color = MaterialTheme.colorScheme.error)
+                                                    }
+                                                }
+                                            } else {
+                                                null
+                                            },
                                             modifier = Modifier.fillMaxWidth(),
                                         )
                                     }
@@ -287,16 +357,25 @@ fun ConfigScreen() {
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Button(onClick = {
-                    scope.launch {
-                        runCatching {
-                            val obj = JsonConfig.json.parseToJsonElement(text).jsonObject
-                            repo.putConfig(obj).getOrThrow()
-                            savedText = text
-                            message = "Saved"
-                        }.onFailure { message = it.message }
-                    }
-                }) { Text("Save") }
+                Button(
+                    enabled = !importing && !hasFieldErrors && text != savedText,
+                    onClick = {
+                        val submittedText = text
+                        scope.launch {
+                            runCatching {
+                                val obj = JsonConfig.json.parseToJsonElement(submittedText).jsonObject
+                                repo.putConfig(obj).getOrThrow()
+                            }.onSuccess {
+                                if (text == submittedText) {
+                                    savedText = submittedText
+                                    message = "Saved"
+                                } else {
+                                    message = "Saved; newer edits remain unsaved"
+                                }
+                            }.onFailure { message = it.message }
+                        }
+                    },
+                ) { Text("Save") }
             }
 
             CollapsibleSection(
@@ -309,7 +388,7 @@ fun ConfigScreen() {
                 ) {
                     OutlinedButton(onClick = {
                         defaultsText?.let {
-                            text = it
+                            replaceConfigText(it)
                             message = "Reset to defaults (not saved)"
                         } ?: run { message = "Defaults unavailable" }
                     }) { Text("Reset") }
@@ -324,11 +403,18 @@ fun ConfigScreen() {
                     OutlinedButton(onClick = {
                         importText = text
                     }) { Text("Paste") }
-                    OutlinedButton(onClick = {
-                        importFileLauncher.launch(
-                            arrayOf("application/json", "text/plain", "*/*"),
-                        )
-                    }) { Text("Import file") }
+                    OutlinedButton(
+                        enabled = !importing,
+                        onClick = {
+                            importFileLauncher.launch(
+                                arrayOf("application/json", "text/plain", "*/*"),
+                            )
+                        },
+                    ) { Text("Import file") }
+                }
+
+                if (importing) {
+                    Text("Reading import…", color = MaterialTheme.colorScheme.secondary)
                 }
 
                 importText?.let {
@@ -346,7 +432,7 @@ fun ConfigScreen() {
                             val pasted = importText.orEmpty()
                             runCatching {
                                 JsonConfig.json.parseToJsonElement(pasted).jsonObject
-                                text = pasted
+                                replaceConfigText(pasted)
                                 importText = null
                                 message = "Imported (not saved)"
                             }.onFailure { message = "Invalid JSON: ${it.message}" }
@@ -402,23 +488,63 @@ internal fun configValueAtPath(root: JsonObject, path: String): kotlinx.serializ
     return current
 }
 
+/** Parse only a bounded SAF document, keeping all blocking work off Compose's main dispatcher. */
+private suspend fun readAndValidateConfigImport(
+    resolver: android.content.ContentResolver,
+    uri: android.net.Uri,
+): String {
+    val raw = withContext(Dispatchers.IO) {
+        resolver.openInputStream(uri)?.use { readBoundedUtf8(it, MAX_CONFIG_IMPORT_BYTES) }
+            ?: error("Could not open the selected file")
+    }
+    return withContext(Dispatchers.Default) {
+        JsonConfig.json.parseToJsonElement(raw.removePrefix("\uFEFF")).jsonObject
+        raw
+    }
+}
+
+private fun readBoundedUtf8(input: InputStream, maxBytes: Long): String {
+    val output = ByteArrayOutputStream()
+    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+    var total = 0L
+    while (true) {
+        val count = input.read(buffer)
+        if (count < 0) break
+        if (total > maxBytes - count) {
+            error("The selected config is larger than ${maxBytes / (1024 * 1024)} MB")
+        }
+        output.write(buffer, 0, count)
+        total += count
+    }
+    return output.toByteArray().toString(Charsets.UTF_8)
+}
+
+internal fun parseConfigDraft(newVal: String, expectedType: String?): JsonElement {
+    val trimmed = newVal.trim()
+    return when (expectedType?.lowercase()) {
+        "boolean", "bool" -> when (trimmed.lowercase()) {
+            "true" -> JsonPrimitive(true)
+            "false" -> JsonPrimitive(false)
+            else -> error("Expected true or false")
+        }
+        "number" -> trimmed.toLongOrNull()?.let(::JsonPrimitive)
+            ?: trimmed.toDoubleOrNull()?.let(::JsonPrimitive)
+            ?: error("Expected a number")
+        "integer" -> trimmed.toLongOrNull()?.let(::JsonPrimitive)
+            ?: error("Expected a whole number")
+        "list", "array" -> JsonConfig.json.parseToJsonElement(trimmed).also {
+            require(it is JsonArray) { "Expected a JSON array" }
+        }
+        "object" -> JsonConfig.json.parseToJsonElement(trimmed).also {
+            require(it is JsonObject) { "Expected a JSON object" }
+        }
+        else -> JsonPrimitive(newVal)
+    }
+}
+
 internal fun updateConfigKey(text: String, key: String, newVal: String, expectedType: String?): String {
     return runCatching {
-        val trimmed = newVal.trim()
-        val value = when (expectedType) {
-            "boolean", "bool" ->
-                JsonPrimitive(trimmed.toBoolean())
-            "number", "integer" -> trimmed.toLongOrNull()?.let(::JsonPrimitive)
-                ?: trimmed.toDoubleOrNull()?.let(::JsonPrimitive)
-                ?: error("Expected a number")
-            "list", "array" -> JsonConfig.json.parseToJsonElement(trimmed).also {
-                require(it is JsonArray) { "Expected a JSON array" }
-            }
-            "object" -> JsonConfig.json.parseToJsonElement(trimmed).also {
-                require(it is JsonObject) { "Expected a JSON object" }
-            }
-            else -> JsonPrimitive(newVal)
-        }
+        val value = parseConfigDraft(newVal, expectedType)
         val root = JsonConfig.json.parseToJsonElement(text).jsonObject
         JsonConfig.json.encodeToString(setConfigValueAtPath(root, key.split('.'), value))
     }.getOrDefault(text)
@@ -440,3 +566,5 @@ private fun setConfigValueAtPath(
     }
     return JsonObject(out)
 }
+
+private const val MAX_CONFIG_IMPORT_BYTES = 10L * 1024 * 1024
