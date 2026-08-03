@@ -63,6 +63,31 @@ fun CronScreen(vm: CronViewModel = viewModel(factory = CronViewModel.factory()))
     var deliveryMenuOpen by remember { mutableStateOf(false) }
     var editJob by remember { mutableStateOf<ManageCronJob?>(null) }
     var deleteJob by remember { mutableStateOf<ManageCronJob?>(null) }
+    var createSubmitting by remember { mutableStateOf(false) }
+    var submittedPrompt by remember { mutableStateOf<String?>(null) }
+    var submittedName by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(ui) {
+        when (val current = ui) {
+            is CronUiState.Content -> if (!current.busy && createSubmitting) {
+                createSubmitting = false
+                // CronViewModel only returns to a non-busy, message-less state
+                // after the server mutation and follow-up reload succeeded.
+                if (current.message == null) {
+                    if (prompt == submittedPrompt) prompt = ""
+                    if (name == submittedName) name = ""
+                }
+                submittedPrompt = null
+                submittedName = null
+            }
+            is CronUiState.Failure -> {
+                createSubmitting = false
+                submittedPrompt = null
+                submittedName = null
+            }
+            CronUiState.Loading -> Unit
+        }
+    }
 
     when (val state = ui) {
         CronUiState.Loading -> ScreenScaffold("Cron", "Scheduled automations") { LoadingBox() }
@@ -78,7 +103,12 @@ fun CronScreen(vm: CronViewModel = viewModel(factory = CronViewModel.factory()))
             ScreenScaffold(
                 "Cron",
                 "Scheduled automations",
-                actions = { TextButton(onClick = vm::refresh) { Text("Refresh") } },
+                actions = {
+                    TextButton(
+                        enabled = !state.busy && !createSubmitting,
+                        onClick = vm::refresh,
+                    ) { Text("Refresh") }
+                },
             ) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -101,11 +131,15 @@ fun CronScreen(vm: CronViewModel = viewModel(factory = CronViewModel.factory()))
                                 onScheduleChange = { schedule = it },
                                 onDeliveryChange = { delivery = it; deliveryMenuOpen = false },
                                 onDeliveryMenuChange = { deliveryMenuOpen = it },
+                                busy = state.busy || createSubmitting,
                                 onCreate = {
-                                    vm.create(prompt, schedule, name, delivery)
-                                    if (prompt.isNotBlank() && schedule.isNotBlank()) {
-                                        prompt = ""
-                                        name = ""
+                                    if (!createSubmitting && !state.busy &&
+                                        prompt.isNotBlank() && schedule.isNotBlank()
+                                    ) {
+                                        createSubmitting = true
+                                        submittedPrompt = prompt
+                                        submittedName = name
+                                        vm.create(prompt, schedule, name, delivery)
                                     }
                                 },
                             )
@@ -203,6 +237,7 @@ private fun CreateCronCard(
     delivery: String,
     deliveryTargets: List<CronDeliveryTarget>,
     deliveryMenuOpen: Boolean,
+    busy: Boolean,
     onNameChange: (String) -> Unit,
     onPromptChange: (String) -> Unit,
     onScheduleChange: (String) -> Unit,
@@ -245,7 +280,10 @@ private fun CreateCronCard(
                 onExpandedChange = onDeliveryMenuChange,
                 onSelected = onDeliveryChange,
             )
-            Button(onClick = onCreate, enabled = prompt.isNotBlank() && schedule.isNotBlank()) {
+            Button(
+                onClick = onCreate,
+                enabled = !busy && prompt.isNotBlank() && schedule.isNotBlank(),
+            ) {
                 Text("Create")
             }
         }

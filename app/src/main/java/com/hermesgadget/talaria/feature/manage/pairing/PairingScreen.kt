@@ -50,6 +50,7 @@ fun PairingScreen() {
     var message by remember { mutableStateOf<String?>(null) }
     var revokeTarget by remember { mutableStateOf<PairingUser?>(null) }
     var confirmClear by remember { mutableStateOf(false) }
+    var approvalBusyKey by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     fun reload() = scope.launch {
@@ -122,13 +123,34 @@ fun PairingScreen() {
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text("${p.platform}: ${p.user_name ?: p.user_id}")
-                        Button(onClick = {
-                            scope.launch {
-                                val code = p.code ?: p.request_id ?: return@launch
-                                repo.approvePairing(p.platform, code)
-                                reload()
-                            }
-                        }) { Text("Approve") }
+                        val code = p.code ?: p.request_id
+                        Button(
+                            enabled = code != null && approvalBusyKey == null,
+                            onClick = {
+                                code?.let { requestCode ->
+                                    if (approvalBusyKey == null) {
+                                        val approvalKey = "${p.platform}:$requestCode"
+                                        approvalBusyKey = approvalKey
+                                        scope.launch {
+                                            try {
+                                                repo.approvePairing(p.platform, requestCode)
+                                                    .onSuccess {
+                                                        message = "Approved ${p.user_name ?: p.user_id}"
+                                                        reload()
+                                                    }
+                                                    .onFailure {
+                                                        message = "Approval failed: ${it.message ?: "request rejected"}"
+                                                    }
+                                            } finally {
+                                                approvalBusyKey = null
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                        ) {
+                            Text(if (approvalBusyKey == "${p.platform}:$code") "Approving…" else "Approve")
+                        }
                     }
                 }
             }

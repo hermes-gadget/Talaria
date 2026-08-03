@@ -42,6 +42,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -61,10 +62,13 @@ import com.hermesgadget.talaria.domain.model.SessionSummary
 import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import com.hermesgadget.talaria.ui.theme.LocalSpacing
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.res.stringResource
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -92,7 +96,8 @@ fun SessionsScreen(
     var deleteSession by remember { mutableStateOf<SessionSummary?>(null) }
     var compactSession by remember { mutableStateOf<SessionSummary?>(null) }
     var actionsExpanded by remember { mutableStateOf(false) }
-    var searchJob by remember { mutableStateOf<Job?>(null) }
+    var reloadNonce by remember { mutableIntStateOf(0) }
+    var requestGeneration by remember { mutableIntStateOf(0) }
 
     val knownSources = listOf(
         "" to stringResource(R.string.sessions_source_all),
@@ -106,44 +111,61 @@ fun SessionsScreen(
     )
 
     fun reload() {
-        scope.launch {
-            val apiSource = sourceFilter.ifBlank { null }
-            repo.getSessionsPage(source = apiSource, limit = 100)
+        reloadNonce++
+    }
+
+    LaunchedEffect(tab, sourceFilter, query, reloadNonce) {
+        val generation = ++requestGeneration
+        val requestedTab = tab
+        val requestedSource = sourceFilter
+        val requestedQuery = query.trim()
+        if (requestedQuery.isBlank()) {
+            val apiSource = requestedSource.ifBlank { null }
+            val result = repo.getSessionsPage(source = apiSource, limit = 100)
+            if (generation != requestGeneration || requestedTab != tab ||
+                requestedSource != sourceFilter || requestedQuery != query.trim()
+            ) return@LaunchedEffect
+            result
                 .onSuccess { page ->
-                    sessions = page.sessions.filter { SessionFilters.matchesTab(it.source, tab) }
+                    sessions = page.sessions.filter { SessionFilters.matchesTab(it.source, requestedTab) }
                     total = page.total
                     message = null
                 }
                 .onFailure { message = it.message }
-        }
-    }
-
-    LaunchedEffect(tab, sourceFilter) { reload() }
-
-    LaunchedEffect(query) {
-        searchJob?.cancel()
-        if (query.isBlank()) {
-            reload()
             return@LaunchedEffect
         }
-        searchJob = scope.launch {
-            delay(300)
-            repo.searchSessions(query)
-                .onSuccess { sessions = it.filter { SessionFilters.matchesTab(it.source, tab) } }
-                .onFailure { message = it.message }
-        }
+        delay(300)
+        val result = repo.searchSessions(requestedQuery)
+        if (generation != requestGeneration || requestedTab != tab ||
+            requestedSource != sourceFilter || requestedQuery != query.trim()
+        ) return@LaunchedEffect
+        result
+            .onSuccess {
+                sessions = it.filter { session ->
+                    SessionFilters.matchesTab(session.source, requestedTab) &&
+                        (requestedSource.isBlank() || session.source.equals(requestedSource, ignoreCase = true))
+                }
+                // Search has no authoritative page total; do not display the
+                // previous unfiltered count alongside these results.
+                total = null
+                message = null
+            }
+            .onFailure { message = it.message }
     }
 
     val importFileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             runCatching {
-                val raw = context.contentResolver.openInputStream(uri)?.use { input ->
-                    input.readBytes().also { bytes ->
-                        require(bytes.size <= MAX_IMPORT_BYTES) { "Selected file is larger than 25 MB" }
-                    }.toString(Charsets.UTF_8)
-                } ?: error("Could not read selected file")
-                parseImportSessions(JsonConfig.json.parseToJsonElement(raw))
+                val bytes = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use(::readBoundedImport)
+                        ?: error("Could not read selected file")
+                }
+                withContext(Dispatchers.Default) {
+                    parseImportSessions(
+                        JsonConfig.json.parseToJsonElement(bytes.toString(Charsets.UTF_8)),
+                    )
+                }
             }.onSuccess { imported ->
                 importMessage = null
                 adminVm.importSessions(imported)
@@ -554,3 +576,26 @@ private fun AdminActions(
 }
 
 private const val MAX_IMPORT_BYTES = 25 * 1024 * 1024
+
+/** Reads no more than the advertised limit plus one byte, so oversize input is rejected early. */
+private fun readBoundedImport(input: InputStream): ByteArray {
+    val maxRead = MAX_IMPORT_BYTES + 1
+    val buffer = ByteArray(8 * 1024)
+    val output = ByteArrayOutputStream(buffer.size)
+    var total = 0
+    while (total < maxRead) {
+        val read = input.read(buffer, 0, minOf(buffer.size, maxRead - total))
+        if (read < 0) break
+        if (read == 0) {
+            val single = input.read()
+            if (single < 0) break
+            output.write(single)
+            total++
+        } else {
+            output.write(buffer, 0, read)
+            total += read
+        }
+    }
+    require(total <= MAX_IMPORT_BYTES) { "Selected file is larger than 25 MB" }
+    return output.toByteArray()
+}

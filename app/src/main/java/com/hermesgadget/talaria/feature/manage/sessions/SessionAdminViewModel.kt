@@ -153,8 +153,10 @@ class SessionAdminViewModel(
     init { refresh() }
 
     fun refresh() {
+        if (contentOf(_ui.value)?.busy == true) return
+        val selectedIds = contentOf(_ui.value)?.selectedIds.orEmpty()
         _ui.value = SessionAdminUiState.Loading
-        viewModelScope.launch { loadSnapshot() }
+        viewModelScope.launch { loadSnapshot(selectedIds = selectedIds) }
     }
 
     fun setSelected(id: String, selected: Boolean) {
@@ -223,6 +225,7 @@ class SessionAdminViewModel(
 
     fun bulkDeleteSelected() {
         val content = contentOf(_ui.value) ?: return
+        if (content.busy) return
         val ids = content.selectedIds.toList()
         if (ids.isEmpty()) {
             setMessage("Select at least one session")
@@ -230,40 +233,73 @@ class SessionAdminViewModel(
         }
         setBusy(true)
         viewModelScope.launch {
-            runCatching { gateway.bulkDelete(ids) }
-                .onSuccess { result -> loadSnapshot("Deleted ${result.deleted.coerceAtLeast(ids.size)} session(s)") }
-                .onFailure { error -> setFailure(error.message ?: "Bulk delete failed") }
+            runCatching {
+                gateway.bulkDelete(ids).also { result ->
+                    check(result.ok) { "Bulk delete was rejected by Hermes" }
+                    require(result.deleted in 0..ids.size) {
+                        "Hermes returned an invalid bulk-delete count: ${result.deleted}"
+                    }
+                }
+            }.onSuccess { result ->
+                    val message = if (result.deleted == ids.size) {
+                        "Deleted ${result.deleted} session(s)"
+                    } else {
+                        "Deleted ${result.deleted} of ${ids.size} selected session(s); " +
+                            "the selection was retained for retry"
+                    }
+                    loadSnapshot(
+                        message = message,
+                        selectedIds = if (result.deleted == ids.size) emptySet() else ids.toSet(),
+                    )
+            }.onFailure { error -> setFailure(error.message ?: "Bulk delete failed") }
         }
     }
 
     fun deleteEmpty() {
+        if (contentOf(_ui.value)?.busy == true) return
         setBusy(true)
         viewModelScope.launch {
-            runCatching { gateway.deleteEmpty() }
-                .onSuccess { result -> loadSnapshot("Deleted ${result.deleted} empty session(s)") }
-                .onFailure { error -> setFailure(error.message ?: "Could not delete empty sessions") }
+            runCatching {
+                gateway.deleteEmpty().also { result ->
+                    check(result.ok) { "Deleting empty sessions was rejected by Hermes" }
+                }
+            }.onSuccess { result ->
+                loadSnapshot("Deleted ${result.deleted} empty session(s)")
+            }.onFailure { error -> setFailure(error.message ?: "Could not delete empty sessions") }
         }
     }
 
     fun importSessions(sessions: JsonArray) {
+        if (contentOf(_ui.value)?.busy == true) return
         if (sessions.isEmpty()) {
             setMessage("The selected file contains no sessions")
             return
         }
         setBusy(true)
         viewModelScope.launch {
-            runCatching { gateway.importSessions(sessions) }
-                .onSuccess { result ->
-                    loadSnapshot(
-                        "Imported ${result.imported} session(s)" +
-                            if (result.skipped > 0) ", skipped ${result.skipped}" else "",
-                    )
+            runCatching {
+                gateway.importSessions(sessions).also { result ->
+                    check(result.ok) { "Session import was rejected by Hermes" }
                 }
-                .onFailure { error -> setFailure(error.message ?: "Session import failed") }
+            }.onSuccess { result ->
+                val details = buildList {
+                    if (result.skipped > 0) add("skipped ${result.skipped}")
+                    if (result.errors.isNotEmpty()) {
+                        add("errors: ${result.errors.joinToString("; ")}")
+                    }
+                }
+                loadSnapshot(
+                    "Imported ${result.imported} session(s)" +
+                        if (details.isNotEmpty()) ", ${details.joinToString(", ")}" else "",
+                )
+            }.onFailure { error -> setFailure(error.message ?: "Session import failed") }
         }
     }
 
-    private suspend fun loadSnapshot(message: String? = null) {
+    private suspend fun loadSnapshot(
+        message: String? = null,
+        selectedIds: Set<String>? = null,
+    ) {
         runCatching {
             val stats = gateway.stats()
             val empty = gateway.emptyCount().count
@@ -274,7 +310,7 @@ class SessionAdminViewModel(
                 SessionAdminContent(
                     stats = stats,
                     emptyCount = empty,
-                    selectedIds = previous?.selectedIds.orEmpty(),
+                    selectedIds = selectedIds ?: previous?.selectedIds.orEmpty(),
                     pinnedIds = loadPinnedIds(),
                     message = message,
                 ),
@@ -308,7 +344,9 @@ class SessionAdminViewModel(
     }
 
     private fun setFailure(message: String) {
-        _ui.update { state -> SessionAdminUiState.Failure(message, contentOf(state)) }
+        _ui.update { state ->
+            SessionAdminUiState.Failure(message, contentOf(state)?.copy(busy = false))
+        }
     }
 
     private fun contentOf(state: SessionAdminUiState): SessionAdminContent? = when (state) {

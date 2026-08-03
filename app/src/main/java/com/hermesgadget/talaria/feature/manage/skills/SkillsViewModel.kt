@@ -551,9 +551,14 @@ private fun parseSkillContentResponse(root: JsonElement): SkillContentResponse {
 }
 
 private fun parseSkillWriteResponse(root: JsonElement): SkillWriteResponse {
-    val obj = root as? JsonObject ?: return SkillWriteResponse(ok = true)
+    val obj = root as? JsonObject
+        ?: return SkillWriteResponse(
+            ok = false,
+            error = "Invalid skill write response",
+        )
+    val explicitSuccess = obj["ok"].asBoolean() ?: obj["success"].asBoolean()
     return SkillWriteResponse(
-        ok = obj["ok"].asBoolean() ?: obj["success"].asBoolean() ?: true,
+        ok = explicitSuccess ?: false,
         message = obj["message"].asString(),
         path = obj["path"].asString(),
         error = obj["error"].asString(),

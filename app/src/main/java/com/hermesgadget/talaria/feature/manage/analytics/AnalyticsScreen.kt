@@ -47,6 +47,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
@@ -56,6 +58,10 @@ import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -80,36 +86,47 @@ fun AnalyticsScreen() {
     var egressLoading by remember { mutableStateOf(true) }
     var egressError by remember { mutableStateOf<String?>(null) }
     var days by remember { mutableIntStateOf(30) }
+    var reloadJob by remember { mutableStateOf<Job?>(null) }
+    var reloadGeneration by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
 
-    fun reload() = scope.launch {
+    fun reload() {
+        reloadJob?.cancel()
+        val requestedDays = days
+        val generation = ++reloadGeneration
         loading = true
         modelsLoading = true
         egressLoading = true
-        repo.getAnalytics(days)
-            .onSuccess {
-                data = it
-                error = null
-                loading = false
+        reloadJob = scope.launch {
+            val (analyticsResult, modelsResult, egressResult) = coroutineScope {
+                val analytics = async { repo.getAnalytics(requestedDays) }
+                val models = async { captureAnalyticsRequest { api.getAnalyticsModels() } }
+                val egress = async { captureAnalyticsRequest { api.getEgressStatus() } }
+                Triple(analytics.await(), models.await(), egress.await())
             }
-            .onFailure {
-                error = it.message
-                loading = false
-            }
-        runCatching { api.getAnalyticsModels() }
-            .onSuccess {
-                modelRows = parseAnalyticsModels(it)
-                modelsError = null
-            }
-            .onFailure { modelsError = it.message }
-        modelsLoading = false
-        runCatching { api.getEgressStatus() }
-            .onSuccess {
-                egressStatus = it
-                egressError = null
-            }
-            .onFailure { egressError = it.message }
-        egressLoading = false
+            if (generation != reloadGeneration || requestedDays != days) return@launch
+            analyticsResult
+                .onSuccess {
+                    data = it
+                    error = null
+                }
+                .onFailure { error = it.message }
+            loading = false
+            modelsResult
+                .onSuccess {
+                    modelRows = parseAnalyticsModels(it)
+                    modelsError = null
+                }
+                .onFailure { modelsError = it.message }
+            modelsLoading = false
+            egressResult
+                .onSuccess {
+                    egressStatus = it
+                    egressError = null
+                }
+                .onFailure { egressError = it.message }
+            egressLoading = false
+        }
     }
     LaunchedEffect(days) { reload() }
 
@@ -175,12 +192,17 @@ fun AnalyticsScreen() {
                                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                                 verticalAlignment = Alignment.Bottom,
                             ) {
-                                bars.forEach { bar ->
+                                bars.forEachIndexed { index, bar ->
                                     val frac = (bar.value / max).toFloat().coerceIn(0.02f, 1f)
                                     Box(
                                         modifier = Modifier
                                             .weight(1f)
                                             .fillMaxHeight(frac)
+                                            .semantics {
+                                                contentDescription =
+                                                    "${bar.label.ifBlank { "Day ${index + 1}" }}: " +
+                                                        "${bar.value}"
+                                            }
                                             .background(
                                                 MaterialTheme.colorScheme.primary,
                                                 MaterialTheme.shapes.extraSmall,
@@ -382,6 +404,14 @@ private fun TotalCard(label: String, value: String, modifier: Modifier = Modifie
 }
 
 private data class DailyBar(val label: String, val value: Double)
+
+private suspend fun <T> captureAnalyticsRequest(block: suspend () -> T): Result<T> = try {
+    Result.success(block())
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (failure: Throwable) {
+    Result.failure(failure)
+}
 
 private fun formatTokens(n: Long?): String {
     if (n == null) return "—"

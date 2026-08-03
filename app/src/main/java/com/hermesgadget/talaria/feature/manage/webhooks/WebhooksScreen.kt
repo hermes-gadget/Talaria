@@ -17,7 +17,11 @@ package com.hermesgadget.talaria.feature.manage.webhooks
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ClipDescription
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.os.PersistableBundle
 import android.widget.Toast
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,6 +39,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +55,7 @@ import com.hermesgadget.talaria.domain.model.WebhookRoute
 import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** Copies [text] to the system clipboard with a toast confirmation. */
@@ -57,6 +63,26 @@ private fun copyToClipboard(context: Context, label: String, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
     Toast.makeText(context, "$label copied", Toast.LENGTH_SHORT).show()
+}
+
+private const val SENSITIVE_CLIPBOARD_CLEAR_DELAY_MS = 15_000L
+
+/** Copies a secret with clipboard sensitivity metadata and a best-effort expiry. */
+private fun copySensitiveToClipboard(context: Context, label: String, text: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    val clip = ClipData.newPlainText(label, text)
+    clip.description.extras = PersistableBundle().apply {
+        putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+    }
+    clipboard.setPrimaryClip(clip)
+    Toast.makeText(context, "$label copied", Toast.LENGTH_SHORT).show()
+    Handler(Looper.getMainLooper()).postDelayed({
+        val current = clipboard.primaryClip
+        val currentText = current?.getItemAt(0)?.text?.toString()
+        if (current?.description?.label?.toString() == label && currentText == text) {
+            clipboard.clearPrimaryClip()
+        }
+    }, SENSITIVE_CLIPBOARD_CLEAR_DELAY_MS)
 }
 
 @Composable
@@ -72,8 +98,22 @@ fun WebhooksScreen() {
     var name by remember { mutableStateOf("") }
     var prompt by remember { mutableStateOf("") }
     var createdRoute by remember { mutableStateOf<WebhookRoute?>(null) }
+    var secretRevealed by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(createdRoute?.secret, secretRevealed) {
+        if (secretRevealed) {
+            delay(SENSITIVE_CLIPBOARD_CLEAR_DELAY_MS)
+            secretRevealed = false
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            createdRoute = null
+            secretRevealed = false
+        }
+    }
 
     fun reload() = scope.launch {
         repo.getWebhooks()
@@ -187,6 +227,7 @@ fun WebhooksScreen() {
                                 name = ""
                                 prompt = ""
                                 createdRoute = created
+                                secretRevealed = false
                                 reload()
                             }
                             .onFailure { error = it.message }
@@ -214,12 +255,25 @@ fun WebhooksScreen() {
                             }
                             created.secret?.let {
                                 Text(
-                                    "Secret (shown once): $it",
+                                    "Secret: " + if (secretRevealed) {
+                                        it
+                                    } else {
+                                        "•".repeat(it.length.coerceAtMost(32))
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.tertiary,
                                 )
-                                TextButton(onClick = { copyToClipboard(context, "Webhook secret", it) }) {
-                                    Text("Copy secret")
+                                Row {
+                                    TextButton(onClick = { secretRevealed = !secretRevealed }) {
+                                        Text(if (secretRevealed) "Hide secret" else "Reveal for 15 seconds")
+                                    }
+                                    TextButton(
+                                        onClick = {
+                                            copySensitiveToClipboard(context, "Webhook secret", it)
+                                        },
+                                    ) {
+                                        Text("Copy secret")
+                                    }
                                 }
                             }
                             if (created.url == null && created.secret == null) {
@@ -228,7 +282,10 @@ fun WebhooksScreen() {
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                             }
-                            TextButton(onClick = { createdRoute = null }) { Text("Dismiss") }
+                            TextButton(onClick = {
+                                createdRoute = null
+                                secretRevealed = false
+                            }) { Text("Dismiss") }
                         }
                     }
                 }

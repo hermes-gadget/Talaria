@@ -566,7 +566,7 @@ private fun ProvidersSection(
             defaultLabel = stringResource(R.string.plugins_provider_default),
             onSelected = onContextSelected,
         )
-        Button(enabled = !busy && contextSelection.isNotBlank(), onClick = onSave) {
+        Button(enabled = !busy, onClick = onSave) {
             Text(stringResource(R.string.plugins_save_providers))
         }
     }
@@ -594,15 +594,16 @@ private fun ProviderPicker(
                 Text(selectedLabel)
             }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                if (defaultName.isNotBlank()) {
-                    DropdownMenuItem(
-                        text = { Text(defaultLabel) },
-                        onClick = {
-                            expanded = false
-                            onSelected(defaultName)
-                        },
-                    )
-                }
+                // Empty is the server's explicit clear/default sentinel for
+                // context_engine, so it must remain selectable after a custom
+                // provider has been chosen.
+                DropdownMenuItem(
+                    text = { Text(defaultLabel) },
+                    onClick = {
+                        expanded = false
+                        onSelected(defaultName)
+                    },
+                )
                 options.forEach { option ->
                     DropdownMenuItem(
                         text = {

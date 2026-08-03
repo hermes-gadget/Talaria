@@ -122,7 +122,6 @@ fun McpScreen() {
 
     val oauthStartFallback = stringResource(R.string.mcp_oauth_start_failed)
     val oauthMissingUrl = stringResource(R.string.mcp_oauth_missing_url)
-    val oauthUnsafeUrl = stringResource(R.string.mcp_oauth_unsafe_url)
     val oauthAuthorizationFallback = stringResource(R.string.mcp_oauth_authorization_failed)
     val addFallback = stringResource(R.string.mcp_add_failed)
     val updateFallback = stringResource(R.string.mcp_update_failed)
@@ -184,11 +183,8 @@ fun McpScreen() {
             check(started.status != "error") { started.error ?: oauthStartFallback }
             val authorizationUrl = started.authorization_url
                 ?: error(oauthMissingUrl)
-            val scheme = android.net.Uri.parse(authorizationUrl).scheme?.lowercase()
-            check(scheme == "https" || scheme == "http") {
-                oauthUnsafeUrl
-            }
-            uriHandler.openUri(authorizationUrl)
+            val authorizationUri = validateMcpOAuthAuthorizationUrl(authorizationUrl)
+            uriHandler.openUri(authorizationUri.toString())
             val completed = withTimeout(5 * 60_000L) {
                 var flow = started
                 while (flow.status !in setOf("approved", "error")) {
@@ -810,6 +806,37 @@ fun McpScreen() {
 
 private fun parseMcpArgs(raw: String): List<String> =
     raw.lines().map(String::trim).filter(String::isNotEmpty)
+
+/**
+ * Browser navigation is a credential-bearing OAuth boundary. Remote hosts must
+ * use TLS; plain HTTP is retained only for the loopback callback/authorization
+ * endpoints used by local Hermes instances.
+ */
+private fun validateMcpOAuthAuthorizationUrl(raw: String): android.net.Uri {
+    val uri = android.net.Uri.parse(raw)
+    val scheme = uri.scheme?.lowercase(Locale.ROOT)
+    val host = uri.host?.lowercase(Locale.ROOT)
+    val hostForError = host ?: "<missing-host>"
+    val isLoopback = host?.let(::isLoopbackHost) == true
+    val safe = host != null && when (scheme) {
+        "https" -> true
+        "http" -> isLoopback
+        else -> false
+    }
+    check(safe) {
+        "Rejected OAuth authorization URL (${scheme ?: "<missing-scheme>"}://$hostForError): " +
+            "HTTPS is required for remote hosts; HTTP is allowed only for loopback hosts."
+    }
+    return uri
+}
+
+private fun isLoopbackHost(host: String): Boolean =
+    host.trim('[', ']').lowercase(Locale.ROOT) in setOf(
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "0:0:0:0:0:0:0:1",
+    )
 
 private fun parseMcpEnv(raw: String): Map<String, String> =
     raw.lineSequence().mapNotNull { line ->
