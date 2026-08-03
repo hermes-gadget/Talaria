@@ -1374,15 +1374,13 @@ private fun SessionTabStrip(
                             MaterialTheme.colorScheme.onSurface
                         },
                     )
-                    if (tabs.size > 1) {
-                        Icon(
-                            Icons.Filled.Close,
-                            contentDescription = stringResource(R.string.chat_close_agent, tab.title),
-                            modifier = Modifier
-                                .size(18.dp)
-                                .clickable { onClose(tab.id) },
-                        )
-                    }
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.chat_close_agent, tab.title),
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clickable { onClose(tab.id) },
+                    )
                 }
             }
         }

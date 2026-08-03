@@ -657,8 +657,11 @@ class ChatViewModel(
                 // Skip automation sessions and already-open tabs.
                 if (autoSources.any { source.contains(it) }) continue
                 if (s.id in openSessionIds) continue
-                // Only open sessions that the server considers active or live.
-                if (s.is_active != true && s.live != true) continue
+                // A session with no end marker is still open — the server's
+                // `is_active` flag alone would wrongly skip idle-but-running
+                // chats (it uses a 5-minute activity window).
+                val ended = s.end_reason != null || s.ended_at != null
+                if (ended) continue
 
                 val id = UUID.randomUUID().toString()
                 val channel = UUID.randomUUID().toString()
@@ -727,9 +730,11 @@ class ChatViewModel(
             }
         }
 
-        // Close auto-opened tabs whose sessions are no longer active.
+        // Close auto-opened tabs whose sessions have ended or been reset
+        // (e.g. /new on Discord). Idle-but-running sessions stay open —
+        // the server's is_active flag uses a 5-minute activity window.
         val stillActive = registry.sessionsByProfile[activeProfile].orEmpty()
-            .filter { it.is_active == true || it.live == true }
+            .filter { it.end_reason == null && it.ended_at == null }
             .map { it.id }
             .toSet()
         autoOpenedTabs.toList().forEach { tabId ->
