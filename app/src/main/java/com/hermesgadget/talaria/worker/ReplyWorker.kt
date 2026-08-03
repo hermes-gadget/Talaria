@@ -20,15 +20,16 @@ package com.hermesgadget.talaria.worker
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import com.hermesgadget.talaria.TalariaApp
+import com.hermesgadget.talaria.core.network.HermesEventClient
+import com.hermesgadget.talaria.core.network.PtyPromptDelivery
+import com.hermesgadget.talaria.core.network.PtyPromptDeliveryException
+import com.hermesgadget.talaria.core.network.PtyWebSocketSession
+import com.hermesgadget.talaria.core.network.fixedConnectionClient
 import com.hermesgadget.talaria.ui.navigation.TalariaDeepLink
 import com.hermesgadget.talaria.ui.navigation.TalariaDeepLinkParser
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.TimeoutCancellationException
-import java.io.IOException
-import java.util.UUID
-
-private class ReplySent : CancellationException()
 
 /** Delivers notification inline-replies by opening a short-lived PTY send. */
 class ReplyWorker(
@@ -41,51 +42,80 @@ class ReplyWorker(
         val container = TalariaApp.instance.container
         val expectedConnectionId = inputData.getString(KEY_CONNECTION_ID) ?: return Result.failure()
         val expectedProfile = inputData.getString(KEY_MANAGEMENT_PROFILE).orEmpty()
-        val active = container.connectionStore.activeProfile() ?: return Result.failure()
-        if (active.id != expectedConnectionId || active.managementProfile != expectedProfile) {
+        // Capture the complete connection snapshot once. The foreground profile can
+        // change while WorkManager is running; every socket below is bound to this
+        // same profile instead of consulting the mutable global client again.
+        val connection = container.connectionStore.activeProfile() ?: return Result.failure()
+        if (connection.id != expectedConnectionId || connection.managementProfile != expectedProfile) {
             return Result.failure()
         }
+        var eventClient: HermesEventClient? = null
+        var session: PtyWebSocketSession? = null
         return try {
-            val attachToken = UUID.randomUUID().toString()
-            val (session, flow) = container.chatRepository.openPty(
+            val socketClient = container.clientFactory.webSocketClient().fixedConnectionClient(connection)
+            // Gated dashboards issue single-use tickets, so the PTY and event
+            // sockets each need their own ticket. Token-mode dashboards simply
+            // return the same reusable token for both calls.
+            val ptyAuth = container.wsAuthHelper.authQueryParam()
+            val eventAuth = container.wsAuthHelper.authQueryParam()
+            val channel = "reply:${id}"
+            val deliveryId = inputData.getString(KEY_MESSAGE_ID).orEmpty()
+                .ifBlank { id.toString() }
+            val attachToken = "talaria-reply:$deliveryId"
+            session = PtyWebSocketSession(
+                client = socketClient,
+                connectionStore = container.connectionStore,
+                wsAuth = container.wsAuthHelper,
+                fixedProfile = connection,
+                fixedAuthQuery = ptyAuth,
+            )
+            val flow = session!!.connect(
                 resumeSessionId = resumeSessionId,
+                channelId = channel,
                 attachToken = attachToken,
             )
-            // The TUI is a fresh process per PTY: wait for its first output frame
-            // (the banner) before sending — an immediate send races startup and
-            // the prompt is silently dropped. Brief settle beat, then send.
-            // The socket then closes, but the keep-alive registry keeps the PTY
-            // (and the agent's run) alive server-side.
-            var sent = false
-            kotlinx.coroutines.withTimeout(15_000) {
-                flow.collect { event ->
-                    if (event is com.hermesgadget.talaria.core.network.PtyEvent.Connected) {
-                        // Connected only marks the WS open; hold until output.
-                    }
-                    if (event is com.hermesgadget.talaria.core.network.PtyEvent.Output && !sent) {
-                        sent = true
-                        kotlinx.coroutines.delay(350)
-                        session.sendText(text)
-                        session.close()
-                        throw ReplySent()
-                    }
-                    if (event is com.hermesgadget.talaria.core.network.PtyEvent.Failure) {
-                        throw IOException(event.message)
-                    }
-                    if (event is com.hermesgadget.talaria.core.network.PtyEvent.Closed && !sent) {
-                        throw IOException("Chat closed before reply was sent (${event.code})")
-                    }
-                }
+            eventClient = HermesEventClient(
+                clientFactory = container.clientFactory,
+                connectionStore = container.connectionStore,
+                wsAuth = container.wsAuthHelper,
+                profileName = connection.managementProfile,
+                fixedProfile = connection,
+                fixedAuthQuery = eventAuth,
+                fixedWebSocketClient = socketClient,
+            )
+            eventClient!!.start(channel, includeRpc = false)
+            // Register the sidecar subscriber before opening the PTY. If the
+            // server emits message.start immediately after Enter, this avoids
+            // racing the acknowledgement itself; PTY output remains the fallback.
+            eventClient!!.awaitEventsConnected()
+            PtyPromptDelivery.deliver(
+                session = session!!,
+                ptyEvents = flow,
+                text = text,
+                eventClient = eventClient,
+            )
+            Result.success()
+        } catch (failure: PtyPromptDeliveryException) {
+            val message = failure.message ?: "Reply was not acknowledged"
+            if (!failure.frameAccepted && runAttemptCount < MAX_ATTEMPTS) {
+                Result.retry()
+            } else {
+                container.notifier.notifyError("Reply delivery failed", message)
+                Result.failure(workDataOf(KEY_ERROR to message))
             }
-            Result.success()
-        } catch (_: ReplySent) {
-            Result.success()
-        } catch (_: TimeoutCancellationException) {
-            if (runAttemptCount < 3) Result.retry() else Result.failure()
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Throwable) {
-            if (runAttemptCount < 3) Result.retry() else Result.failure()
+        } catch (failure: Throwable) {
+            val message = failure.message ?: "Reply delivery failed"
+            if (runAttemptCount < MAX_ATTEMPTS) {
+                Result.retry()
+            } else {
+                container.notifier.notifyError("Reply delivery failed", message)
+                Result.failure(workDataOf(KEY_ERROR to message))
+            }
+        } finally {
+            eventClient?.dispose()
+            session?.close()
         }
     }
 
@@ -94,6 +124,9 @@ class ReplyWorker(
         const val KEY_DEEP_LINK = "deep_link"
         const val KEY_CONNECTION_ID = "connection_id"
         const val KEY_MANAGEMENT_PROFILE = "management_profile"
+        const val KEY_MESSAGE_ID = "message_id"
+        const val KEY_ERROR = "error"
+        private const val MAX_ATTEMPTS = 3
 
         internal fun sessionIdFromDeepLink(deepLink: String?): String? =
             (deepLink?.let(TalariaDeepLinkParser::parse) as? TalariaDeepLink.Session)?.id

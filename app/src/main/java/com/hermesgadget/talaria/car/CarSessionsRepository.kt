@@ -17,13 +17,22 @@
 package com.hermesgadget.talaria.car
 
 import com.hermesgadget.talaria.TalariaApp
+import com.hermesgadget.talaria.core.network.HermesEventClient
 import com.hermesgadget.talaria.core.network.JsonConfig
-import com.hermesgadget.talaria.core.network.PtyEvent
+import com.hermesgadget.talaria.core.network.PtyPromptDelivery
+import com.hermesgadget.talaria.core.network.PtyWebSocketSession
+import com.hermesgadget.talaria.core.network.fixedConnectionClient
 import com.hermesgadget.talaria.domain.model.HERMES_DEFAULT_PROFILE
 import com.hermesgadget.talaria.domain.model.SessionMessage
 import com.hermesgadget.talaria.domain.model.SessionSummary
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeout
 import java.util.UUID
 import kotlinx.serialization.json.JsonArray
@@ -54,21 +63,38 @@ object CarSessionsRepository {
      * Active sessions (no end marker, non-automation) each with their five
      * most recent messages, ready for the car conversation list.
      */
-    suspend fun conversations(): Result<List<CarConversation>> = runCatching {
-        val active = activeSessions().getOrThrow()
-        active.map { conversation ->
-            CarConversation(
-                session = conversation,
-                messages = messages(conversation.id).getOrDefault(emptyList()).takeLast(5),
-            )
-        }
+    suspend fun conversations(): Result<List<CarConversation>> = try {
+        Result.success(withTimeout(CONVERSATIONS_TIMEOUT_MS) {
+            val active = activeSessions().getOrThrow()
+            val permits = Semaphore(MAX_MESSAGE_REQUESTS)
+            coroutineScope {
+                active.map { conversation ->
+                    async(Dispatchers.IO) {
+                        permits.withPermit {
+                            CarConversation(
+                                session = conversation,
+                                messages = messages(conversation.id)
+                                    .getOrDefault(emptyList())
+                                    .takeLast(5),
+                            )
+                        }
+                    }
+                }.awaitAll()
+            }
+        })
+    } catch (timeout: TimeoutCancellationException) {
+        Result.failure(timeout)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Throwable) {
+        Result.failure(failure)
     }
 
     /**
      * Sessions currently open on the server: no end marker (not reset /
      * closed / compressed) and not an automation (cron/webhook) source.
      */
-    suspend fun activeSessions(): Result<List<SessionSummary>> = runCatching {
+    suspend fun activeSessions(): Result<List<SessionSummary>> = try {
         val connection = container.connectionStore.activeProfile() ?: return Result.failure(
             IllegalStateException("No active connection"),
         )
@@ -79,13 +105,17 @@ object CarSessionsRepository {
             order = "recent",
         )
         val sessions = decodeSessions(raw)
-        sessions.filter { s ->
+        Result.success(sessions.filter { s ->
             s.end_reason == null && s.ended_at == null &&
                 !isAutomationSource(s.source)
-        }
+        })
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Throwable) {
+        Result.failure(failure)
     }
 
-    suspend fun messages(sessionId: String): Result<List<SessionMessage>> = runCatching {
+    suspend fun messages(sessionId: String): Result<List<SessionMessage>> = try {
         val connection = container.connectionStore.activeProfile() ?: return Result.failure(
             IllegalStateException("No active connection"),
         )
@@ -93,7 +123,11 @@ object CarSessionsRepository {
             id = sessionId,
             profile = connection.managementProfile,
         )
-        response.messages.filter { !it.content.isNullOrBlank() }
+        Result.success(response.messages.filter { !it.content.isNullOrBlank() })
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Throwable) {
+        Result.failure(failure)
     }
 
     /**
@@ -101,63 +135,96 @@ object CarSessionsRepository {
      * like the notification ReplyWorker does.
      */
     suspend fun sendText(sessionId: String, text: String): Result<Unit> =
-        runCatching { withTimeout(20_000) { ptySend(resumeSessionId = sessionId, text = text) } }
+        try {
+            withTimeout(PROMPT_TIMEOUT_MS) {
+                ptySend(
+                    resumeSessionId = sessionId,
+                    text = text,
+                    deliveryId = UUID.randomUUID().toString(),
+                )
+            }
+            Result.success(Unit)
+        } catch (timeout: TimeoutCancellationException) {
+            Result.failure(timeout)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            Result.failure(failure)
+        }
 
     /**
      * Create a brand-new agent session and send the first prompt.
      * Returns the new session id (or null if the handshake predates it).
      */
     suspend fun createSession(prompt: String): Result<String> =
-        runCatching { withTimeout(20_000) { ptySend(resumeSessionId = null, text = prompt) } }
-
-    /**
-     * Opens a PTY, waits for the TUI banner, sends the text, closes the socket.
-     * The keep-alive registry (attach token) keeps the TUI process running after
-     * the socket closes, so the agent's run completes server-side; the registry
-     * reaper closes the PTY after its TTL.
-     */
-    private suspend fun ptySend(resumeSessionId: String?, text: String): String {
-        val attachToken = UUID.randomUUID().toString()
-        val (session, flow) = container.chatRepository.openPty(
-            resumeSessionId = resumeSessionId,
-            attachToken = attachToken,
-        )
-        var sessionKey = ""
-        var sent = false
         try {
-            flow.collect { event ->
-                when (event) {
-                    is PtyEvent.Connected -> sessionKey = event.sessionKey
-                    is PtyEvent.Output -> {
-                        if (!sent && sessionKey.isNotEmpty()) {
-                            sent = true
-                            // The Hermes TUI is a fresh process per PTY; the first
-                            // output frame is its banner, meaning it has mounted
-                            // and is reading stdin. Sending any earlier races its
-                            // startup and the prompt is silently dropped. Brief
-                            // settle beat after the first render, then send.
-                            delay(350)
-                            session.sendText(text)
-                            session.close()
-                            throw PtySendDone
-                        }
-                    }
-                    is PtyEvent.Failure -> throw IllegalStateException(event.message)
-                    is PtyEvent.Closed ->
-                        if (sessionKey.isEmpty()) throw IllegalStateException("Chat closed before send (${event.code})")
-                    else -> Unit
-                }
-            }
-        } catch (_: PtySendDone) {
-            // Sent; fall through to return. MUST precede the CancellationException
-            // catch — PtySendDone IS a CancellationException, so the generic
-            // catch would swallow it and report a null-message failure.
+            Result.success(withTimeout(PROMPT_TIMEOUT_MS) {
+                ptySend(
+                    resumeSessionId = null,
+                    text = prompt,
+                    deliveryId = UUID.randomUUID().toString(),
+                )
+            })
+        } catch (timeout: TimeoutCancellationException) {
+            Result.failure(timeout)
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (failure: Throwable) {
+            Result.failure(failure)
+        }
+
+    /**
+     * Opens a PTY and uses the first-output plus prompt-accepted acknowledgement
+     * handshake. The deterministic delivery id is reused if a caller retries
+     * after a frame was rejected, allowing the server-side attach registry to
+     * reconnect to the same short-lived TUI.
+     */
+    private suspend fun ptySend(
+        resumeSessionId: String?,
+        text: String,
+        deliveryId: String,
+    ): String {
+        val connection = container.connectionStore.activeProfile()
+            ?: throw IllegalStateException("No active connection")
+        val socketClient = container.clientFactory.webSocketClient().fixedConnectionClient(connection)
+        val ptyAuth = container.wsAuthHelper.authQueryParam()
+        val eventAuth = container.wsAuthHelper.authQueryParam()
+        val channel = "car:$deliveryId"
+        val attachToken = "talaria-car:$deliveryId"
+        val session = PtyWebSocketSession(
+            client = socketClient,
+            connectionStore = container.connectionStore,
+            wsAuth = container.wsAuthHelper,
+            fixedProfile = connection,
+            fixedAuthQuery = ptyAuth,
+        )
+        val eventClient = HermesEventClient(
+            clientFactory = container.clientFactory,
+            connectionStore = container.connectionStore,
+            wsAuth = container.wsAuthHelper,
+            profileName = connection.managementProfile,
+            fixedProfile = connection,
+            fixedAuthQuery = eventAuth,
+            fixedWebSocketClient = socketClient,
+        )
+        try {
+            val flow = session.connect(
+                resumeSessionId = resumeSessionId,
+                channelId = channel,
+                attachToken = attachToken,
+            )
+            eventClient.start(channel, includeRpc = false)
+            eventClient.awaitEventsConnected()
+            return PtyPromptDelivery.deliver(
+                session = session,
+                ptyEvents = flow,
+                text = text,
+                eventClient = eventClient,
+            ).sessionKey
         } finally {
+            eventClient.dispose()
             session.close()
         }
-        return sessionKey
     }
 
     private fun decodeSessions(raw: kotlinx.serialization.json.JsonElement): List<SessionSummary> {
@@ -176,5 +243,7 @@ object CarSessionsRepository {
         return listOf("cron", "automat", "webhook").any { src.contains(it) }
     }
 
-    private object PtySendDone : kotlinx.coroutines.CancellationException()
+    private const val MAX_MESSAGE_REQUESTS = 6
+    private const val CONVERSATIONS_TIMEOUT_MS = 10_000L
+    private const val PROMPT_TIMEOUT_MS = 20_000L
 }

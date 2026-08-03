@@ -18,6 +18,7 @@ package com.hermesgadget.talaria.core.network
 
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
 import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
+import com.hermesgadget.talaria.domain.model.ConnectionProfile
 import com.hermesgadget.talaria.core.util.AnsiStripper
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -37,6 +38,22 @@ sealed class PtyEvent {
     data class Failure(val message: String) : PtyEvent()
 }
 
+/** The individual WebSocket frames accepted by a prompt send. */
+data class PtySendReceipt(
+    val bodyAccepted: Boolean = false,
+    val enterAccepted: Boolean = false,
+    val rawAccepted: Boolean = false,
+) {
+    val accepted: Boolean
+        get() = bodyAccepted || enterAccepted || rawAccepted
+}
+
+/** A checked send failed after zero or more frames were accepted by OkHttp. */
+class PtySendException(
+    message: String,
+    val receipt: PtySendReceipt,
+) : IllegalStateException(message)
+
 /**
  * Mobile chat transport over Hermes `/api/pty` WebSocket.
  *
@@ -47,9 +64,24 @@ class PtyWebSocketSession(
     private val client: OkHttpClient,
     private val connectionStore: SecureConnectionStore,
     private val wsAuth: WsAuthHelper,
+    /** Optional immutable profile for short-lived/background transports. */
+    private val fixedProfile: ConnectionProfile? = null,
+    /** Optional auth value captured for the same immutable transport snapshot. */
+    private val fixedAuthQuery: String? = null,
 ) {
+    private enum class SocketState {
+        DISCONNECTED,
+        CONNECTING,
+        CONNECTED,
+        CLOSING,
+    }
+
     @Volatile
     private var socket: WebSocket? = null
+
+    @Volatile
+    private var state = SocketState.DISCONNECTED
+
     var channel: String = UUID.randomUUID().toString()
         private set
 
@@ -61,8 +93,10 @@ class PtyWebSocketSession(
         attachToken: String? = null,
     ): Flow<PtyEvent> = callbackFlow {
         this@PtyWebSocketSession.channel = channelId
-        val profile = connectionStore.activeProfile()
+        state = SocketState.CONNECTING
+        val profile = fixedProfile ?: connectionStore.activeProfile()
             ?: run {
+                state = SocketState.DISCONNECTED
                 trySend(PtyEvent.Failure("No active connection profile"))
                 close()
                 return@callbackFlow
@@ -70,7 +104,7 @@ class PtyWebSocketSession(
         // callbackFlow's builder is already suspendable. Waiting directly keeps
         // token discovery and ticket minting off the main thread instead of
         // freezing Compose during a remote HTTP round trip.
-        val auth = wsAuth.authQueryParam()
+        val auth = fixedAuthQuery ?: wsAuth.authQueryParam()
         val url = HermesWebSocketUrlBuilder.build(
             baseUrl = profile.baseUrl,
             endpoint = "api/pty",
@@ -84,32 +118,38 @@ class PtyWebSocketSession(
                 "rows" to rows.toString(),
             ),
         ) ?: run {
+            state = SocketState.DISCONNECTED
             trySend(PtyEvent.Failure("Invalid dashboard URL"))
             close()
             return@callbackFlow
         }
         val key = UUID.randomUUID().toString()
+        val ansi = AnsiStripper.Stream()
         val request = Request.Builder().url(url).build()
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 socket = webSocket
+                state = SocketState.CONNECTED
                 trySend(PtyEvent.Connected(key, channelId))
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                trySend(PtyEvent.Output(AnsiStripper.strip(text), text))
+                trySend(PtyEvent.Output(ansi.append(text), text))
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
                 val text = bytes.utf8()
-                trySend(PtyEvent.Output(AnsiStripper.strip(text), text))
+                trySend(PtyEvent.Output(ansi.append(text), text))
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                state = SocketState.CLOSING
                 webSocket.close(code, reason)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                state = SocketState.DISCONNECTED
+                if (socket === webSocket) socket = null
                 val hint = WsAuthHelper.explainCloseCode(code)
                 if (hint != null) {
                     trySend(PtyEvent.Failure(hint))
@@ -120,13 +160,84 @@ class PtyWebSocketSession(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                state = SocketState.DISCONNECTED
+                if (socket === webSocket) socket = null
                 trySend(PtyEvent.Failure(t.message ?: "WebSocket failure"))
                 close()
             }
         }
         val ws = client.newWebSocket(request, listener)
         socket = ws
-        awaitClose { ws.close(1000, "client close") }
+        awaitClose {
+            state = SocketState.DISCONNECTED
+            if (socket === ws) socket = null
+            ws.close(1000, "client close")
+        }
+    }
+
+    /**
+     * Send the body and Enter frames, reporting whether each was accepted by
+     * OkHttp. A true return from [WebSocket.send] means the frame entered the
+     * WebSocket writer queue; it is the strongest delivery signal available on
+     * this raw PTY protocol and is deliberately followed by a TUI ack in the
+     * background prompt paths.
+     */
+    fun sendTextChecked(text: String): Result<PtySendReceipt> {
+        val ws = connectedSocket() ?: return Result.failure(
+            PtySendException(
+                "PTY is not connected",
+                PtySendReceipt(),
+            ),
+        )
+        val body = text.trimEnd('\n', '\r')
+        var bodyAccepted = false
+        if (body.isNotEmpty()) {
+            val accepted = runCatching { ws.send(body) }.getOrDefault(false)
+            if (!accepted) {
+                return Result.failure(
+                    PtySendException(
+                        "PTY rejected the prompt body frame",
+                        PtySendReceipt(),
+                    ),
+                )
+            }
+            bodyAccepted = true
+        }
+
+        val enterAccepted = runCatching { ws.send("\r") }.getOrDefault(false)
+        if (!enterAccepted) {
+            return Result.failure(
+                PtySendException(
+                    "PTY rejected the Enter frame",
+                    PtySendReceipt(bodyAccepted = bodyAccepted),
+                ),
+            )
+        }
+        return Result.success(
+            PtySendReceipt(
+                bodyAccepted = bodyAccepted,
+                enterAccepted = true,
+            ),
+        )
+    }
+
+    /** Send one raw PTY frame and report whether OkHttp accepted it. */
+    fun sendRawChecked(text: String): Result<PtySendReceipt> {
+        if (text.isEmpty()) {
+            return Result.failure(
+                PtySendException("PTY raw frame is empty", PtySendReceipt()),
+            )
+        }
+        val ws = connectedSocket() ?: return Result.failure(
+            PtySendException("PTY is not connected", PtySendReceipt()),
+        )
+        val accepted = runCatching { ws.send(text) }.getOrDefault(false)
+        if (!accepted) {
+            return Result.failure(
+                PtySendException("PTY rejected the raw frame", PtySendReceipt()),
+            )
+        }
+        return Result.success(PtySendReceipt(rawAccepted = true))
     }
 
     fun sendText(text: String) {
@@ -136,31 +247,49 @@ class PtyWebSocketSession(
         // input and nothing is submitted). A standalone \r frame reads as an
         // Enter keypress, which is what actually submits the line — matching how
         // xterm.js delivers a paste followed by the Enter key on the web dashboard.
-        val body = text.trimEnd('\n', '\r')
-        if (body.isNotEmpty()) socket?.send(body)
-        socket?.send("\r")
+        sendTextChecked(text)
     }
 
     fun sendRaw(text: String) {
-        socket?.send(text)
+        sendRawChecked(text)
     }
 
     private var lastResize: Pair<Int, Int>? = null
 
     fun resize(cols: Int, rows: Int) {
+        resizeChecked(cols, rows)
+    }
+
+    fun resizeChecked(cols: Int, rows: Int): Result<PtySendReceipt> {
         // Hermes' PTY writer consumes ONLY the `\x1b[RESIZE:cols;rows]` escape
         // (see web_server.py `_RESIZE_RE`); any other frame — e.g. a JSON
         // `{"type":"resize"}` — is written straight to the PTY and echoed back
         // as garbage, flooding the transcript and corrupting typed input. Send
         // just the escape, and only when the dimensions actually change so we
         // don't spam the socket on every IME/layout tick.
-        if (lastResize == cols to rows) return
-        lastResize = cols to rows
-        socket?.send("\u001b[RESIZE:$cols;$rows]")
+        if (state != SocketState.CONNECTED) {
+            return Result.failure(PtySendException("PTY is not connected", PtySendReceipt()))
+        }
+        if (lastResize == cols to rows) {
+            return Result.success(PtySendReceipt(rawAccepted = true))
+        }
+        val result = sendRawChecked("\u001b[RESIZE:$cols;$rows]")
+        if (result.isSuccess) lastResize = cols to rows
+        return result
     }
 
     fun close() {
+        state = SocketState.CLOSING
         socket?.close(1000, "done")
         socket = null
+        state = SocketState.DISCONNECTED
+    }
+
+    private fun connectedSocket(): WebSocket? =
+        socket?.takeIf { state == SocketState.CONNECTED }
+
+    companion object {
+        /** Convenience for callers that need a fixed, profile-bound WS client. */
+        fun fixedClient(client: OkHttpClient): OkHttpClient = client.fixedConnectionClient()
     }
 }
