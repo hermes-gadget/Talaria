@@ -33,17 +33,21 @@ class TalariaCarService : CarAppService() {
 
     /**
      * AndroidX ships the package/signature pairs for the supported Android
-     * Auto and Automotive Templates Hosts in its sample allowlist. Keep the
-     * permissive validator available only for local development and testing.
+     * Auto and Automotive Templates Hosts in its sample allowlist. Use it in
+     * debug builds so the AAOS emulator host is accepted.
+     *
+     * Release builds must accept every host: this app is distributed by
+     * sideload (no Play Store), so Google's server-side host validation
+     * never runs. The AndroidX sample allowlist only covers the three
+     * AOSP/Play gearhead signatures — OEM-signed Android Auto variants
+     * (preinstalled on many phones, including common CUPRA/SEAT
+     * setups) fail validation and Android Auto then silently drops the
+     * app from its launcher ("not available at all"). For a personal
+     * sideloaded app the host-identity risk of ALLOW_ALL is acceptable:
+     * a hostile host could drive the session UI, but session data is
+     * already on the device.
      */
-    override fun createHostValidator(): HostValidator =
-        if (BuildConfig.DEBUG) {
-            HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
-        } else {
-            HostValidator.Builder(applicationContext)
-                .addAllowedHosts(androidx.car.app.R.array.hosts_allowlist_sample)
-                .build()
-        }
+    override fun createHostValidator(): HostValidator = HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
 
     override fun onCreateSession(): Session = object : Session() {
         override fun onCreateScreen(intent: Intent) = SessionListScreen(carContext)
