@@ -101,6 +101,22 @@ object CleartextPolicy {
         if (isAutoApprovedLocalHost(normalized)) {
             return true
         }
+        // IPv6 literals only — DNS names never qualify. ULA fc00::/7
+        // (Tailscale/self-hosted mesh) and link-local fe80::/10 computed
+        // explicitly (JDK isSiteLocalAddress covers only legacy fec0::/10).
+        // getByName on a literal does not perform DNS resolution.
+        if (normalized.contains(':')) {
+            return runCatching {
+                val address = java.net.InetAddress.getByName(normalized) as? java.net.Inet6Address
+                    ?: return@runCatching false
+                val bytes = address.address
+                val first = bytes[0].toInt() and 0xff
+                val second = bytes[1].toInt() and 0xff
+                val ula = (first and 0xfe) == 0xfc // fc00::/7
+                val linkLocal = first == 0xfe && (second and 0xc0) == 0x80 // fe80::/10
+                ula || linkLocal
+            }.getOrDefault(false)
+        }
         val octets = normalized.split('.')
             .takeIf { it.size == 4 }
             ?.map { it.toIntOrNull() }
@@ -114,7 +130,8 @@ object CleartextPolicy {
             a == 10 ||
             (a == 172 && b in 16..31) ||
             (a == 192 && b == 168) ||
-            (a == 169 && b == 254) // Android emulator / link-local development.
+            (a == 169 && b == 254) || // Android emulator / link-local development.
+            (a == 100 && b in 64..127) // CGNAT 100.64.0.0/10 — Tailscale.
     }
 
     /** Hosts safe to allow for a new profile without an explicit confirmation. */

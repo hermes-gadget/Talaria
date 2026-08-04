@@ -192,7 +192,17 @@ class SecureConnectionStore(context: Context) {
 
     private fun loadProfiles(): List<ConnectionProfile> {
         val raw = prefs.getString(KEY_PROFILES, null) ?: return emptyList()
-        return runCatching { json.decodeFromString<List<ConnectionProfile>>(raw) }.getOrDefault(emptyList())
+        val profiles = runCatching { json.decodeFromString<List<ConnectionProfile>>(raw) }
+            .getOrDefault(emptyList())
+        // Legacy records predate the cleartext-consent flag. Record implicit
+        // consent once so behaviour is unchanged for existing private/loopback
+        // profiles; new saves now require an explicit user decision.
+        if (profiles.any { it.cleartextConsentRecorded == null }) {
+            val migrated = profiles.map { it.copy(cleartextConsentRecorded = it.cleartextConsentRecorded ?: true) }
+            prefs.edit().putString(KEY_PROFILES, json.encodeToString(migrated)).apply()
+            return migrated
+        }
+        return profiles
     }
 
     private fun readSecrets(id: String): ConnectionSecrets {

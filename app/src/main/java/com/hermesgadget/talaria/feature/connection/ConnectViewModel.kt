@@ -22,9 +22,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.repo.ConnectionRepository
+import com.hermesgadget.talaria.core.network.CleartextPolicy
 import com.hermesgadget.talaria.core.network.WsAuthHelper
 import com.hermesgadget.talaria.core.network.NativeOidcLogin
 import com.hermesgadget.talaria.core.network.NativeOidcProvider
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import com.hermesgadget.talaria.domain.model.AuthMode
 import com.hermesgadget.talaria.domain.model.CredentialPoolEntry
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
@@ -36,6 +38,11 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+
+data class CleartextConsentRequest(
+    val host: String,
+    val baseUrl: String,
+)
 
 data class ConnectUiState(
     val name: String = "Home Hermes",
@@ -65,6 +72,10 @@ data class ConnectUiState(
     val customEndpointValidation: ProviderValidationUi? = null,
     val providerOAuthSession: ProviderOAuthSession? = null,
     val providerConfirmation: ProviderConfirmation? = null,
+    /** Pending explicit cleartext consent for a private/LAN http destination. */
+    val cleartextConsentRequest: CleartextConsentRequest? = null,
+    /** Set by confirmCleartextConsent(); passed through to the next save. */
+    val cleartextConsentApproved: Boolean = false,
 )
 
 class ConnectViewModel(
@@ -126,6 +137,7 @@ class ConnectViewModel(
     fun saveConnectionAndLoadProviders() {
         val snapshot = _ui.value
         viewModelScope.launch {
+            if (maybeRequestCleartextConsent(snapshot)) return@launch
             _ui.value = snapshot.copy(
                 providerSection = ProviderSectionState.Loading,
                 providerBusy = ProviderBusyAction.LOAD,
@@ -486,7 +498,45 @@ class ConnectViewModel(
         managementProfile = s.managementProfile,
         pinSha256 = s.pinSha256.ifBlank { null },
         existingId = draftProfileId,
+        allowCleartext = if (s.cleartextConsentApproved) true else null,
+        cleartextConsentRecorded = if (s.cleartextConsentApproved) true else null,
     )
+
+    /**
+     * Raises an explicit consent prompt when the draft targets a private/LAN
+     * destination over plain http and consent has not been recorded for this
+     * exact URL. Returns true when the caller must abort the save (prompt shown).
+     */
+    private fun maybeRequestCleartextConsent(s: ConnectUiState): Boolean {
+        if (s.cleartextConsentApproved || s.cleartextConsentRequest != null) return false
+        val url = s.baseUrl.trim().trimEnd('/').toHttpUrlOrNull() ?: return false
+        if (url.isHttps || CleartextPolicy.isAutoApprovedLocalHost(url.host)) return false
+        if (!CleartextPolicy.isVerifiedDestination(url.host)) return false
+        val normalized = url.toString().removeSuffix("/")
+        val existing = draftProfileId?.let { id ->
+            TalariaApp.instance.container.connectionStore.snapshotFor(id)?.profile
+        }
+        val alreadyConsented = existing
+            ?.takeIf { it.baseUrl.trim().trimEnd('/') == normalized }
+            ?.cleartextConsentRecorded == true
+        if (alreadyConsented) return false
+        _ui.value = _ui.value.copy(
+            cleartextConsentRequest = CleartextConsentRequest(url.host, s.baseUrl),
+        )
+        return true
+    }
+
+    fun confirmCleartextConsent() {
+        _ui.value = _ui.value.copy(cleartextConsentApproved = true, cleartextConsentRequest = null)
+    }
+
+    fun declineCleartextConsent() {
+        _ui.value = _ui.value.copy(
+            cleartextConsentApproved = false,
+            cleartextConsentRequest = null,
+            error = "Cleartext to this host was not confirmed — use https:// or a different destination",
+        )
+    }
 
     private suspend fun loadProviderData(): ProviderOnboardingContent {
         val api = providerApi()
@@ -636,6 +686,7 @@ class ConnectViewModel(
     fun saveAndTest(onSuccess: () -> Unit) {
         val s = _ui.value
         viewModelScope.launch {
+            if (maybeRequestCleartextConsent(s)) return@launch
             _ui.value = s.copy(testing = true, error = null)
             try {
                 val profile = repo.save(
@@ -650,6 +701,8 @@ class ConnectViewModel(
                     managementProfile = s.managementProfile,
                     pinSha256 = s.pinSha256.ifBlank { null },
                     existingId = draftProfileId,
+                    allowCleartext = if (s.cleartextConsentApproved) true else null,
+                    cleartextConsentRecorded = if (s.cleartextConsentApproved) true else null,
                 )
                 draftProfileId = profile.id
                 repo.setActive(profile.id)
@@ -696,6 +749,7 @@ class ConnectViewModel(
     fun saveAndContinue(onSuccess: () -> Unit) {
         val s = _ui.value
         viewModelScope.launch {
+            if (maybeRequestCleartextConsent(s)) return@launch
             _ui.value = s.copy(testing = true, error = null)
             try {
                 val profile = repo.save(
@@ -710,6 +764,8 @@ class ConnectViewModel(
                     managementProfile = s.managementProfile,
                     pinSha256 = s.pinSha256.ifBlank { null },
                     existingId = draftProfileId,
+                    allowCleartext = if (s.cleartextConsentApproved) true else null,
+                    cleartextConsentRecorded = if (s.cleartextConsentApproved) true else null,
                 )
                 draftProfileId = profile.id
                 repo.setActive(profile.id)

@@ -56,6 +56,7 @@ class ConnectionRepository(
         pinSha256: String?,
         existingId: String? = null,
         allowCleartext: Boolean? = null,
+        cleartextConsentRecorded: Boolean? = null,
         keepSessionToken: Boolean = true,
         keepPassword: Boolean = true,
         keepBearerToken: Boolean = true,
@@ -99,6 +100,14 @@ class ConnectionRepository(
                 ?: previousProfile?.takeIf { sameBase }?.allowCleartext
                 ?: CleartextPolicy.isAutoApprovedLocalHost(parsedBase.host)
         }
+        // HTTPS never needs consent. Legacy records (null consent) keep their
+        // implicit approval; a URL change drops consent (sameBase=false -> null -> false).
+        val consentRecorded = when {
+            parsedBase.isHttps -> true
+            cleartextConsentRecorded != null -> cleartextConsentRecorded
+            previousProfile?.takeIf { sameBase } != null -> previousProfile.cleartextConsentRecorded ?: true
+            else -> false
+        }
         require(parsedBase.isHttps || (cleartextAllowed && CleartextPolicy.isVerifiedDestination(parsedBase.host))) {
             "Cleartext is restricted to an explicitly confirmed local/private Hermes destination"
         }
@@ -137,6 +146,7 @@ class ConnectionRepository(
             managementProfile = normalizeManagementProfile(managementProfile),
             pinSha256 = normalizedPin,
             allowCleartext = cleartextAllowed,
+            cleartextConsentRecorded = consentRecorded,
             createdAt = previousProfile?.createdAt ?: System.currentTimeMillis(),
             lastConnectedAt = previousProfile?.lastConnectedAt,
         )

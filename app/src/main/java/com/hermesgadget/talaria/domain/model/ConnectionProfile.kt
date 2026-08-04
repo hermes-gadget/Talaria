@@ -44,6 +44,8 @@ data class ConnectionProfile(
     val managementProfile: String = "",
     val pinSha256: String? = null,
     val allowCleartext: Boolean = true,
+    /** Explicit user consent for cleartext to this host (null = pre-consent era, treated as legacy-approved). */
+    val cleartextConsentRecorded: Boolean? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val lastConnectedAt: Long? = null,
 )

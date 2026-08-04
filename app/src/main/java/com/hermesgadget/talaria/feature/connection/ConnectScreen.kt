@@ -86,6 +86,26 @@ fun ConnectScreen(
         )
     }
 
+    ui.cleartextConsentRequest?.let { request ->
+        AlertDialog(
+            onDismissRequest = vm::declineCleartextConsent,
+            title = { Text("Allow unencrypted connection?") },
+            text = {
+                Text(
+                    "This dashboard uses plain http:// to ${request.host}, a private/local address. " +
+                        "Your Hermes session credentials would be sent without encryption over your network. " +
+                        "Only allow this for a trusted Hermes host on your own LAN or Tailscale mesh.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = vm::confirmCleartextConsent) { Text("Allow") }
+            },
+            dismissButton = {
+                TextButton(onClick = vm::declineCleartextConsent) { Text("Don't allow") }
+            },
+        )
+    }
+
     LaunchedEffect(initialProfile) {
         vm.applyDeepLinkProfile(initialProfile)
     }
