@@ -60,7 +60,7 @@ class AppContainer(context: Context) {
     val connectionRepository = ConnectionRepository(connectionStore, clientFactory, wsAuthHelper)
     val hermesRepository = HermesRepository(clientFactory, database, connectionStore, appContext)
     val chatRepository = ChatRepository(clientFactory, database, connectionStore, wsAuthHelper)
-    val notifier = TalariaNotifier(appContext, settingsStore, connectionStore)
+    val notifier = TalariaNotifier(appContext, settingsStore)
     val agentAlertDispatcher = AgentAlertDispatcher(notifier)
     val speechCoordinator = SpeechCoordinator(appContext, settingsStore)
     val ttsSpeaker = TtsSpeaker(appContext, settingsStore)
