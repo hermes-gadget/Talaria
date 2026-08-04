@@ -2560,7 +2560,12 @@ class ChatViewModel(
     private fun appendAssistant(tabId: String, text: String) {
         if (text.isBlank()) return
         val rt = runtimes[tabId] ?: return
-        rt.assistantBuffer.append(text)
+        // Bound the live answer builder: a runaway PTY stream must not grow the
+        // buffer without limit. Completion reloads the authoritative transcript
+        // from the server, so dropping late deltas only affects live preview.
+        if (rt.assistantBuffer.length < MAX_ANSWER_BUFFER_CHARS) {
+            rt.assistantBuffer.append(text)
+        }
         updateTab(tabId) { tab ->
             tab.copy(
                 assistantStreaming = true,
@@ -2611,7 +2616,10 @@ class ChatViewModel(
                     val rt = runtimes[tabId] ?: return
                     // Buffer final-answer deltas for message.complete fallback,
                     // but do not expose partial output or reasoning in the UI.
-                    rt.sidecarAssistantBuffer.append(event.text)
+                    // Bounded like the main buffer — never grow without limit.
+                    if (rt.sidecarAssistantBuffer.length < MAX_ANSWER_BUFFER_CHARS) {
+                        rt.sidecarAssistantBuffer.append(event.text)
+                    }
                     updateTab(tabId) { it.copy(working = true) }
                 }
             }
@@ -2838,6 +2846,8 @@ class ChatViewModel(
         private const val SESSION_POLL_INTERVAL_MS = 30_000L
         private const val LOCAL_SESSION_DISCOVERY_TIMEOUT_MS = 60_000L
         private const val SERVER_STT_CAPABILITY_TTL_MS = 5 * 60 * 1000L
+        /** Live answer preview cap; authoritative transcript loads from the server on completion. */
+        private const val MAX_ANSWER_BUFFER_CHARS = 256 * 1024
         private val ARGUMENT_HINT = Regex("""\[[^]]+]|<[^>]+>""")
 
         fun factory() = object : ViewModelProvider.Factory {
