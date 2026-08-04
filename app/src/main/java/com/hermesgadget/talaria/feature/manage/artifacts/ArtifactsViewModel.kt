@@ -139,7 +139,7 @@ class ArtifactsViewModel(
     }
 
     init {
-        suspendResult { (shareFileManager ?: defaultShareFileManager).cleanupStaleFiles() }
+        runCatching { (shareFileManager ?: defaultShareFileManager).cleanupStaleFiles() }
         refresh()
     }
 

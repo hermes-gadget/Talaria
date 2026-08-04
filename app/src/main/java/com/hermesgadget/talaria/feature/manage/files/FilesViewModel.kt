@@ -446,7 +446,7 @@ class FilesViewModel(
     fun prepareUpload(uri: Uri, resolver: ContentResolver) {
         val displayName = contentDisplayName(resolver, uri)
             .ifBlank { appString(R.string.files_upload_default_name) }
-        val targetPath = suspendResult { joinManagedPath(_ui.value.path, displayName) }
+        val targetPath = runCatching { joinManagedPath(_ui.value.path, displayName) }
             .getOrDefault(displayName)
         uploadResolver = resolver
         _ui.update {
@@ -697,7 +697,7 @@ class FilesViewModel(
     }
 
     fun createDirectory(name: String) {
-        val target = suspendResult { joinManagedPath(_ui.value.path, name) }.getOrElse {
+        val target = runCatching { joinManagedPath(_ui.value.path, name) }.getOrElse {
             _ui.update { state -> state.copy(actionError = appString(R.string.files_error_create_folder)) }
             return
         }

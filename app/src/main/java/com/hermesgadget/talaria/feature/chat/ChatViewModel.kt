@@ -2552,7 +2552,7 @@ class ChatViewModel(
             else -> null
         }
         return array.orEmpty().mapNotNull {
-            suspendResult { com.hermesgadget.talaria.core.network.JsonConfig.json.decodeFromJsonElement<SessionSummary>(it) }
+            runCatching { com.hermesgadget.talaria.core.network.JsonConfig.json.decodeFromJsonElement<SessionSummary>(it) }
                 .getOrNull()
         }
     }

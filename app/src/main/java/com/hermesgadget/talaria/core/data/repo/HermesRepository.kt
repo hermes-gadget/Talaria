@@ -196,10 +196,10 @@ class HermesRepository(
             is JsonObject -> {
                 val arr = element["sessions"]?.jsonArray ?: element["results"]?.jsonArray
                 val sessions = arr?.mapNotNull {
-                    suspendResult { json.decodeFromJsonElement<SessionSummary>(it) }.getOrNull()
+                    runCatching { json.decodeFromJsonElement<SessionSummary>(it) }.getOrNull()
                 } ?: emptyList()
                 val total = element["total"]?.let {
-                    suspendResult { it.toString().trim('"').toInt() }.getOrNull()
+                    runCatching { it.toString().trim('"').toInt() }.getOrNull()
                 } ?: sessions.size
                 com.hermesgadget.talaria.domain.model.SessionsPage(sessions = sessions, total = total)
             }
@@ -258,7 +258,7 @@ class HermesRepository(
     /** Merge bundled `env_catalog.json` metadata with live `/api/env` set/redacted state. */
     private fun mergeEnvCatalog(live: Map<String, EnvVarInfo>): Map<String, EnvVarInfo> {
         val ctx = appContext ?: return live
-        val catalog = suspendResult {
+        val catalog = runCatching {
             ctx.assets.open("env_catalog.json").bufferedReader().use { it.readText() }
                 .let { json.decodeFromString<EnvCatalogFile>(it) }
         }.getOrNull() ?: return live
