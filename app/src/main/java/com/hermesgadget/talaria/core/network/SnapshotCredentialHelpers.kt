@@ -120,6 +120,10 @@ class SnapshotPasswordSessionManager(
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .addInterceptor(CleartextPolicyInterceptor(snapshot))
+            // Credential bootstrap follows the same per-hop origin and
+            // cleartext checks as the main REST client.
+            .addNetworkInterceptor(SnapshotOriginInterceptor(snapshot))
+            .addNetworkInterceptor(CleartextPolicyInterceptor(snapshot))
             .addInterceptor(EmulatorLoopbackInterceptor())
         profile.pinSha256?.takeIf { it.isNotBlank() }?.let { pin ->
             builder.certificatePinner(CertificatePinnerFactory.forPin(profile.baseUrl, pin))
@@ -157,6 +161,8 @@ class SnapshotOidcTokenRefresher(
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .addInterceptor(CleartextPolicyInterceptor(snapshot))
+            .addNetworkInterceptor(SnapshotOriginInterceptor(snapshot))
+            .addNetworkInterceptor(CleartextPolicyInterceptor(snapshot))
             .addInterceptor(EmulatorLoopbackInterceptor())
         snapshot.pinSha256?.takeIf { it.isNotBlank() }?.let {
             builder.certificatePinner(CertificatePinnerFactory.forPin(snapshot.baseUrl, it))

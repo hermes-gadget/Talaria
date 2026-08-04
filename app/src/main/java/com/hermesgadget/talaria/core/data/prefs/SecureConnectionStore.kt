@@ -91,15 +91,17 @@ class SecureConnectionStore(context: Context) {
     }
 
     fun upsert(profile: ConnectionProfile, secrets: ConnectionSecrets? = null) = synchronized(mutationLock) {
+        val persistedProfile = CleartextConsentMigration.normalizeCurrent(profile)
         val list = _profiles.value.toMutableList()
-        val idx = list.indexOfFirst { it.id == profile.id }
-        if (idx >= 0) list[idx] = profile else list.add(profile)
-        val nextActiveId = _activeId.value ?: profile.id
+        val idx = list.indexOfFirst { it.id == persistedProfile.id }
+        if (idx >= 0) list[idx] = persistedProfile else list.add(persistedProfile)
+        val nextActiveId = _activeId.value ?: persistedProfile.id
         val editor = prefs.edit()
             .putString(KEY_PROFILES, json.encodeToString(list))
             .putString(KEY_ACTIVE, nextActiveId)
+            .putInt(KEY_CLEARTEXT_CONSENT_VERSION, CleartextConsentMigration.CURRENT_VERSION)
         if (secrets != null) {
-            editor.putString(secretKey(profile.id), json.encodeToString(secrets))
+            editor.putString(secretKey(persistedProfile.id), json.encodeToString(secrets))
         }
         check(editor.commit()) { "Could not persist the Hermes connection" }
         _profiles.value = list
@@ -168,6 +170,20 @@ class SecureConnectionStore(context: Context) {
         )
     }
 
+    /** Atomically revoke cleartext consent and invalidate the compatibility bit. */
+    fun revokeCleartextConsent(id: String): Boolean = synchronized(mutationLock) {
+        val profile = _profiles.value.find { it.id == id } ?: return false
+        upsert(
+            profile.copy(
+                allowCleartext = false,
+                cleartextConsentRecorded = false,
+                cleartextConsentOrigin = null,
+            ),
+            readSecrets(id),
+        )
+        true
+    }
+
     /** Persist a refresh result only if the captured profile and credentials are still current. */
     fun updateOidcTokensIfSnapshot(
         snapshot: ConnectionSnapshot,
@@ -213,16 +229,18 @@ class SecureConnectionStore(context: Context) {
     private fun loadProfiles(): List<ConnectionProfile> {
         val raw = prefs.getString(KEY_PROFILES, null) ?: return emptyList()
         val profiles = runCatching { json.decodeFromString<List<ConnectionProfile>>(raw) }
-            .getOrDefault(emptyList())
-        // Legacy records predate the cleartext-consent flag. Record implicit
-        // consent once so behaviour is unchanged for existing private/loopback
-        // profiles; new saves now require an explicit user decision.
-        if (profiles.any { it.cleartextConsentRecorded == null }) {
-            val migrated = profiles.map { it.copy(cleartextConsentRecorded = it.cleartextConsentRecorded ?: true) }
-            prefs.edit().putString(KEY_PROFILES, json.encodeToString(migrated)).apply()
-            return migrated
+            .getOrElse { return emptyList() }
+        val persistedVersion = prefs.getInt(KEY_CLEARTEXT_CONSENT_VERSION, 0)
+        val migrated = CleartextConsentMigration.migrate(profiles, persistedVersion)
+        if (persistedVersion != CleartextConsentMigration.CURRENT_VERSION || migrated != profiles) {
+            check(
+                prefs.edit()
+                    .putString(KEY_PROFILES, json.encodeToString(migrated))
+                    .putInt(KEY_CLEARTEXT_CONSENT_VERSION, CleartextConsentMigration.CURRENT_VERSION)
+                    .commit(),
+            ) { "Could not migrate the Hermes connection consent records" }
         }
-        return profiles
+        return migrated
     }
 
     private fun readSecrets(id: String): ConnectionSecrets {
@@ -236,5 +254,6 @@ class SecureConnectionStore(context: Context) {
     companion object {
         private const val KEY_PROFILES = "profiles_json"
         private const val KEY_ACTIVE = "active_id"
+        private const val KEY_CLEARTEXT_CONSENT_VERSION = "cleartext_consent_schema_version"
     }
 }

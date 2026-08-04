@@ -23,6 +23,7 @@ import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.repo.ConnectionRepository
 import com.hermesgadget.talaria.core.network.CleartextPolicy
+import com.hermesgadget.talaria.core.network.ConnectionOrigin
 import com.hermesgadget.talaria.core.network.WsAuthHelper
 import com.hermesgadget.talaria.core.network.NativeOidcLogin
 import com.hermesgadget.talaria.core.network.NativeOidcProvider
@@ -43,6 +44,7 @@ import kotlinx.serialization.json.put
 data class CleartextConsentRequest(
     val host: String,
     val baseUrl: String,
+    val origin: String,
 )
 
 data class ConnectUiState(
@@ -77,6 +79,8 @@ data class ConnectUiState(
     val cleartextConsentRequest: CleartextConsentRequest? = null,
     /** Set by confirmCleartextConsent(); passed through to the next save. */
     val cleartextConsentApproved: Boolean = false,
+    /** Exact normalized origin approved by the user in this draft. */
+    val cleartextConsentOrigin: String? = null,
 )
 
 class ConnectViewModel(
@@ -90,7 +94,19 @@ class ConnectViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun update(transform: (ConnectUiState) -> ConnectUiState) {
-        _ui.value = transform(_ui.value)
+        val before = _ui.value
+        val next = transform(before)
+        val originChanged = before.baseUrl != next.baseUrl &&
+            ConnectionOrigin.normalize(before.baseUrl) != ConnectionOrigin.normalize(next.baseUrl)
+        _ui.value = if (originChanged) {
+            next.copy(
+                cleartextConsentApproved = false,
+                cleartextConsentOrigin = null,
+                cleartextConsentRequest = null,
+            )
+        } else {
+            next
+        }
     }
 
     fun updateProviderDraft(transform: (ProviderDraft) -> ProviderDraft) {
@@ -499,8 +515,9 @@ class ConnectViewModel(
         managementProfile = s.managementProfile,
         pinSha256 = s.pinSha256.ifBlank { null },
         existingId = draftProfileId,
-        allowCleartext = if (s.cleartextConsentApproved) true else null,
-        cleartextConsentRecorded = if (s.cleartextConsentApproved) true else null,
+        allowCleartext = if (hasConsentForCurrentOrigin(s)) true else null,
+        cleartextConsentRecorded = if (hasConsentForCurrentOrigin(s)) true else null,
+        cleartextConsentOrigin = s.cleartextConsentOrigin,
     )
 
     /**
@@ -509,34 +526,51 @@ class ConnectViewModel(
      * exact URL. Returns true when the caller must abort the save (prompt shown).
      */
     private fun maybeRequestCleartextConsent(s: ConnectUiState): Boolean {
-        if (s.cleartextConsentApproved || s.cleartextConsentRequest != null) return false
+        if (s.cleartextConsentRequest != null) return true
         val url = s.baseUrl.trim().trimEnd('/').toHttpUrlOrNull() ?: return false
-        if (url.isHttps || CleartextPolicy.isAutoApprovedLocalHost(url.host)) return false
+        if (url.isHttps) return false
         if (!CleartextPolicy.isVerifiedDestination(url.host)) return false
-        val normalized = url.toString().removeSuffix("/")
+        val origin = ConnectionOrigin.normalize(url)
+        if (s.cleartextConsentApproved && s.cleartextConsentOrigin == origin) return false
         val existing = draftProfileId?.let { id ->
             TalariaApp.instance.container.connectionStore.snapshotFor(id)?.profile
         }
         val alreadyConsented = existing
-            ?.takeIf { it.baseUrl.trim().trimEnd('/') == normalized }
-            ?.cleartextConsentRecorded == true
-        if (alreadyConsented) return false
+            ?.let {
+                it.cleartextConsentRecorded == true && it.cleartextConsentOrigin == origin
+            }
+        if (alreadyConsented == true) return false
         _ui.value = _ui.value.copy(
-            cleartextConsentRequest = CleartextConsentRequest(url.host, s.baseUrl),
+            cleartextConsentRequest = CleartextConsentRequest(url.host, s.baseUrl, origin),
         )
         return true
     }
 
     fun confirmCleartextConsent() {
-        _ui.value = _ui.value.copy(cleartextConsentApproved = true, cleartextConsentRequest = null)
+        val origin = ConnectionOrigin.normalize(_ui.value.baseUrl)
+        if (origin == null) {
+            declineCleartextConsent()
+            return
+        }
+        _ui.value = _ui.value.copy(
+            cleartextConsentApproved = true,
+            cleartextConsentOrigin = origin,
+            cleartextConsentRequest = null,
+        )
     }
 
     fun declineCleartextConsent() {
         _ui.value = _ui.value.copy(
             cleartextConsentApproved = false,
+            cleartextConsentOrigin = null,
             cleartextConsentRequest = null,
             error = "Cleartext to this host was not confirmed — use https:// or a different destination",
         )
+    }
+
+    private fun hasConsentForCurrentOrigin(s: ConnectUiState): Boolean {
+        val origin = ConnectionOrigin.normalize(s.baseUrl) ?: return false
+        return s.cleartextConsentApproved && s.cleartextConsentOrigin == origin
     }
 
     private suspend fun loadProviderData(): ProviderOnboardingContent {
@@ -690,21 +724,7 @@ class ConnectViewModel(
             if (maybeRequestCleartextConsent(s)) return@launch
             _ui.value = s.copy(testing = true, error = null)
             try {
-                val profile = repo.save(
-                    name = s.name,
-                    baseUrl = s.baseUrl,
-                    authMode = s.authMode,
-                    username = s.username.ifBlank { null },
-                    authProvider = s.passwordProvider,
-                    sessionToken = s.sessionToken.ifBlank { null },
-                    password = s.password.ifBlank { null },
-                    bearerToken = s.bearerToken.ifBlank { null },
-                    managementProfile = s.managementProfile,
-                    pinSha256 = s.pinSha256.ifBlank { null },
-                    existingId = draftProfileId,
-                    allowCleartext = if (s.cleartextConsentApproved) true else null,
-                    cleartextConsentRecorded = if (s.cleartextConsentApproved) true else null,
-                )
+                val profile = saveConnectionDraft(s)
                 draftProfileId = profile.id
                 repo.setActive(profile.id)
                 val snapshot = TalariaApp.instance.container.clientFactory.snapshotFor(
@@ -733,10 +753,29 @@ class ConnectViewModel(
     fun select(id: String) = repo.setActive(id)
     fun delete(id: String) = repo.delete(id)
 
+    /** Revoke the saved profile's exact-origin approval under the store lock. */
+    fun revokeCleartextConsent(id: String? = draftProfileId) {
+        val target = id ?: repo.active()?.id ?: return
+        viewModelScope.launch {
+            if (!repo.revokeCleartextConsent(target)) return@launch
+            if (target == draftProfileId) {
+                _ui.value = _ui.value.copy(
+                    cleartextConsentApproved = false,
+                    cleartextConsentOrigin = null,
+                    cleartextConsentRequest = null,
+                    statusLine = "HTTP consent revoked · cleartext is blocked until you approve this origin again",
+                )
+            }
+        }
+    }
+
     /** Load public connection fields for editing; blank secret inputs preserve encrypted values. */
     fun edit(profile: ConnectionProfile) {
         draftProfileId = profile.id
         repo.setActive(profile.id)
+        val origin = ConnectionOrigin.normalize(profile.baseUrl)
+        val approved = profile.cleartextConsentRecorded == true &&
+            profile.cleartextConsentOrigin == origin
         _ui.value = ConnectUiState(
             name = profile.name,
             baseUrl = profile.baseUrl,
@@ -746,6 +785,8 @@ class ConnectViewModel(
             managementProfile = profile.managementProfile,
             pinSha256 = profile.pinSha256.orEmpty(),
             oidcProvider = profile.authProvider,
+            cleartextConsentApproved = approved,
+            cleartextConsentOrigin = profile.cleartextConsentOrigin.takeIf { approved },
             statusLine = "Editing ${profile.name} · blank secret fields keep their saved values",
         )
     }
@@ -757,21 +798,7 @@ class ConnectViewModel(
             if (maybeRequestCleartextConsent(s)) return@launch
             _ui.value = s.copy(testing = true, error = null)
             try {
-                val profile = repo.save(
-                    name = s.name,
-                    baseUrl = s.baseUrl,
-                    authMode = s.authMode,
-                    username = s.username.ifBlank { null },
-                    authProvider = s.passwordProvider,
-                    sessionToken = s.sessionToken.ifBlank { null },
-                    password = s.password.ifBlank { null },
-                    bearerToken = s.bearerToken.ifBlank { null },
-                    managementProfile = s.managementProfile,
-                    pinSha256 = s.pinSha256.ifBlank { null },
-                    existingId = draftProfileId,
-                    allowCleartext = if (s.cleartextConsentApproved) true else null,
-                    cleartextConsentRecorded = if (s.cleartextConsentApproved) true else null,
-                )
+                val profile = saveConnectionDraft(s)
                 draftProfileId = profile.id
                 repo.setActive(profile.id)
                 _ui.value = _ui.value.copy(testing = false, statusLine = "Saved · ${profile.baseUrl}")
@@ -786,22 +813,11 @@ class ConnectViewModel(
     fun runConnectionDoctor() {
         val s = _ui.value
         viewModelScope.launch {
+            if (maybeRequestCleartextConsent(s)) return@launch
             _ui.value = s.copy(diagnosing = true, doctorReport = null, error = null)
             val lines = mutableListOf<String>()
             try {
-                val profile = repo.save(
-                    name = s.name,
-                    baseUrl = s.baseUrl,
-                    authMode = s.authMode,
-                    username = s.username.ifBlank { null },
-                    authProvider = s.passwordProvider,
-                    sessionToken = s.sessionToken.ifBlank { null },
-                    password = s.password.ifBlank { null },
-                    bearerToken = s.bearerToken.ifBlank { null },
-                    managementProfile = s.managementProfile,
-                    pinSha256 = s.pinSha256.ifBlank { null },
-                    existingId = draftProfileId,
-                )
+                val profile = saveConnectionDraft(s)
                 draftProfileId = profile.id
                 repo.setActive(profile.id)
                 var snapshot = TalariaApp.instance.container.clientFactory.snapshotFor(
@@ -906,21 +922,10 @@ class ConnectViewModel(
     fun startOidcLogin(openBrowser: (String) -> Unit, onSuccess: () -> Unit) {
         val s = _ui.value
         viewModelScope.launch {
+            if (maybeRequestCleartextConsent(s)) return@launch
             _ui.value = s.copy(oidcSigningIn = true, error = null, statusLine = null)
             try {
-                val profile = repo.save(
-                    name = s.name,
-                    baseUrl = s.baseUrl,
-                    authMode = AuthMode.OIDC_BROWSER,
-                    username = null,
-                    authProvider = s.oidcProvider,
-                    sessionToken = null,
-                    password = null,
-                    bearerToken = null,
-                    managementProfile = s.managementProfile,
-                    pinSha256 = s.pinSha256.ifBlank { null },
-                    existingId = draftProfileId,
-                )
+                val profile = saveConnectionDraft(s.copy(authMode = AuthMode.OIDC_BROWSER))
                 draftProfileId = profile.id
                 repo.setActive(profile.id)
                 val snapshot = TalariaApp.instance.container.clientFactory.snapshotFor(

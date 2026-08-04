@@ -53,9 +53,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.hermesgadget.talaria.core.network.ConnectionOrigin
 import com.hermesgadget.talaria.domain.model.AuthMode
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -92,7 +94,7 @@ fun ConnectScreen(
             title = { Text("Allow unencrypted connection?") },
             text = {
                 Text(
-                    "This dashboard uses plain http:// to ${request.host}, a private/local address. " +
+                    "This dashboard uses plain http:// at ${request.origin}, a private/local address. " +
                         "Your Hermes session credentials would be sent without encryption over your network. " +
                         "Only allow this for a trusted Hermes host on your own LAN or Tailscale mesh.",
                 )
@@ -113,6 +115,8 @@ fun ConnectScreen(
         vm.loadProviderOnboarding()
     }
 
+    val draftUrl = remember(ui.baseUrl) { ui.baseUrl.trim().trimEnd('/').toHttpUrlOrNull() }
+
     ScreenScaffold(
         title = "Talaria",
         subtitle = "Connect to your self-hosted Hermes Agent",
@@ -125,6 +129,20 @@ fun ConnectScreen(
                 "Privacy-respecting mobile client for Hermes. Credentials stay in the Android Keystore.",
                 style = MaterialTheme.typography.bodyMedium,
             )
+            if (draftUrl?.scheme == "http") {
+                Text(
+                    "HTTP — local network traffic is unencrypted",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                if (ui.cleartextConsentApproved &&
+                    ui.cleartextConsentOrigin == draftUrl?.let(ConnectionOrigin::normalize)
+                ) {
+                    TextButton(onClick = { vm.revokeCleartextConsent() }) {
+                        Text("Revoke HTTP consent")
+                    }
+                }
+            }
             OutlinedTextField(
                 value = ui.name,
                 onValueChange = { v -> vm.update { it.copy(name = v) } },
@@ -298,13 +316,21 @@ fun ConnectScreen(
                 Text("Saved connections", style = MaterialTheme.typography.titleLarge)
                 profiles.forEach { p ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        Text(
-                            p.name,
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(p.name, style = MaterialTheme.typography.bodyLarge)
+                            if (p.baseUrl.trim().startsWith("http://", ignoreCase = true)) {
+                                Text(
+                                    "HTTP — local network traffic is unencrypted",
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                        }
                         TextButton(onClick = { vm.edit(p) }) { Text("Edit") }
                         TextButton(onClick = { vm.select(p.id); onConnected() }) { Text("Use") }
+                        if (p.cleartextConsentRecorded == true) {
+                            TextButton(onClick = { vm.revokeCleartextConsent(p.id) }) { Text("Revoke") }
+                        }
                         TextButton(onClick = { deleteProfile = p }) { Text("Delete") }
                     }
                 }
