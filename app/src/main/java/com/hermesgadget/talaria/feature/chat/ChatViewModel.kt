@@ -491,6 +491,17 @@ class ChatViewModel(
     fun reconnectTab(tabId: String) {
         val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return
         if (tab.connected || tab.connecting) return
+        val snapshot = container.clientFactory.snapshot()
+        if (snapshot == null || snapshot.managementProfile != tab.profileName) {
+            updateTab(tabId) {
+                it.copy(
+                    error = "The saved connection changed and the operation was safely canceled.",
+                    connecting = false,
+                    connected = false,
+                )
+            }
+            return
+        }
 
         val old = runtimes.remove(tabId)
         old?.collectJob?.cancel()
@@ -510,16 +521,15 @@ class ChatViewModel(
         val channel = UUID.randomUUID().toString()
         val eventClient = HermesEventClient(
             container.clientFactory,
-            container.connectionStore,
             container.wsAuthHelper,
-            profileName = tab.profileName,
+            fixedSnapshot = snapshot,
         )
         val baselineBeforeOpen = ProfileRegistry.state.value
             .sessionsByProfile[tab.profileName]
             .orEmpty()
             .map { it.id }
             .toSet()
-        val (pty, flow) = chatRepository.openPty(resume, channel, lastCols, lastRows)
+        val (pty, flow) = chatRepository.openPty(snapshot, resume, channel, lastCols, lastRows)
         val rt = SessionRuntime(
             session = pty,
             eventClient = eventClient,
@@ -584,23 +594,26 @@ class ChatViewModel(
 
     /** Open a brand-new concurrent agent in its own tab and focus it. */
     fun newSession(resume: String? = null, titleOverride: String? = null, draft: String = "") {
+        val snapshot = container.clientFactory.snapshot()
+        if (snapshot == null) {
+            return
+        }
         val id = UUID.randomUUID().toString()
         val channel = UUID.randomUUID().toString()
         sessionCounter += 1
         val title = titleOverride ?: "Agent $sessionCounter"
         val eventClient = HermesEventClient(
             container.clientFactory,
-            container.connectionStore,
             container.wsAuthHelper,
-            profileName = profileNameForActiveConnection(),
+            fixedSnapshot = snapshot,
         )
-        val profileName = profileNameForActiveConnection()
+        val profileName = snapshot.managementProfile
         val baselineBeforeOpen = ProfileRegistry.state.value
             .sessionsByProfile[profileName]
             .orEmpty()
             .map { it.id }
             .toSet()
-        val (pty, flow) = chatRepository.openPty(resume, channel, lastCols, lastRows)
+        val (pty, flow) = chatRepository.openPty(snapshot, resume, channel, lastCols, lastRows)
         val rt = SessionRuntime(
             session = pty,
             eventClient = eventClient,
@@ -759,6 +772,9 @@ class ChatViewModel(
     private fun syncActiveSessions(registry: ProfileRegistryState) {
         reconcilePendingLocalCreations(registry)
         val activeProfile = profileNameForActiveConnection()
+        val snapshot = container.clientFactory.snapshot()
+            ?.takeIf { it.managementProfile == activeProfile }
+            ?: return
         val openSessionIds = _ui.value.tabs.mapNotNull { it.resumeSessionId ?: it.liveSessionId }.toSet()
         val autoSources = SessionFilters.AUTOMATION_SOURCES.toSet()
 
@@ -790,11 +806,10 @@ class ChatViewModel(
                     ?: "Agent $sessionCounter"
                 val eventClient = HermesEventClient(
                     container.clientFactory,
-                    container.connectionStore,
                     container.wsAuthHelper,
-                    profileName = profileName,
+                    fixedSnapshot = snapshot,
                 )
-                val (pty, flow) = chatRepository.openPty(s.id, channel, lastCols, lastRows)
+                val (pty, flow) = chatRepository.openPty(snapshot, s.id, channel, lastCols, lastRows)
                 val rt = SessionRuntime(session = pty, eventClient = eventClient)
                 runtimes[id] = rt
                 autoOpenedTabs.add(id)

@@ -22,7 +22,6 @@ import com.hermesgadget.talaria.domain.model.AuthMode
 import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.Response
-import java.io.IOException
 
 /**
  * Attaches Hermes dashboard auth for one immutable connection snapshot.
@@ -37,30 +36,27 @@ class AuthInterceptor(
     private val oidcTokenRefresher: (ConnectionSnapshot) -> String?,
     private val passwordSessionManager: (ConnectionSnapshot, HttpUrl) -> Unit,
 ) : Interceptor {
-    /** Compatibility constructor for callers that have not yet captured a snapshot. */
-    constructor(
-        connectionStore: SecureConnectionStore,
-        oidcTokenRefresher: OidcTokenRefresher,
-        passwordSessionManager: PasswordSessionManager,
-    ) : this(
-        snapshot = connectionStore.activeSnapshot() ?: ConnectionSnapshot.anonymous(),
-        connectionStore = connectionStore,
-        oidcTokenRefresher = { bound -> oidcTokenRefresher.accessToken(bound.profile) },
-        passwordSessionManager = { bound, url -> passwordSessionManager.ensureSession(bound.profile, url) },
-    )
-
     override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
         ensureSnapshotStillStored()
-        val req = chain.request().newBuilder()
+        SnapshotAuthGuard.requireSameOrigin(snapshot, request.url)
+        if (SnapshotAuthGuard.suppressCredentials(request.url.encodedPath)) {
+            return chain.proceed(request)
+        }
+        val req = request.newBuilder()
         when (snapshot.authMode) {
-            AuthMode.SESSION_TOKEN -> snapshot.sessionToken?.takeIf { it.isNotBlank() }?.let {
+            AuthMode.SESSION_TOKEN -> snapshot.sessionToken
+                ?.takeIf { it.isNotBlank() && request.header(SESSION_HEADER) == null }
+                ?.let {
                 req.header(SESSION_HEADER, it)
             }
             AuthMode.BASIC -> {
-                if (!isPasswordBootstrapPath(chain.request().url.encodedPath)) {
-                    passwordSessionManager(snapshot, chain.request().url)
+                if (!isPasswordBootstrapPath(request.url.encodedPath)) {
+                    passwordSessionManager(snapshot, request.url)
                 }
-                snapshot.sessionToken?.takeIf { it.isNotBlank() }?.let {
+                snapshot.sessionToken
+                    ?.takeIf { it.isNotBlank() && request.header(SESSION_HEADER) == null }
+                    ?.let {
                     req.header(SESSION_HEADER, it)
                 }
             }
@@ -68,10 +64,8 @@ class AuthInterceptor(
                 req.header("Authorization", "Bearer $it")
             }
             AuthMode.OIDC_BROWSER -> {
-                if (!chain.request().url.encodedPath.contains("/auth/native/")) {
-                    oidcTokenRefresher(snapshot)?.let {
-                        req.header("Authorization", "Bearer $it")
-                    }
+                oidcTokenRefresher(snapshot)?.let {
+                    req.header("Authorization", "Bearer $it")
                 }
             }
             // NONE is intentionally credential-free. A retained token must not
@@ -83,22 +77,8 @@ class AuthInterceptor(
     }
 
     private fun ensureSnapshotStillStored() {
-        val currentProfile = connectionStore.profileFor(snapshot.connectionId)
-        if (currentProfile == null) {
-            if (snapshot.connectionId == "__anonymous__") return
-            throw IOException("The Hermes connection was deleted")
-        }
-        if (currentProfile.baseUrl != snapshot.profile.baseUrl ||
-            currentProfile.authMode != snapshot.profile.authMode ||
-            currentProfile.username != snapshot.profile.username ||
-            currentProfile.authProvider != snapshot.profile.authProvider ||
-            currentProfile.managementProfile != snapshot.profile.managementProfile ||
-            currentProfile.pinSha256 != snapshot.profile.pinSha256 ||
-            currentProfile.allowCleartext != snapshot.profile.allowCleartext ||
-            connectionStore.secretsFor(snapshot.connectionId) != snapshot.secrets
-        ) {
-            throw IOException("The Hermes connection changed while this request was starting")
-        }
+        if (snapshot.connectionId == "__anonymous__") return
+        SnapshotAuthGuard.requireCurrent(snapshot, connectionStore.snapshotFor(snapshot.connectionId))
     }
 
     companion object {
@@ -109,5 +89,24 @@ class AuthInterceptor(
                 path == "/api/auth/providers" ||
                 path == "/auth/password-login" ||
                 path.startsWith("/auth/native/")
+    }
+}
+
+/** Re-check every redirect/retry before a credential-bearing request reaches the network. */
+internal class SnapshotOriginInterceptor(
+    private val snapshot: ConnectionSnapshot,
+) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        SnapshotAuthGuard.requireSameOrigin(snapshot, chain.request().url)
+        val request = if (SnapshotAuthGuard.suppressCredentials(chain.request().url.encodedPath)) {
+            chain.request().newBuilder()
+                .removeHeader("Authorization")
+                .removeHeader(AuthInterceptor.SESSION_HEADER)
+                .removeHeader("Cookie")
+                .build()
+        } else {
+            chain.request()
+        }
+        return chain.proceed(request)
     }
 }

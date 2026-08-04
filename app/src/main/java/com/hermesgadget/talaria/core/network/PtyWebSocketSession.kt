@@ -16,9 +16,6 @@
 
 package com.hermesgadget.talaria.core.network
 
-import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
-import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
-import com.hermesgadget.talaria.domain.model.ConnectionProfile
 import com.hermesgadget.talaria.core.util.AnsiStripper
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -62,10 +59,9 @@ class PtySendException(
  */
 class PtyWebSocketSession(
     private val client: OkHttpClient,
-    private val connectionStore: SecureConnectionStore,
     private val wsAuth: WsAuthHelper,
-    /** Optional immutable profile for short-lived/background transports. */
-    private val fixedProfile: ConnectionProfile? = null,
+    /** The URL, management profile, and credentials for this socket operation. */
+    private val snapshot: ConnectionSnapshot,
     /** Optional auth value captured for the same immutable transport snapshot. */
     private val fixedAuthQuery: String? = null,
 ) {
@@ -94,24 +90,17 @@ class PtyWebSocketSession(
     ): Flow<PtyEvent> = callbackFlow {
         this@PtyWebSocketSession.channel = channelId
         state = SocketState.CONNECTING
-        val profile = fixedProfile ?: connectionStore.activeProfile()
-            ?: run {
-                state = SocketState.DISCONNECTED
-                trySend(PtyEvent.Failure("No active connection profile"))
-                close()
-                return@callbackFlow
-            }
         // callbackFlow's builder is already suspendable. Waiting directly keeps
         // token discovery and ticket minting off the main thread instead of
         // freezing Compose during a remote HTTP round trip.
-        val auth = fixedAuthQuery ?: wsAuth.authQueryParam()
+        val auth = fixedAuthQuery ?: wsAuth.authQueryParam(snapshot)
         val url = HermesWebSocketUrlBuilder.build(
-            baseUrl = profile.baseUrl,
+            baseUrl = snapshot.baseUrl,
             endpoint = "api/pty",
             authQuery = auth,
             query = listOf(
                 "channel" to channelId,
-                "profile" to profile.effectiveManagementProfile(),
+                "profile" to snapshot.managementProfile,
                 "resume" to resumeSessionId,
                 "attach" to attachToken,
                 "cols" to cols.toString(),
@@ -287,9 +276,4 @@ class PtyWebSocketSession(
 
     private fun connectedSocket(): WebSocket? =
         socket?.takeIf { state == SocketState.CONNECTED }
-
-    companion object {
-        /** Convenience for callers that need a fixed, profile-bound WS client. */
-        fun fixedClient(client: OkHttpClient): OkHttpClient = client.fixedConnectionClient()
-    }
 }

@@ -7,12 +7,13 @@
 
 package com.hermesgadget.talaria.network
 
-import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
+import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.PtyEvent
 import com.hermesgadget.talaria.core.network.PtyWebSocketSession
 import com.hermesgadget.talaria.core.network.WsAuthHelper
 import com.hermesgadget.talaria.domain.model.AuthMode
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
+import com.hermesgadget.talaria.domain.model.ConnectionSecrets
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -40,23 +41,25 @@ import org.junit.Test
 /** MockWebServer coverage for the current PTY event/send contract. */
 class PtyDeliveryBehaviorTest {
     private lateinit var server: MockWebServer
-    private lateinit var connectionStore: SecureConnectionStore
+    private lateinit var snapshot: ConnectionSnapshot
     private lateinit var wsAuth: WsAuthHelper
 
     @Before
     fun setUp() {
         server = MockWebServer()
         server.start()
-        connectionStore = mockk()
         wsAuth = mockk()
-        every { connectionStore.activeProfile() } returns ConnectionProfile(
-            id = "connection-1",
-            name = "Dashboard",
-            baseUrl = server.url("/").toString(),
-            authMode = AuthMode.NONE,
-            managementProfile = "research",
+        snapshot = ConnectionSnapshot(
+            profile = ConnectionProfile(
+                id = "connection-1",
+                name = "Dashboard",
+                baseUrl = server.url("/").toString(),
+                authMode = AuthMode.NONE,
+                managementProfile = "research",
+            ),
+            secrets = ConnectionSecrets(),
         )
-        coEvery { wsAuth.authQueryParam() } returns ""
+        coEvery { wsAuth.authQueryParam(snapshot) } returns ""
     }
 
     @After
@@ -95,7 +98,7 @@ class PtyDeliveryBehaviorTest {
         )
 
         val events = Channel<PtyEvent>(Channel.UNLIMITED)
-        val session = PtyWebSocketSession(OkHttpClient(), connectionStore, wsAuth)
+        val session = PtyWebSocketSession(OkHttpClient(), wsAuth, snapshot)
         val collector = launch(Dispatchers.Default) {
             session.connect(
                 resumeSessionId = "session-1",

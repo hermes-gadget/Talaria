@@ -18,11 +18,13 @@ package com.hermesgadget.talaria.core.network
 
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
 import com.hermesgadget.talaria.domain.model.AuthMode
+import com.hermesgadget.talaria.domain.model.ConnectionSecrets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.Request
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * Builds WebSocket auth query params matching dashboard `buildWsUrl`:
@@ -34,9 +36,18 @@ class WsAuthHelper(
     private val clientFactory: HermesClientFactory,
     private val connectionStore: SecureConnectionStore,
 ) {
+    private data class TransportScope(
+        val connectionId: String,
+        val origin: String,
+        val authMode: AuthMode,
+        val authProvider: String,
+        val managementProfile: String,
+        val secrets: ConnectionSecrets,
+    )
+
     private val mutex = Mutex()
-    /** Auth policy is connection-scoped; two saved profiles may target different gates. */
-    @Volatile private var cachedAuthRequired: Pair<String, Boolean>? = null
+    /** Includes credentials so token edits cannot reuse discovery from an older snapshot. */
+    @Volatile private var cachedAuthRequired: Pair<TransportScope, Boolean>? = null
 
     suspend fun invalidate() {
         mutex.withLock { cachedAuthRequired = null }
@@ -46,21 +57,31 @@ class WsAuthHelper(
      * Returns e.g. `ticket=…` or `token=…` (without leading `?` / `&`).
      * Empty string when no credentials are available.
      */
-    suspend fun authQueryParam(): String = withContext(Dispatchers.IO) {
+    suspend fun authQueryParam(snapshot: ConnectionSnapshot): String = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val profile = connectionStore.activeProfile() ?: return@withLock ""
-            val secrets = connectionStore.secretsFor(profile.id)
+            SnapshotAuthGuard.requireCurrent(
+                snapshot,
+                connectionStore.snapshotFor(snapshot.connectionId),
+            )
+            val scope = snapshot.transportScope()
+            val api = clientFactory.api(snapshot)
             val authRequired = cachedAuthRequired
-                ?.takeIf { it.first == profile.id }
+                ?.takeIf { it.first == scope }
                 ?.second
-                ?: runCatching {
-                    clientFactory.api().getStatus().auth_required == true
-                }.getOrDefault(
-                    profile.authMode == AuthMode.BASIC || profile.authMode == AuthMode.OIDC_BROWSER,
-                ).also { cachedAuthRequired = profile.id to it }
+                ?: run {
+                    val discovery = runCatching {
+                        api.getStatus(profile = snapshot.managementProfile).auth_required == true
+                    }
+                    discovery.exceptionOrNull()?.rethrowSafeCancellation()
+                    discovery.getOrDefault(
+                        snapshot.authMode == AuthMode.BASIC || snapshot.authMode == AuthMode.OIDC_BROWSER,
+                    ).also { cachedAuthRequired = scope to it }
+                }
 
             if (authRequired) {
-                val ticket = runCatching { clientFactory.api().wsTicket().ticket }.getOrNull()
+                val ticketResult = runCatching { api.wsTicket().ticket }
+                ticketResult.exceptionOrNull()?.rethrowSafeCancellation()
+                val ticket = ticketResult.getOrNull()
                 if (!ticket.isNullOrBlank()) return@withLock "ticket=${ticket.trim()}"
             }
 
@@ -70,33 +91,38 @@ class WsAuthHelper(
             // Always prefer the currently advertised token here: the encrypted value
             // is only a fallback for a temporarily unavailable SPA shell.
             if (!authRequired) {
-                fetchLoopbackSessionToken(profile.baseUrl)?.let { current ->
-                    connectionStore.updateSessionToken(profile.id, current)
+                fetchLoopbackSessionToken(snapshot)?.let { current ->
+                    SnapshotAuthGuard.requireCurrent(
+                        snapshot,
+                        connectionStore.snapshotFor(snapshot.connectionId),
+                    )
                     return@withLock "token=$current"
                 }
             }
 
-            secrets.sessionToken?.takeIf { it.isNotBlank() }?.let {
+            snapshot.sessionToken?.takeIf { it.isNotBlank() }?.let {
                 return@withLock "token=${it.trim()}"
             }
             ""
         }
     }
 
-    private fun fetchLoopbackSessionToken(baseUrl: String): String? {
-        val base = baseUrl.trimEnd('/')
+    private fun fetchLoopbackSessionToken(snapshot: ConnectionSnapshot): String? {
+        val base = snapshot.baseUrl.trimEnd('/')
         val req = Request.Builder()
             .url("$base/")
             .header("Accept", "text/html")
             .get()
             .build()
-        return runCatching {
-            clientFactory.okHttp().newCall(req).execute().use { resp ->
+        val result = runCatching {
+            clientFactory.okHttp(snapshot).newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 val body = resp.body?.string().orEmpty()
                 SESSION_TOKEN_RE.find(body)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
             }
-        }.getOrNull()
+        }
+        result.exceptionOrNull()?.rethrowSafeCancellation()
+        return result.getOrNull()
     }
 
     companion object {
@@ -108,5 +134,22 @@ class WsAuthHelper(
             4403 -> "WebSocket rejected (4403). Check Host/peer guards — remote dashboards must bind non-loopback and match the URL host."
             else -> null
         }
+    }
+
+    private fun ConnectionSnapshot.transportScope(): TransportScope {
+        val base = baseUrl.toHttpUrlOrNull()
+        val origin = if (base == null) baseUrl else "${base.scheme}://${base.host}:${base.port}"
+        return TransportScope(
+            connectionId = connectionId,
+            origin = origin,
+            authMode = authMode,
+            authProvider = authProvider,
+            managementProfile = managementProfile,
+            secrets = secrets,
+        )
+    }
+
+    private fun Throwable.rethrowSafeCancellation() {
+        if (message.orEmpty().contains("operation was safely canceled", ignoreCase = true)) throw this
     }
 }

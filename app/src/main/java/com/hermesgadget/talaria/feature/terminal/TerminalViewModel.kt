@@ -223,7 +223,8 @@ class TerminalViewModel(
     }
 
     private fun connect() {
-        if (container.connectionStore.activeProfile() == null) {
+        val snapshot = container.clientFactory.snapshot()
+        if (snapshot == null) {
             _ui.update {
                 it.copy(
                     connection = TerminalConnectionState.Disconnected(reason = "No active connection"),
@@ -237,10 +238,10 @@ class TerminalViewModel(
         val channel = UUID.randomUUID().toString()
         val sidecar = HermesEventClient(
             container.clientFactory,
-            container.connectionStore,
             container.wsAuthHelper,
+            fixedSnapshot = snapshot,
         )
-        val (session, flow) = chatRepository.openPty(channelId = channel)
+        val (session, flow) = chatRepository.openPty(snapshot, channelId = channel)
         pty = session
         eventClient = sidecar
         _ui.update {

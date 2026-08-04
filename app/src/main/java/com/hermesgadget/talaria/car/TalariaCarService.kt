@@ -20,6 +20,7 @@ import android.content.Intent
 import androidx.car.app.CarAppService
 import androidx.car.app.Session
 import androidx.car.app.validation.HostValidator
+import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.BuildConfig
 
 /**
@@ -49,7 +50,12 @@ class TalariaCarService : CarAppService() {
      */
     override fun createHostValidator(): HostValidator = HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
 
-    override fun onCreateSession(): Session = object : Session() {
-        override fun onCreateScreen(intent: Intent) = SessionListScreen(carContext)
+    override fun onCreateSession(): Session {
+        // One immutable destination/auth scope owns the entire car session.
+        // Phone-side profile switches cannot retarget reads or prompt delivery.
+        val snapshot = TalariaApp.instance.container.clientFactory.snapshot()
+        return object : Session() {
+            override fun onCreateScreen(intent: Intent) = SessionListScreen(carContext, snapshot)
+        }
     }
 }

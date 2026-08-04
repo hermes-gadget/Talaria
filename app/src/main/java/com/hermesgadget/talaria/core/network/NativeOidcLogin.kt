@@ -86,20 +86,20 @@ class NativeOidcLogin(
     private val clientFactory: HermesClientFactory,
     private val store: SecureConnectionStore,
 ) {
-    suspend fun providers(): List<NativeOidcProvider> = withContext(Dispatchers.IO) {
-        clientFactory.api().authProviders().providers
+    suspend fun providers(snapshot: ConnectionSnapshot): List<NativeOidcProvider> = withContext(Dispatchers.IO) {
+        requireCurrent(snapshot)
+        clientFactory.api(snapshot).authProviders().providers
             .filterNot(AuthProviderInfo::supports_password)
             .map { NativeOidcProvider(it.name, it.display_name ?: it.name) }
     }
 
     suspend fun signIn(
-        profileId: String,
+        snapshot: ConnectionSnapshot,
         provider: String?,
         openBrowser: (String) -> Unit,
     ): NativeOidcTokens = withContext(Dispatchers.IO) {
-        val profile = store.profiles.value.firstOrNull { it.id == profileId }
-            ?: error("Connection profile disappeared before sign-in")
-        val status = clientFactory.api().getStatus()
+        requireCurrent(snapshot)
+        val status = clientFactory.api(snapshot).getStatus(profile = snapshot.managementProfile)
         check("native_pkce" in status.auth_flows) {
             "This Hermes gateway does not advertise native PKCE login. Update Hermes, or use BASIC/SESSION_TOKEN."
         }
@@ -110,7 +110,7 @@ class NativeOidcLogin(
             server.soTimeout = ACCEPT_POLL_MS
             val redirectUri = "http://127.0.0.1:${server.localPort}/callback"
             val authorizeUrl = buildAuthorizeUrl(
-                profile.baseUrl,
+                snapshot.baseUrl,
                 pkce.challenge,
                 redirectUri,
                 state,
@@ -147,14 +147,19 @@ class NativeOidcLogin(
                 }
             }
             val authorizationCode = code ?: error("Hermes browser sign-in timed out")
-            val tokens = exchange(profile.baseUrl, authorizationCode, pkce.verifier)
-            store.updateOidcTokens(
-                id = profile.id,
+            // The browser may have been open for minutes. A foreground profile
+            // switch is harmless, but an edit/delete of the initiating saved
+            // connection must cancel before token exchange.
+            requireCurrent(snapshot)
+            val tokens = exchange(snapshot, authorizationCode, pkce.verifier)
+            val persisted = store.updateOidcTokensIfSnapshot(
+                snapshot = snapshot,
                 accessToken = tokens.accessToken,
                 refreshToken = tokens.refreshToken,
                 expiresAt = tokens.expiresAt,
                 provider = tokens.provider,
             )
+            check(persisted) { SnapshotAuthGuard.OIDC_CHANGED_MESSAGE }
             clientFactory.invalidate()
             tokens
         }
@@ -179,15 +184,15 @@ class NativeOidcLogin(
             .toString()
     }
 
-    private fun exchange(baseUrl: String, code: String, verifier: String): NativeOidcTokens {
-        val base = baseUrl.toHttpUrlOrNull() ?: error("Invalid dashboard URL")
+    private fun exchange(snapshot: ConnectionSnapshot, code: String, verifier: String): NativeOidcTokens {
+        val base = snapshot.baseUrl.toHttpUrlOrNull() ?: error("Invalid dashboard URL")
         val url = base.newBuilder().addPathSegments("auth/native/token").build()
         val body = buildJsonObject {
             put("code", code)
             put("code_verifier", verifier)
         }.toString().toRequestBody(JSON_MEDIA_TYPE)
         val request = Request.Builder().url(url).post(body).build()
-        return clientFactory.okHttp().newCall(request).execute().use { response ->
+        return clientFactory.okHttp(snapshot).newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
             check(response.isSuccessful) {
                 "Hermes token exchange failed (${response.code}): ${text.take(240)}"
@@ -204,6 +209,14 @@ class NativeOidcLogin(
                 userId = json["user_id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
             )
         }
+    }
+
+    private fun requireCurrent(snapshot: ConnectionSnapshot) {
+        SnapshotAuthGuard.requireExactCurrent(
+            snapshot,
+            store.snapshotFor(snapshot.connectionId),
+            SnapshotAuthGuard.OIDC_CHANGED_MESSAGE,
+        )
     }
 
     private fun respondToBrowser(socket: java.net.Socket, success: Boolean) {

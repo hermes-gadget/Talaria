@@ -141,9 +141,8 @@ class AgentTaskNotificationService : Service() {
 
         val client = HermesEventClient(
             container.clientFactory,
-            container.connectionStore,
             container.wsAuthHelper,
-            profileName = record.managementProfile ?: snapshot.managementProfile,
+            fixedSnapshot = snapshot,
         )
         // Monitoring only needs channel events. Avoid a second RPC socket and
         // its model/catalog probes for every active turn.

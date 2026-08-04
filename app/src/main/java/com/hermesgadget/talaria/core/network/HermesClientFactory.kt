@@ -123,6 +123,9 @@ class HermesClientFactory(
             // Application interceptor: covers the WebSocket upgrade handshake (network
             // interceptors do not run for WebSockets).
             .addInterceptor(CleartextPolicyInterceptor(snapshot))
+            // Redirects/retries do not re-enter application interceptors. Check
+            // their final origin before a credential-bearing request hits the wire.
+            .addNetworkInterceptor(SnapshotOriginInterceptor(snapshot))
             // Network interceptor: runs again per redirect/retry, so an https->http
             // 30x cannot bypass the cleartext gate after the first hop.
             .addNetworkInterceptor(CleartextPolicyInterceptor(snapshot))

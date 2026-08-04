@@ -26,7 +26,7 @@ import com.hermesgadget.talaria.core.network.HermesEventClient
 import com.hermesgadget.talaria.core.network.PtyPromptDelivery
 import com.hermesgadget.talaria.core.network.PtyPromptDeliveryException
 import com.hermesgadget.talaria.core.network.PtyWebSocketSession
-import com.hermesgadget.talaria.core.network.fixedConnectionClient
+import com.hermesgadget.talaria.core.network.SnapshotAuthGuard
 import com.hermesgadget.talaria.ui.navigation.TalariaDeepLink
 import com.hermesgadget.talaria.ui.navigation.TalariaDeepLinkParser
 import kotlinx.coroutines.CancellationException
@@ -45,28 +45,25 @@ class ReplyWorker(
         // Capture the complete connection snapshot once. The foreground profile can
         // change while WorkManager is running; every socket below is bound to this
         // same profile instead of consulting the mutable global client again.
-        val connection = container.connectionStore.activeProfile() ?: return Result.failure()
-        if (connection.id != expectedConnectionId || connection.managementProfile != expectedProfile) {
-            return Result.failure()
-        }
+        val snapshot = container.clientFactory.snapshotFor(expectedConnectionId, expectedProfile)
+            ?: return Result.failure(workDataOf(KEY_ERROR to SnapshotAuthGuard.CHANGED_MESSAGE))
         var eventClient: HermesEventClient? = null
         var session: PtyWebSocketSession? = null
         return try {
-            val socketClient = container.clientFactory.webSocketClient().fixedConnectionClient(connection)
+            val socketClient = container.clientFactory.webSocketClient(snapshot)
             // Gated dashboards issue single-use tickets, so the PTY and event
             // sockets each need their own ticket. Token-mode dashboards simply
             // return the same reusable token for both calls.
-            val ptyAuth = container.wsAuthHelper.authQueryParam()
-            val eventAuth = container.wsAuthHelper.authQueryParam()
+            val ptyAuth = container.wsAuthHelper.authQueryParam(snapshot)
+            val eventAuth = container.wsAuthHelper.authQueryParam(snapshot)
             val channel = "reply:${id}"
             val deliveryId = inputData.getString(KEY_MESSAGE_ID).orEmpty()
                 .ifBlank { id.toString() }
             val attachToken = "talaria-reply:$deliveryId"
             session = PtyWebSocketSession(
                 client = socketClient,
-                connectionStore = container.connectionStore,
                 wsAuth = container.wsAuthHelper,
-                fixedProfile = connection,
+                snapshot = snapshot,
                 fixedAuthQuery = ptyAuth,
             )
             val flow = session!!.connect(
@@ -76,10 +73,8 @@ class ReplyWorker(
             )
             eventClient = HermesEventClient(
                 clientFactory = container.clientFactory,
-                connectionStore = container.connectionStore,
                 wsAuth = container.wsAuthHelper,
-                profileName = connection.managementProfile,
-                fixedProfile = connection,
+                fixedSnapshot = snapshot,
                 fixedAuthQuery = eventAuth,
                 fixedWebSocketClient = socketClient,
             )
@@ -107,7 +102,10 @@ class ReplyWorker(
             throw cancelled
         } catch (failure: Throwable) {
             val message = failure.message ?: "Reply delivery failed"
-            if (runAttemptCount < MAX_ATTEMPTS) {
+            if (message.contains("saved connection changed", ignoreCase = true)) {
+                container.notifier.notifyError("Reply delivery canceled", message)
+                Result.failure(workDataOf(KEY_ERROR to message))
+            } else if (runAttemptCount < MAX_ATTEMPTS) {
                 Result.retry()
             } else {
                 container.notifier.notifyError("Reply delivery failed", message)

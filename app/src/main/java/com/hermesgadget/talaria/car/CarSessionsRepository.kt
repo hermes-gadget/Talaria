@@ -18,10 +18,10 @@ package com.hermesgadget.talaria.car
 
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.network.HermesEventClient
+import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.JsonConfig
 import com.hermesgadget.talaria.core.network.PtyPromptDelivery
 import com.hermesgadget.talaria.core.network.PtyWebSocketSession
-import com.hermesgadget.talaria.core.network.fixedConnectionClient
 import com.hermesgadget.talaria.domain.model.HERMES_DEFAULT_PROFILE
 import com.hermesgadget.talaria.domain.model.SessionMessage
 import com.hermesgadget.talaria.domain.model.SessionSummary
@@ -57,15 +57,15 @@ object CarSessionsRepository {
     private val container get() = TalariaApp.instance.container
 
     /** True when a saved connection is active — the car UI needs one. */
-    fun hasConnection(): Boolean = container.connectionStore.activeProfile() != null
+    fun hasConnection(snapshot: ConnectionSnapshot?): Boolean = snapshot != null
 
     /**
      * Active sessions (no end marker, non-automation) each with their five
      * most recent messages, ready for the car conversation list.
      */
-    suspend fun conversations(): Result<List<CarConversation>> = try {
+    suspend fun conversations(snapshot: ConnectionSnapshot): Result<List<CarConversation>> = try {
         Result.success(withTimeout(CONVERSATIONS_TIMEOUT_MS) {
-            val active = activeSessions().getOrThrow()
+            val active = activeSessions(snapshot).getOrThrow()
             val permits = Semaphore(MAX_MESSAGE_REQUESTS)
             coroutineScope {
                 active.map { conversation ->
@@ -73,7 +73,7 @@ object CarSessionsRepository {
                         permits.withPermit {
                             CarConversation(
                                 session = conversation,
-                                messages = messages(conversation.id)
+                                messages = messages(snapshot, conversation.id)
                                     .getOrDefault(emptyList())
                                     .takeLast(5),
                             )
@@ -94,12 +94,9 @@ object CarSessionsRepository {
      * Sessions currently open on the server: no end marker (not reset /
      * closed / compressed) and not an automation (cron/webhook) source.
      */
-    suspend fun activeSessions(): Result<List<SessionSummary>> = try {
-        val connection = container.connectionStore.activeProfile() ?: return Result.failure(
-            IllegalStateException("No active connection"),
-        )
-        val raw = container.clientFactory.api().getSessionsForProfile(
-            profile = connection.managementProfile.trim().ifBlank { HERMES_DEFAULT_PROFILE },
+    suspend fun activeSessions(snapshot: ConnectionSnapshot): Result<List<SessionSummary>> = try {
+        val raw = container.clientFactory.api(snapshot).getSessionsForProfile(
+            profile = snapshot.managementProfile.trim().ifBlank { HERMES_DEFAULT_PROFILE },
             limit = 100,
             offset = 0,
             order = "recent",
@@ -115,13 +112,10 @@ object CarSessionsRepository {
         Result.failure(failure)
     }
 
-    suspend fun messages(sessionId: String): Result<List<SessionMessage>> = try {
-        val connection = container.connectionStore.activeProfile() ?: return Result.failure(
-            IllegalStateException("No active connection"),
-        )
-        val response = container.clientFactory.api().getSessionMessages(
+    suspend fun messages(snapshot: ConnectionSnapshot, sessionId: String): Result<List<SessionMessage>> = try {
+        val response = container.clientFactory.api(snapshot).getSessionMessages(
             id = sessionId,
-            profile = connection.managementProfile,
+            profile = snapshot.managementProfile,
         )
         Result.success(response.messages.filter { !it.content.isNullOrBlank() })
     } catch (cancelled: CancellationException) {
@@ -134,10 +128,11 @@ object CarSessionsRepository {
      * Send a prompt to an existing session via a short-lived PTY, exactly
      * like the notification ReplyWorker does.
      */
-    suspend fun sendText(sessionId: String, text: String): Result<Unit> =
+    suspend fun sendText(snapshot: ConnectionSnapshot, sessionId: String, text: String): Result<Unit> =
         try {
             withTimeout(PROMPT_TIMEOUT_MS) {
                 ptySend(
+                    snapshot = snapshot,
                     resumeSessionId = sessionId,
                     text = text,
                     deliveryId = UUID.randomUUID().toString(),
@@ -156,10 +151,11 @@ object CarSessionsRepository {
      * Create a brand-new agent session and send the first prompt.
      * Returns the new session id (or null if the handshake predates it).
      */
-    suspend fun createSession(prompt: String): Result<String> =
+    suspend fun createSession(snapshot: ConnectionSnapshot, prompt: String): Result<String> =
         try {
             Result.success(withTimeout(PROMPT_TIMEOUT_MS) {
                 ptySend(
+                    snapshot = snapshot,
                     resumeSessionId = null,
                     text = prompt,
                     deliveryId = UUID.randomUUID().toString(),
@@ -180,30 +176,26 @@ object CarSessionsRepository {
      * reconnect to the same short-lived TUI.
      */
     private suspend fun ptySend(
+        snapshot: ConnectionSnapshot,
         resumeSessionId: String?,
         text: String,
         deliveryId: String,
     ): String {
-        val connection = container.connectionStore.activeProfile()
-            ?: throw IllegalStateException("No active connection")
-        val socketClient = container.clientFactory.webSocketClient().fixedConnectionClient(connection)
-        val ptyAuth = container.wsAuthHelper.authQueryParam()
-        val eventAuth = container.wsAuthHelper.authQueryParam()
+        val socketClient = container.clientFactory.webSocketClient(snapshot)
+        val ptyAuth = container.wsAuthHelper.authQueryParam(snapshot)
+        val eventAuth = container.wsAuthHelper.authQueryParam(snapshot)
         val channel = "car:$deliveryId"
         val attachToken = "talaria-car:$deliveryId"
         val session = PtyWebSocketSession(
             client = socketClient,
-            connectionStore = container.connectionStore,
             wsAuth = container.wsAuthHelper,
-            fixedProfile = connection,
+            snapshot = snapshot,
             fixedAuthQuery = ptyAuth,
         )
         val eventClient = HermesEventClient(
             clientFactory = container.clientFactory,
-            connectionStore = container.connectionStore,
             wsAuth = container.wsAuthHelper,
-            profileName = connection.managementProfile,
-            fixedProfile = connection,
+            fixedSnapshot = snapshot,
             fixedAuthQuery = eventAuth,
             fixedWebSocketClient = socketClient,
         )

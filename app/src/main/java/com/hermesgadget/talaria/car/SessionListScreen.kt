@@ -36,6 +36,7 @@ import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.hermesgadget.talaria.R
+import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.domain.model.SessionSummary
 import java.util.concurrent.Executor
 import java.util.concurrent.ExecutorService
@@ -52,7 +53,10 @@ import java.util.concurrent.RejectedExecutionException
  * 3. **Active agent conversations** — one row per live session; voice
  *    replies via [ConversationCallback].
  */
-class SessionListScreen(carContext: CarContext) : Screen(carContext) {
+class SessionListScreen(
+    carContext: CarContext,
+    private val snapshot: ConnectionSnapshot?,
+) : Screen(carContext) {
 
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainExecutor: Executor = carContext.mainExecutor
@@ -209,7 +213,7 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
                 if (prompt.isEmpty()) return
                 executeInBackground {
                     val result = kotlinx.coroutines.runBlocking {
-                        CarSessionsRepository.createSession(prompt)
+                        CarSessionsRepository.createSession(requireSnapshot(), prompt)
                     }
                     postToMain {
                         result.fold(
@@ -238,7 +242,7 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
                 if (prompt.isEmpty()) return
                 executeInBackground {
                     val result = kotlinx.coroutines.runBlocking {
-                        CarSessionsRepository.sendText(session.id, prompt)
+                        CarSessionsRepository.sendText(requireSnapshot(), session.id, prompt)
                     }
                     postToMain {
                         if (result.isFailure) error = result.exceptionOrNull()?.message
@@ -255,7 +259,7 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
     private fun startQuickAction(quick: QuickStart) {
         executeInBackground {
             val result = kotlinx.coroutines.runBlocking {
-                CarSessionsRepository.createSession(quick.prompt)
+                CarSessionsRepository.createSession(requireSnapshot(), quick.prompt)
             }
             postToMain {
                 result.fold(
@@ -279,10 +283,10 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
         invalidate()
         executeInBackground {
             val result = kotlinx.coroutines.runBlocking {
-                if (!CarSessionsRepository.hasConnection()) {
+                if (!CarSessionsRepository.hasConnection(snapshot)) {
                     Result.failure(IllegalStateException("Connect Talaria to Hermes on your phone first"))
                 } else {
-                    CarSessionsRepository.conversations()
+                    CarSessionsRepository.conversations(requireSnapshot())
                 }
             }
             postToMain {
@@ -319,6 +323,9 @@ class SessionListScreen(carContext: CarContext) : Screen(carContext) {
             if (!destroyed) block()
         }
     }
+
+    private fun requireSnapshot(): ConnectionSnapshot = snapshot
+        ?: throw IllegalStateException("Connect Talaria to Hermes on your phone first")
 
     companion object {
         private const val CREATE_AGENT_ID = "create-agent"

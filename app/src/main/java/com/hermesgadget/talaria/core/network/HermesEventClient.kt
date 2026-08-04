@@ -16,9 +16,6 @@
 
 package com.hermesgadget.talaria.core.network
 
-import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
-import com.hermesgadget.talaria.domain.model.ConnectionProfile
-import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -66,15 +63,12 @@ import kotlin.coroutines.resume
  */
 class HermesEventClient(
     private val clientFactory: HermesClientFactory,
-    private val connectionStore: SecureConnectionStore,
     private val wsAuth: WsAuthHelper,
-    /** Optional fixed Hermes management profile for background runtimes. */
-    private val profileName: String? = null,
     /** Optional immutable connection snapshot for background runtimes. */
-    private val fixedProfile: ConnectionProfile? = null,
+    private val fixedSnapshot: ConnectionSnapshot? = null,
     /** Auth query captured for this socket's connection snapshot. */
     private val fixedAuthQuery: String? = null,
-    /** Optional client with store-backed interceptors already removed. */
+    /** Optional client built from [fixedSnapshot]. */
     private val fixedWebSocketClient: OkHttpClient? = null,
 ) {
     private val json = JsonConfig.json
@@ -89,9 +83,9 @@ class HermesEventClient(
     private var eventsSocket: WebSocket? = null
     private var rpcSocket: WebSocket? = null
     private var job: Job? = null
-    /** Snapshot the profile at start so reconnects do not follow the foreground switch. */
+    /** Snapshot the full transport at start so reconnects never follow a foreground switch. */
     @Volatile
-    private var transportProfile: ConnectionProfile? = null
+    private var transportSnapshot: ConnectionSnapshot? = null
 
     /** Set false by [start] and true by [stop] so late close callbacks never reconnect. */
     @Volatile
@@ -143,16 +137,17 @@ class HermesEventClient(
         channelId = channel
         stopped = false
         _eventsConnected.value = false
+        val startingSnapshot = fixedSnapshot ?: clientFactory.snapshot()
+        if (startingSnapshot == null) {
+            stopped = true
+            publish(HermesSideEvent.TransportError("auth", "No active connection profile"))
+            return
+        }
+        transportSnapshot = startingSnapshot
         job = scope.launch {
-            val active = fixedProfile ?: connectionStore.activeProfile()
-            if (active == null) {
-                publish(HermesSideEvent.TransportError("auth", "No active connection profile"))
-                return@launch
-            }
-            transportProfile = active.copy(
-                managementProfile = profileName ?: active.managementProfile,
-            )
-            val auth = runCatching { fixedAuthQuery ?: wsAuth.authQueryParam() }.getOrElse {
+            val auth = runCatching {
+                fixedAuthQuery ?: wsAuth.authQueryParam(startingSnapshot)
+            }.getOrElse {
                 publish(HermesSideEvent.TransportError("auth", it.message ?: "authentication failed"))
                 return@launch
             }
@@ -179,7 +174,7 @@ class HermesEventClient(
         eventsSocket = null
         rpcSocket = null
         channelId = null
-        transportProfile = null
+        transportSnapshot = null
         _eventsConnected.value = false
         pendingRpc.values.forEach {
             it.timeout.cancel()
@@ -325,7 +320,8 @@ class HermesEventClient(
             delay(delayMs)
             reconnectJobs.remove(name)
             if (stopped) return@launch
-            val auth = runCatching { fixedAuthQuery ?: wsAuth.authQueryParam() }.getOrElse {
+            val snapshot = transportSnapshot ?: return@launch
+            val auth = runCatching { fixedAuthQuery ?: wsAuth.authQueryParam(snapshot) }.getOrElse {
                 publish(HermesSideEvent.TransportError(name, it.message ?: "authentication failed"))
                 scheduleReconnect(name, failedSocket)
                 return@launch
@@ -342,19 +338,19 @@ class HermesEventClient(
     }
 
     private fun openEvents(channel: String, auth: String) {
-        val profile = transportProfile ?: fixedProfile ?: connectionStore.activeProfile() ?: return
+        val snapshot = transportSnapshot ?: return
         _eventsConnected.value = false
         val url = HermesWebSocketUrlBuilder.build(
-            baseUrl = profile.baseUrl,
+            baseUrl = snapshot.baseUrl,
             endpoint = "api/events",
             authQuery = auth,
-            query = listOf("channel" to channel, "profile" to profile.effectiveManagementProfile()),
+            query = listOf("channel" to channel, "profile" to snapshot.managementProfile),
         ) ?: run {
             publish(HermesSideEvent.TransportError("events", "Invalid dashboard URL"))
             return
         }
         val req = Request.Builder().url(url).build()
-        eventsSocket = (fixedWebSocketClient ?: clientFactory.webSocketClient()).newWebSocket(
+        eventsSocket = (fixedWebSocketClient ?: clientFactory.webSocketClient(snapshot)).newWebSocket(
             req,
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -387,15 +383,15 @@ class HermesEventClient(
     }
 
     private fun openRpc(auth: String) {
-        val profile = transportProfile ?: fixedProfile ?: connectionStore.activeProfile() ?: return
+        val snapshot = transportSnapshot ?: return
         val url = HermesWebSocketUrlBuilder.build(
-            baseUrl = profile.baseUrl,
+            baseUrl = snapshot.baseUrl,
             endpoint = "api/ws",
             authQuery = auth,
-            query = listOf("profile" to profile.effectiveManagementProfile()),
+            query = listOf("profile" to snapshot.managementProfile),
         ) ?: return
         val req = Request.Builder().url(url).build()
-        rpcSocket = (fixedWebSocketClient ?: clientFactory.webSocketClient()).newWebSocket(
+        rpcSocket = (fixedWebSocketClient ?: clientFactory.webSocketClient(snapshot)).newWebSocket(
             req,
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
