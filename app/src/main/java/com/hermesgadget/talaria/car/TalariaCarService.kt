@@ -20,8 +20,8 @@ import android.content.Intent
 import androidx.car.app.CarAppService
 import androidx.car.app.Session
 import androidx.car.app.validation.HostValidator
-import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.BuildConfig
+import com.hermesgadget.talaria.TalariaApp
 
 /**
  * Android Auto / Automotive OS entry point for Talaria.
@@ -33,29 +33,41 @@ import com.hermesgadget.talaria.BuildConfig
 class TalariaCarService : CarAppService() {
 
     /**
-     * AndroidX ships the package/signature pairs for the supported Android
-     * Auto and Automotive Templates Hosts in its sample allowlist. Use it in
-     * debug builds so the AAOS emulator host is accepted.
-     *
-     * Release builds must accept every host: this app is distributed by
-     * sideload (no Play Store), so Google's server-side host validation
-     * never runs. The AndroidX sample allowlist only covers the three
-     * AOSP/Play gearhead signatures — OEM-signed Android Auto variants
-     * (preinstalled on many phones, including common CUPRA/SEAT
-     * setups) fail validation and Android Auto then silently drops the
-     * app from its launcher ("not available at all"). For a personal
-     * sideloaded app the host-identity risk of ALLOW_ALL is acceptable:
-     * a hostile host could drive the session UI, but session data is
-     * already on the device.
+     * DHU/debug keeps the permissive v0.8.2 behavior. Release uses the exact
+     * AndroidX sample package/certificate pairs plus handset-enrolled pairs;
+     * package name by itself is never an allow decision.
      */
-    override fun createHostValidator(): HostValidator = HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
+    override fun createHostValidator(): HostValidator = CarHostValidatorFactory.create(
+        context = this,
+        debugBuild = BuildConfig.DEBUG,
+        trustStore = TalariaApp.instance.container.carHostTrustStore,
+    )
 
     override fun onCreateSession(): Session {
         // One immutable destination/auth scope owns the entire car session.
         // Phone-side profile switches cannot retarget reads or prompt delivery.
         val snapshot = TalariaApp.instance.container.clientFactory.snapshot()
+        val trustStore = TalariaApp.instance.container.carHostTrustStore
         return object : Session() {
-            override fun onCreateScreen(intent: Intent) = SessionListScreen(carContext, snapshot)
+            override fun onCreateScreen(intent: Intent): SessionListScreen {
+                val identity = if (BuildConfig.DEBUG) {
+                    null
+                } else {
+                    carContext.hostInfo?.let { CarHostIdentityResolver.resolve(carContext, it) }
+                }
+                val authorizer = CarHostSessionAuthorizer(
+                    debugBuild = BuildConfig.DEBUG,
+                    identity = identity,
+                    knownHosts = if (BuildConfig.DEBUG) {
+                        emptySet()
+                    } else {
+                        AndroidxKnownCarHosts.identities(carContext)
+                    },
+                    trustStore = trustStore,
+                )
+                authorizer.startSession()
+                return SessionListScreen(carContext, snapshot, authorizer)
+            }
         }
     }
 }

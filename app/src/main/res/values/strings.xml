@@ -230,6 +230,8 @@ See PRIVACY.md in the repository for the full statement.</string>
     <string name="manage_terminal_subtitle">Live host shell over PTY</string>
     <string name="manage_system_title">System</string>
     <string name="manage_system_subtitle">Host stats, doctor, portal</string>
+    <string name="manage_car_hosts_title">Car hosts</string>
+    <string name="manage_car_hosts_subtitle">Certificate enrollment &amp; access</string>
     <string name="manage_search_settings">Search settings</string>
     <string name="manage_jump_to_setting">Jump to a setting…</string>
     <string name="manage_no_matches">No matches</string>

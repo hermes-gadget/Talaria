@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Hub
@@ -132,6 +133,7 @@ internal val manageSections = listOf(
         icon = Icons.Filled.Dns,
         items = listOf(
             ManageItem(R.string.manage_system_title, R.string.manage_system_subtitle, Routes.SYSTEM, Icons.Filled.Dns),
+            ManageItem(R.string.manage_car_hosts_title, R.string.manage_car_hosts_subtitle, Routes.CAR_HOSTS, Icons.Filled.DirectionsCar),
             ManageItem(R.string.manage_profiles_title, R.string.manage_profiles_subtitle, Routes.PROFILES, Icons.Filled.SwitchAccount),
             ManageItem(R.string.manage_logs_title, R.string.manage_logs_subtitle, Routes.LOGS, Icons.AutoMirrored.Filled.Article),
         ),

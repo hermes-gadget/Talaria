@@ -62,6 +62,7 @@ import com.hermesgadget.talaria.feature.manage.analytics.AnalyticsScreen
 import com.hermesgadget.talaria.feature.manage.apikeys.ApiKeysScreen
 import com.hermesgadget.talaria.feature.manage.artifacts.ArtifactsScreen
 import com.hermesgadget.talaria.feature.manage.channels.ChannelsScreen
+import com.hermesgadget.talaria.feature.manage.carhosts.CarHostsScreen
 import com.hermesgadget.talaria.feature.manage.commandcenter.CommandCenterScreen
 import com.hermesgadget.talaria.feature.manage.config.ConfigScreen
 import com.hermesgadget.talaria.feature.manage.cron.CronScreen
@@ -402,6 +403,7 @@ fun TalariaNavRoot(
                 composable(Routes.PAIRING) { PairingScreen() }
                 composable(Routes.CHANNELS) { ChannelsScreen() }
                 composable(Routes.SYSTEM) { SystemScreen() }
+                composable(Routes.CAR_HOSTS) { CarHostsScreen() }
                 composable(Routes.MEMORY) { MemoryScreen() }
                 composable(Routes.CURATOR) { CuratorScreen() }
                 composable(

@@ -52,6 +52,7 @@ object Routes {
     const val PAIRING = "pairing"
     const val CHANNELS = "channels"
     const val SYSTEM = "system"
+    const val CAR_HOSTS = "car_hosts"
     const val MEMORY = "memory"
     const val CURATOR = "curator"
     const val FILES = "files"

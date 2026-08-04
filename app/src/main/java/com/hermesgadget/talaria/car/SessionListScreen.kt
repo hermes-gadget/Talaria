@@ -56,6 +56,7 @@ import java.util.concurrent.RejectedExecutionException
 class SessionListScreen(
     carContext: CarContext,
     private val snapshot: ConnectionSnapshot?,
+    private val authorizer: CarHostSessionAuthorizer,
 ) : Screen(carContext) {
 
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -67,6 +68,15 @@ class SessionListScreen(
     private var conversations: List<CarConversation>? = null
     private var error: String? = null
     private var loading = false
+
+    private val trustListener: () -> Unit = {
+        postToMain {
+            conversations = null
+            error = null
+            loading = false
+            invalidate()
+        }
+    }
 
     private val selfPerson: Person = Person.Builder()
         .setName("Me")
@@ -102,15 +112,20 @@ class SessionListScreen(
     )
 
     init {
+        authorizer.addTrustListener(trustListener)
         lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onDestroy(owner: LifecycleOwner) {
                 destroyed = true
+                authorizer.removeTrustListener(trustListener)
                 executor.shutdownNow()
             }
         })
     }
 
     override fun onGetTemplate(): Template {
+        val hostAccess = authorizer.access()
+        if (!hostAccess.canReadTranscripts) return notTrustedTemplate()
+
         if (conversations == null) {
             if (error == null && !loading) loadConversations()
             return if (error != null) {
@@ -134,34 +149,44 @@ class SessionListScreen(
 
         val itemList = ItemList.Builder()
 
-        // 1) Create-agent entry. The framework's reply affordance is the
-        //    mic — speaking the first prompt creates the session.
-        itemList.addItem(
-            ConversationItem.Builder(
-                CREATE_AGENT_ID,
-                CarText.create("Create new agent"),
-                createPerson,
-                listOf(
-                    CarMessage.Builder()
-                        .setSender(hermesPerson)
-                        .setBody(CarText.create("Tap the mic and say what you want this agent to do."))
-                        .setReceivedTimeEpochMillis(System.currentTimeMillis())
-                        .setRead(true)
-                        .build(),
-                ),
-                newAgentCallback(),
+        if (hostAccess.canPerformActions) {
+            // 1) Create-agent entry. The framework's reply affordance is the
+            //    mic — speaking the first prompt creates the session.
+            itemList.addItem(
+                ConversationItem.Builder(
+                    CREATE_AGENT_ID,
+                    CarText.create("Create new agent"),
+                    createPerson,
+                    listOf(
+                        CarMessage.Builder()
+                            .setSender(hermesPerson)
+                            .setBody(CarText.create("Tap the mic and say what you want this agent to do."))
+                            .setReceivedTimeEpochMillis(System.currentTimeMillis())
+                            .setRead(true)
+                            .build(),
+                    ),
+                    newAgentCallback(),
+                )
+                    .setIcon(CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_car_add)).build())
+                    .build(),
             )
-                .setIcon(CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_car_add)).build())
-                .build(),
-        )
 
-        // 2) Quick-start one-tap actions (no dictation needed while driving).
-        quickStarts.forEach { quick ->
+            // 2) Quick-start one-tap actions (no dictation needed while driving).
+            quickStarts.forEach { quick ->
+                itemList.addItem(
+                    Row.Builder()
+                        .setTitle(quick.title)
+                        .setImage(CarIcon.APP_ICON)
+                        .setOnClickListener { startQuickAction(quick) }
+                        .build(),
+                )
+            }
+        } else {
             itemList.addItem(
                 Row.Builder()
-                    .setTitle(quick.title)
+                    .setTitle("Phone confirmation required")
+                    .addText("Open Manage → System → Car hosts on your phone. Approval lasts 15 minutes.")
                     .setImage(CarIcon.APP_ICON)
-                    .setOnClickListener { startQuickAction(quick) }
                     .build(),
             )
         }
@@ -169,15 +194,24 @@ class SessionListScreen(
         // 3) Active agent conversations.
         conversations.orEmpty().forEach { conversation ->
             val session = conversation.session
-            itemList.addItem(
-                ConversationItem.Builder(
-                    session.id,
-                    CarText.create(session.title ?: "Untitled agent"),
-                    selfPerson,
-                    conversation.messages.map { toCarMessage(it) },
-                    sessionCallback(session),
-                ).build(),
-            )
+            if (hostAccess.canPerformActions) {
+                itemList.addItem(
+                    ConversationItem.Builder(
+                        session.id,
+                        CarText.create(session.title ?: "Untitled agent"),
+                        selfPerson,
+                        conversation.messages.map { toCarMessage(it) },
+                        sessionCallback(session),
+                    ).build(),
+                )
+            } else {
+                val row = Row.Builder().setTitle(session.title ?: "Untitled agent")
+                conversation.messages.takeLast(2).forEach { message ->
+                    val sender = if (message.role == "user") "Me" else "Hermes"
+                    row.addText("$sender: ${message.content.orEmpty().trim().replace('\n', ' ')}")
+                }
+                itemList.addItem(row.build())
+            }
         }
 
         return ListTemplate.Builder()
@@ -188,6 +222,22 @@ class SessionListScreen(
                     .build(),
             )
             .setSingleList(itemList.build())
+            .build()
+    }
+
+    private fun notTrustedTemplate(): Template {
+        val identity = authorizer.identity
+        val detail = if (identity == null) {
+            "The car host identity could not be verified."
+        } else {
+            "${identity.packageName}\nSHA-256 ${identity.certificateSha256}"
+        }
+        return MessageTemplate.Builder(
+            "Not trusted\n\n$detail\n\nOpen Talaria on your phone, then Manage → System → Car hosts. " +
+                "No conversations or actions are available until you explicitly enroll this certificate.",
+        )
+            .setTitle("Talaria")
+            .setHeaderAction(Action.APP_ICON)
             .build()
     }
 
@@ -213,6 +263,9 @@ class SessionListScreen(
                 if (prompt.isEmpty()) return
                 executeInBackground {
                     val result = kotlinx.coroutines.runBlocking {
+                        authorizer.authorizeAction(ACTION_CREATE).exceptionOrNull()?.let {
+                            return@runBlocking Result.failure(it)
+                        }
                         CarSessionsRepository.createSession(requireSnapshot(), prompt)
                     }
                     postToMain {
@@ -242,6 +295,9 @@ class SessionListScreen(
                 if (prompt.isEmpty()) return
                 executeInBackground {
                     val result = kotlinx.coroutines.runBlocking {
+                        authorizer.authorizeAction(ACTION_SEND).exceptionOrNull()?.let {
+                            return@runBlocking Result.failure(it)
+                        }
                         CarSessionsRepository.sendText(requireSnapshot(), session.id, prompt)
                     }
                     postToMain {
@@ -259,6 +315,9 @@ class SessionListScreen(
     private fun startQuickAction(quick: QuickStart) {
         executeInBackground {
             val result = kotlinx.coroutines.runBlocking {
+                authorizer.authorizeAction(ACTION_CREATE).exceptionOrNull()?.let {
+                    return@runBlocking Result.failure(it)
+                }
                 CarSessionsRepository.createSession(requireSnapshot(), quick.prompt)
             }
             postToMain {
@@ -329,5 +388,7 @@ class SessionListScreen(
 
     companion object {
         private const val CREATE_AGENT_ID = "create-agent"
+        private const val ACTION_CREATE = "create_session"
+        private const val ACTION_SEND = "send_prompt"
     }
 }
