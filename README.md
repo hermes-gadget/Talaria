@@ -11,7 +11,7 @@ It adapts the remote-capable parts of Hermes Desktop and the Web Dashboard (defa
 | **Connections** | Multiple saved servers, password-cookie / session-token / bearer / native OIDC PKCE auth, optional TLS pinning |
 | **Chat** | Live `/api/pty` bridge plus `/api/ws` and `/api/events`, clean reading mode, terminal mode, session resume, image attachments |
 | **Notifications** | Thread-aware permission and completion alerts named for the selected agent, exact-thread deep links, background turn monitoring, plus cron/gateway/pairing/error channels |
-| **Voice** | On-device `SpeechRecognizer` (cloud STT opt-in only), continuous dictation + partials, TTS of replies |
+| **Voice** | Server STT primary (`/api/voice/transcribe`), on-device `SpeechRecognizer` fallback, continuous dictation + partials, TTS of replies |
 | **Manage** | Status, Sessions, Config, API Keys, Cron, Skills Hub, MCP catalog/OAuth, Channels, Pairing, Webhooks, Profiles, Files, Artifacts, Learning, Logs, Analytics, System |
 | **Car** | Android Auto projected app + AAOS templated car app: agent list, voice replies, one-tap quick starts, driving-safe agent creation |
 | **Privacy** | Zero telemetry by default, Keystore-backed secrets, local Room cache, no forced accounts |

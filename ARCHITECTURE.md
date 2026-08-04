@@ -71,7 +71,7 @@ Android backup and device transfer exclude encrypted connection state and Room d
 
 ## Car surface
 
-`car/` implements a Car App Library service (`TalariaCarService`) shared by Android Auto projection and AAOS: an active-agent list, voice replies, one-tap quick starts, and driving-safe agent creation, backed by `CarSessionsRepository`. Discovery: AAOS binds the `CarAppService` intent filter; Android Auto additionally requires the `com.google.android.gms.car.application` metadata + `automotive_app_desc.xml` capabilities (v0.8.3). The release host validator is `ALLOW_ALL` for sideload compatibility (accepted risk — see ROADMAP P0.2).
+`car/` implements a Car App Library service (`TalariaCarService`) shared by Android Auto projection and AAOS: an active-agent list, voice replies, one-tap quick starts, and driving-safe agent creation, backed by `CarSessionsRepository`. Discovery: AAOS binds the `CarAppService` intent filter; Android Auto additionally requires the `com.google.android.gms.car.application` metadata + `automotive_app_desc.xml` capabilities (v0.8.3). Release host policy: enrolled certificate identities only (`CarHostSecurity`), with a handset enrollment/revoke UI; `ALLOW_ALL` is debug-only (see ROADMAP R0.2).
 
 ## Voice
 
