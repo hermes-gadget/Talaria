@@ -167,6 +167,10 @@ jobs:
           echo "artifact_name=${OUT}" >> "$GITHUB_OUTPUT"
 
       - name: Verify signed APK (fail-closed)
+        env:
+          TALARIA_CI_KEYSTORE_PASSWORD: ${{ secrets.TALARIA_CI_KEYSTORE_PASSWORD }}
+          TALARIA_CI_KEY_ALIAS: ${{ secrets.TALARIA_CI_KEY_ALIAS }}
+          TALARIA_CI_KEY_PASSWORD: ${{ secrets.TALARIA_CI_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           OUT="${{ steps.rename.outputs.artifact }}"
@@ -177,8 +181,8 @@ jobs:
           # 2. Signer fingerprint must match the CI keystore exactly.
           KEY_FP=$(keytool -list -v -keystore "$TALARIA_CI_KEYSTORE" \
             -storepass "$TALARIA_CI_KEYSTORE_PASSWORD" -alias "$TALARIA_CI_KEY_ALIAS" 2>/dev/null \
-            | grep -A1 "SHA256:" | tail -1 | tr -d ' ' | tr 'A-F' 'a-f')
-          APK_FP=$(grep -A1 "SHA-256 digest:" /tmp/certs.txt | tail -1 | tr -d ' ' | tr 'A-F' 'a-f')
+            | grep -oP "SHA256: \K[0-9A-F:]+" | head -1 | tr -d ':' | tr 'A-F' 'a-f')
+          APK_FP=$(grep -oP "SHA-256 digest: \K[0-9a-fA-F:]+" /tmp/certs.txt | head -1 | tr -d ':' | tr 'A-F' 'a-f')
           echo "keystore fingerprint: ${KEY_FP}"
           echo "apk      fingerprint: ${APK_FP}"
           if [ -z "${KEY_FP}" ] || [ -z "${APK_FP}" ] || [ "${KEY_FP}" != "${APK_FP}" ]; then
