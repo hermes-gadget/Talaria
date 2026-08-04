@@ -79,6 +79,10 @@ class HermesForegroundObserver(
                 Triple("chat", "Approval requested", event.message.take(160))
             is HermesSideEvent.SessionInfo ->
                 Triple("chat", "Session · ${event.model ?: "agent"}", event.approvalMode.orEmpty())
+            is HermesSideEvent.SessionsChanged ->
+                Triple("chat", "Session activity", event.sessionId.orEmpty())
+            is HermesSideEvent.SessionEnded ->
+                Triple("chat", "Session ended", event.reason.orEmpty())
             is HermesSideEvent.Raw -> when {
                 event.type.startsWith("gateway") ->
                     Triple("gateway", "Gateway ${event.type.substringAfter('.')}", "")

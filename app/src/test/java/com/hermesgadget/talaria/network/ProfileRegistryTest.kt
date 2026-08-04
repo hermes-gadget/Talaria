@@ -43,4 +43,15 @@ class ProfileRegistryTest {
         assertFalse(state.streamingStates["work"]?.hasActiveSessions == true)
         assertTrue(state.streamingStates["default"]?.hasActiveSessions == true)
     }
+
+    @Test
+    fun `visible profiles are ordered before background profiles`() {
+        assertEquals(
+            listOf("research", "default", "work"),
+            ProfileRegistry.orderProfiles(
+                names = listOf("work", "default", "research"),
+                preferredProfiles = listOf("research", "default"),
+            ),
+        )
+    }
 }

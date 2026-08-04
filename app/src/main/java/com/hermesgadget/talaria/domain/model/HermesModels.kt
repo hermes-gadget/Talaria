@@ -115,6 +115,17 @@ data class SessionMessage(
 @Serializable
 data class SessionMessagesResponse(
     val messages: List<SessionMessage> = emptyList(),
+    /** Optional server-side transcript revision, emitted by newer Hermes builds. */
+    @Serializable(with = FlexiblePrimitiveStringSerializer::class)
+    val revision: String? = null,
+    /** Older gateways use this more explicit name for the same revision. */
+    @Serializable(with = FlexiblePrimitiveStringSerializer::class)
+    val transcript_revision: String? = null,
+    val message_count: Int? = null,
+    @Serializable(with = FlexiblePrimitiveStringSerializer::class)
+    val hash: String? = null,
+    @Serializable(with = FlexiblePrimitiveStringSerializer::class)
+    val content_hash: String? = null,
 )
 
 @Serializable

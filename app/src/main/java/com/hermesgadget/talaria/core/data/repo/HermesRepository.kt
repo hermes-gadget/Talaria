@@ -89,6 +89,9 @@ class HermesRepository(
     // "open once, browse" surfaces route through it; live pollers (Status) and
     // security-sensitive reads (pairing) fetch fresh every time.
     private val cache = ResponseCache()
+    /** Last successful server fingerprint per connection/profile/session. */
+    private val transcriptFingerprints = mutableMapOf<String, TranscriptFingerprint>()
+    private val transcriptFingerprintLock = Any()
 
     /** Drop all cached responses (call on profile / management-scope change). */
     fun clearCache() = cache.clear()
@@ -134,27 +137,93 @@ class HermesRepository(
             ?: return Result.failure(IllegalStateException("No active Hermes connection"))
         return withContext(Dispatchers.IO) {
             suspendResult {
-            val page = fetchSessionsPage(snapshot, source = source, limit = limit)
-            val list = page.sessions
-            val cid = snapshot.scopeId
-            db.sessions().upsertAll(
-                list.map {
-                    CachedSessionEntity(
-                        id = it.id,
-                        connectionId = cid,
-                        title = it.title,
-                        source = it.source,
-                        model = it.model,
-                        preview = it.preview,
-                        messageCount = it.message_count,
-                        lastActive = it.last_active,
-                        json = json.encodeToString(it),
-                    )
-                },
+            val (list, complete) = fetchSessionsForReconciliation(
+                snapshot = snapshot,
+                source = source,
+                limit = limit,
             )
+            val cid = snapshot.scopeId
+            val rows = list.map {
+                CachedSessionEntity(
+                    id = it.id,
+                    connectionId = cid,
+                    title = it.title,
+                    source = it.source,
+                    model = it.model,
+                    preview = it.preview,
+                    messageCount = it.message_count,
+                    lastActive = it.last_active,
+                    json = json.encodeToString(it),
+                )
+            }
+            val cached = db.sessions().getAll(cid)
+            val cachedById = cached.associateBy { it.id }
+            val deleteIds = if (source == null && complete) {
+                SessionReconciliation.staleSessionIds(
+                    cachedIds = cachedById.keys,
+                    serverIds = rows.map { it.id }.toSet(),
+                ).toList()
+            } else {
+                emptyList()
+            }
+            val changedRows = SessionReconciliation.changedRows(cachedById, rows)
+            // No Room call at all when the server page is semantically equal.
+            if (deleteIds.isNotEmpty() || changedRows.isNotEmpty()) {
+                db.sessions().reconcile(cid, deleteIds, changedRows)
+            }
             list
             }
         }
+    }
+
+    private suspend fun fetchSessionsForReconciliation(
+        snapshot: ConnectionSnapshot,
+        source: String?,
+        limit: Int,
+    ): Pair<List<SessionSummary>, Boolean> {
+        val first = fetchSessionsPage(snapshot, source = source, limit = limit, offset = 0)
+        // A filtered list is never authoritative for the entire session cache.
+        if (source != null) return first.sessions to false
+
+        val pageLimit = limit.coerceAtLeast(1)
+        val total = first.total
+        if (total != null && total <= first.sessions.distinctBy { it.id }.size) {
+            return first.sessions.distinctBy { it.id } to true
+        }
+
+        val all = first.sessions.toMutableList()
+        var offset = all.size
+        var complete = total == null && first.sessions.size < pageLimit
+        while (!complete && (total == null || offset < total)) {
+            val requestLimit = if (total == null) {
+                pageLimit
+            } else {
+                minOf(pageLimit, total - offset)
+            }
+            val page = fetchSessionsPage(
+                snapshot = snapshot,
+                source = source,
+                limit = requestLimit,
+                offset = offset,
+            )
+            if (page.sessions.isEmpty()) {
+                complete = true
+                break
+            }
+            val previousIds = all.asSequence().map { it.id }.toSet()
+            all += page.sessions
+            offset += page.sessions.size
+            // If an endpoint ignores offset and repeats a full page, do not
+            // claim completeness and accidentally prune valid cached rows.
+            val madeProgress = page.sessions.any { it.id !in previousIds }
+            complete = page.sessions.size < requestLimit ||
+                (total != null && all.distinctBy { it.id }.size >= total)
+            if (!madeProgress) {
+                complete = false
+                break
+            }
+        }
+        return all.distinctBy { it.id } to complete
     }
 
     suspend fun getSessionsPage(
@@ -200,7 +269,7 @@ class HermesRepository(
                 } ?: emptyList()
                 val total = element["total"]?.let {
                     runCatching { it.toString().trim('"').toInt() }.getOrNull()
-                } ?: sessions.size
+                }
                 com.hermesgadget.talaria.domain.model.SessionsPage(sessions = sessions, total = total)
             }
             else -> com.hermesgadget.talaria.domain.model.SessionsPage()
@@ -215,28 +284,61 @@ class HermesRepository(
     }
 
     suspend fun loadMessages(sessionId: String): Result<List<SessionMessage>> {
+        return loadMessagesSnapshot(sessionId).map { it.messages }
+    }
+
+    /**
+     * Load one authoritative transcript. A matching fingerprint returns the
+     * payload to callers but skips both entity mapping and replaceSessionMessages.
+     * A failed request never updates the fingerprint or Room, preserving the
+     * last-good cache for the next read.
+     */
+    suspend fun loadMessagesSnapshot(
+        sessionId: String,
+        profileName: String? = null,
+    ): Result<TranscriptSnapshot> {
         val snapshot = clientFactory.snapshot()
             ?: return Result.failure(IllegalStateException("No active Hermes connection"))
         return withContext(Dispatchers.IO) {
             suspendResult {
-            val msgs = api(snapshot).getSessionMessages(sessionId, profile = snapshot.managementProfile).messages
-            val cid = snapshot.scopeId
-            db.messages().replaceSessionMessages(
-                cid,
-                sessionId,
-                msgs.mapIndexed { index, m ->
-                    CachedMessageEntity(
-                        key = "$sessionId-$index",
-                        sessionId = sessionId,
-                        connectionId = cid,
-                        role = m.role,
-                        content = m.content,
-                        timestamp = m.timestamp,
-                        ordinal = index,
-                    )
-                },
-            )
-            msgs
+                val profile = profileName ?: snapshot.managementProfile
+                val response = api(snapshot)
+                    .getSessionMessages(sessionId, profile = profile)
+                val fingerprint = TranscriptFingerprintFactory.from(response)
+                val key = "${snapshot.connectionId}|$profile|$sessionId"
+                val previous = synchronized(transcriptFingerprintLock) {
+                    transcriptFingerprints[key]
+                }
+                val contentChanged = TranscriptFingerprintFactory.contentChanged(previous, fingerprint)
+
+                if (contentChanged && profile == snapshot.managementProfile) {
+                    val cid = snapshot.scopeId
+                    val rows = response.messages.mapIndexed { index, message ->
+                        CachedMessageEntity(
+                            key = "$sessionId-$index",
+                            sessionId = sessionId,
+                            connectionId = cid,
+                            role = message.role,
+                            content = message.content,
+                            timestamp = message.timestamp,
+                            ordinal = index,
+                        )
+                    }
+                    val existing = db.messages().getSessionMessages(cid, sessionId)
+                    if (existing != rows) {
+                        // The DAO transaction makes the replacement atomic; a
+                        // failure leaves the previous transcript observable.
+                        db.messages().replaceSessionMessages(cid, sessionId, rows)
+                    }
+                }
+                synchronized(transcriptFingerprintLock) {
+                    transcriptFingerprints[key] = fingerprint
+                }
+                TranscriptSnapshot(
+                    messages = response.messages,
+                    fingerprint = fingerprint,
+                    contentChanged = contentChanged,
+                )
             }
         }
     }

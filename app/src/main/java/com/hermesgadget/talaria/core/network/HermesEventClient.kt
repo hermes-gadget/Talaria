@@ -53,6 +53,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 
@@ -74,10 +75,13 @@ class HermesEventClient(
     private val json = JsonConfig.json
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val rpcId = AtomicLong(1)
-    // Bounded with DROP_OLDEST: live sidecar state is current-state, not a
-    // queue to replay — if the collector falls behind, old frames are worthless
-    // and unbounded buffering would OOM the process.
-    private val eventQueue = Channel<HermesSideEvent>(256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    // Bounded and non-blocking: if a collector falls behind, emit an explicit
+    // gap marker instead of silently losing the dirty signal that should cause
+    // a transcript reconciliation.
+    private val eventQueue = Channel<HermesSideEvent>(256)
+    private val eventQueueOverflowed = AtomicBoolean(false)
+    private val eventSequenceLock = Any()
+    private var lastEventSequence: Long? = null
 
     private var channelId: String? = null
     private var eventsSocket: WebSocket? = null
@@ -136,6 +140,7 @@ class HermesEventClient(
         stop()
         channelId = channel
         stopped = false
+        synchronized(eventSequenceLock) { lastEventSequence = null }
         _eventsConnected.value = false
         val startingSnapshot = fixedSnapshot ?: clientFactory.snapshot()
         if (startingSnapshot == null) {
@@ -175,6 +180,7 @@ class HermesEventClient(
         rpcSocket = null
         channelId = null
         transportSnapshot = null
+        synchronized(eventSequenceLock) { lastEventSequence = null }
         _eventsConnected.value = false
         pendingRpc.values.forEach {
             it.timeout.cancel()
@@ -455,11 +461,40 @@ class HermesEventClient(
             return
         }
         // Non-result frames: classify into a typed event (pure logic below).
-        SidecarFrameParser.parse(el)?.let(::publish)
+        SidecarFrameParser.parse(el)?.let(::publishParsed)
+    }
+
+    /** Convert a skipped server sequence into the same authoritative-read signal as a buffer gap. */
+    private fun publishParsed(event: HermesSideEvent) {
+        val sequenced = event as? HermesSideEvent.SessionsChanged
+        val sequence = sequenced?.sequence
+        if (sequence != null) {
+            synchronized(eventSequenceLock) {
+                val previous = lastEventSequence
+                if (previous != null && sequence > previous && sequence - previous > 1L) {
+                    publish(
+                        HermesSideEvent.EventGap(
+                            reason = "event sequence gap: $previous->$sequence",
+                            sessionId = sequenced.sessionId,
+                        ),
+                    )
+                }
+                if (previous == null || sequence > previous) lastEventSequence = sequence
+            }
+        }
+        publish(event)
     }
 
     private fun publish(event: HermesSideEvent) {
-        eventQueue.trySend(event)
+        if (eventQueueOverflowed.get()) {
+            if (!eventQueue.trySend(HermesSideEvent.EventGap("sidecar event buffer overflow", null)).isSuccess) {
+                return
+            }
+            eventQueueOverflowed.set(false)
+        }
+        if (!eventQueue.trySend(event).isSuccess) {
+            eventQueueOverflowed.set(true)
+        }
     }
 
     private fun markSocketOpen(name: String, webSocket: WebSocket) {
@@ -563,7 +598,32 @@ object SidecarFrameParser {
         // Flat frames used by older Hermes versions keep them at the top level.
         val payload = (frame["payload"] as? JsonObject) ?: frame
         val sessionId = frame["session_id"]?.jsonPrimitive?.contentOrNull
+            ?: payload["session_id"]?.jsonPrimitive?.contentOrNull
+        val revision = payload["revision"]?.jsonPrimitive?.contentOrNull
+            ?: payload["version"]?.jsonPrimitive?.contentOrNull
+            ?: frame["revision"]?.jsonPrimitive?.contentOrNull
+            ?: frame["version"]?.jsonPrimitive?.contentOrNull
+        val sequence = payload.longField("sequence", "seq", "event_sequence")
+            ?: frame.longField("sequence", "seq", "event_sequence")
         return when {
+            type == "sessions.changed" -> HermesSideEvent.SessionsChanged(
+                sessionId = sessionId,
+                revision = revision,
+                sequence = sequence,
+            )
+            type == "session.ended" || type == "session.end" || type == "session.closed" ->
+                HermesSideEvent.SessionEnded(
+                    sessionId = sessionId,
+                    reason = payload["reason"]?.jsonPrimitive?.contentOrNull
+                        ?: payload["end_reason"]?.jsonPrimitive?.contentOrNull,
+                )
+            type == "event.gap" || type == "events.gap" || type == "sessions.gap" ||
+                payload["gap"]?.jsonPrimitive?.booleanOrNull == true ||
+                (payload["dropped"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L) > 0L ->
+                HermesSideEvent.EventGap(
+                    reason = payload["reason"]?.jsonPrimitive?.contentOrNull ?: type,
+                    sessionId = sessionId,
+                )
             type == "message.start" -> HermesSideEvent.MessageStart(sessionId)
             type == "message.delta" -> HermesSideEvent.MessageDelta(
                 sessionId = sessionId,
@@ -775,6 +835,25 @@ sealed class HermesSideEvent {
         val failed: Boolean,
     ) : HermesSideEvent()
     data class Status(val sessionId: String?, val kind: String?, val text: String) : HermesSideEvent()
+
+    /** The session catalog changed; transcript/session list consumers should reconcile. */
+    data class SessionsChanged(
+        val sessionId: String? = null,
+        val revision: String? = null,
+        val sequence: Long? = null,
+    ) : HermesSideEvent()
+
+    /** A server-side session was closed/reset and may need removal from local state. */
+    data class SessionEnded(
+        val sessionId: String? = null,
+        val reason: String? = null,
+    ) : HermesSideEvent()
+
+    /** A transport or bounded-buffer gap means the next read must be authoritative. */
+    data class EventGap(
+        val reason: String,
+        val sessionId: String? = null,
+    ) : HermesSideEvent()
 
     /** Live agent config for a session (model, provider, reasoning, approval mode). */
     data class SessionInfo(
