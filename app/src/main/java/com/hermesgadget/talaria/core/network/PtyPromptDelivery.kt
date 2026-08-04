@@ -41,6 +41,54 @@ class PtyPromptDeliveryException(
     cause: Throwable? = null,
 ) : IOException(message, cause)
 
+enum class PtyPromptDeliveryStart {
+    SEND,
+    ALREADY_ACCEPTED,
+    IN_FLIGHT,
+}
+
+/**
+ * Acceptance gate for user-initiated prompts.
+ *
+ * Transport recovery never calls [begin] again for an accepted delivery id.
+ * The ledger is intentionally independent from [PtyTransportSupervisor]: a
+ * new socket generation is allowed to recover the transport, but it is never
+ * allowed to replay a prompt whose frame already entered the old writer queue.
+ */
+class PtyPromptDeliveryLedger {
+    private enum class Entry {
+        IN_FLIGHT,
+        ACCEPTED,
+    }
+
+    private val entries = mutableMapOf<String, Entry>()
+
+    @Synchronized
+    fun begin(deliveryId: String): PtyPromptDeliveryStart {
+        require(deliveryId.isNotBlank()) { "deliveryId must not be blank" }
+        return when (entries[deliveryId]) {
+            Entry.ACCEPTED -> PtyPromptDeliveryStart.ALREADY_ACCEPTED
+            Entry.IN_FLIGHT -> PtyPromptDeliveryStart.IN_FLIGHT
+            null -> {
+                entries[deliveryId] = Entry.IN_FLIGHT
+                PtyPromptDeliveryStart.SEND
+            }
+        }
+    }
+
+    /** Record the strongest transport acceptance signal available. */
+    @Synchronized
+    fun complete(deliveryId: String, result: Result<PtySendReceipt>): Boolean {
+        val accepted = result.getOrNull()?.accepted == true ||
+            (result.exceptionOrNull() as? PtySendException)?.receipt?.accepted == true
+        if (accepted) entries[deliveryId] = Entry.ACCEPTED else entries.remove(deliveryId)
+        return accepted
+    }
+
+    @Synchronized
+    fun isAccepted(deliveryId: String): Boolean = entries[deliveryId] == Entry.ACCEPTED
+}
+
 /**
  * Shared handshake for notification replies and car quick actions.
  *

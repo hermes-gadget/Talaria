@@ -69,6 +69,9 @@
     <string name="chat_status_tokens"> · %1$d tok</string>
     <string name="chat_status_cost"> · $%1$.4f</string>
     <string name="chat_status_disconnected">Disconnected · tap to reconnect</string>
+    <string name="chat_status_recovering">Recovering · attempt %1$d/%2$d · retrying in %3$d s</string>
+    <string name="chat_status_reconciled">Reconnected · transcript refreshed</string>
+    <string name="chat_status_retry">Disconnected · retry available</string>
     <string name="chat_choices">Choices: %1$s</string>
     <string name="chat_secure_response">Secure response</string>
     <string name="chat_response">Response</string>

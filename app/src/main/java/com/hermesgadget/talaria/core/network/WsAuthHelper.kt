@@ -132,6 +132,8 @@ class WsAuthHelper(
         fun explainCloseCode(code: Int): String? = when (code) {
             4401 -> "WebSocket auth failed (4401). Sign in again or refresh the session token."
             4403 -> "WebSocket rejected (4403). Check Host/peer guards — remote dashboards must bind non-loopback and match the URL host."
+            4404 -> "WebSocket target not found (4404). The durable Hermes session may no longer exist."
+            4408 -> "WebSocket policy rejected (4408). Check the dashboard policy and connection scope before retrying."
             else -> null
         }
     }

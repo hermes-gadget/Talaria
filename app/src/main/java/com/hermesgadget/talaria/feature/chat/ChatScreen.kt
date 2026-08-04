@@ -225,31 +225,42 @@ fun ChatScreen(
         if (searchedLines.isNotEmpty()) listState.scrollToItem(searchedLines.lastIndex)
     }
 
-    val status = when {
-        active?.connecting == true -> stringResource(R.string.chat_status_connecting)
-        active?.connected == true -> {
-            var liveStatus = stringResource(
-                R.string.chat_status_live,
-                active.modelLabel ?: stringResource(R.string.app_name),
-            )
-            val reasoningEffort = active.reasoningEffort?.takeIf { it.isNotBlank() }
-            if (reasoningEffort != null) {
-                liveStatus += stringResource(R.string.chat_status_detail, reasoningEffort)
+    val status = when (val recovery = active?.transportRecovery) {
+        is ChatTransportRecoveryState.Recovering -> stringResource(
+            R.string.chat_status_recovering,
+            recovery.attempt,
+            recovery.maxAttempts,
+            ((recovery.delayMs + 999L) / 1000L).coerceAtLeast(1L),
+        )
+        ChatTransportRecoveryState.Reconciled -> stringResource(R.string.chat_status_reconciled)
+        is ChatTransportRecoveryState.Retry -> stringResource(R.string.chat_status_retry)
+        null -> stringResource(R.string.chat_status_disconnected)
+        ChatTransportRecoveryState.None -> when {
+            active?.connecting == true -> stringResource(R.string.chat_status_connecting)
+            active?.connected == true -> {
+                var liveStatus = stringResource(
+                    R.string.chat_status_live,
+                    active.modelLabel ?: stringResource(R.string.app_name),
+                )
+                val reasoningEffort = active.reasoningEffort?.takeIf { it.isNotBlank() }
+                if (reasoningEffort != null) {
+                    liveStatus += stringResource(R.string.chat_status_detail, reasoningEffort)
+                }
+                val approvalMode = active.approvalMode?.takeIf { it.isNotBlank() }
+                if (approvalMode != null) {
+                    liveStatus += stringResource(R.string.chat_status_detail, approvalMode)
+                }
+                if (active.yolo) liveStatus += stringResource(R.string.chat_status_yolo)
+                if (active.totalTokens != null) {
+                    liveStatus += stringResource(R.string.chat_status_tokens, active.totalTokens)
+                }
+                if (active.costUsd != null) {
+                    liveStatus += stringResource(R.string.chat_status_cost, active.costUsd)
+                }
+                liveStatus
             }
-            val approvalMode = active.approvalMode?.takeIf { it.isNotBlank() }
-            if (approvalMode != null) {
-                liveStatus += stringResource(R.string.chat_status_detail, approvalMode)
-            }
-            if (active.yolo) liveStatus += stringResource(R.string.chat_status_yolo)
-            if (active.totalTokens != null) {
-                liveStatus += stringResource(R.string.chat_status_tokens, active.totalTokens)
-            }
-            if (active.costUsd != null) {
-                liveStatus += stringResource(R.string.chat_status_cost, active.costUsd)
-            }
-            liveStatus
+            else -> stringResource(R.string.chat_status_disconnected)
         }
-        else -> stringResource(R.string.chat_status_disconnected)
     }
 
     if (active?.prompt != null) {
@@ -655,7 +666,10 @@ fun ChatScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.clickable(
-                                enabled = active != null && !active.connected && !active.connecting,
+                                enabled = active != null &&
+                                    !active.connected &&
+                                    !active.connecting &&
+                                    active.transportRecovery !is ChatTransportRecoveryState.Retry,
                             ) { vm.reconnectDisconnected() },
                         )
                     }
@@ -1209,6 +1223,37 @@ fun ChatScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(vertical = 4.dp),
                 )
+            }
+            when (val recovery = active?.transportRecovery) {
+                is ChatTransportRecoveryState.Recovering -> Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(vertical = 4.dp),
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                    Text(
+                        recovery.reason,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                is ChatTransportRecoveryState.Retry -> Column(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                ) {
+                    Text(
+                        recovery.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    TextButton(onClick = { active?.id?.let(vm::reconnectTab) }) {
+                        Text(stringResource(R.string.common_retry))
+                    }
+                }
+                ChatTransportRecoveryState.None,
+                ChatTransportRecoveryState.Reconciled -> Unit
+                null -> Unit
             }
             when (val action = ui.sessionControls.action) {
                 is ChatSessionActionState.Running -> Row(

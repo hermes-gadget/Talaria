@@ -33,7 +33,12 @@ import com.hermesgadget.talaria.core.network.HermesSideEvent
 import com.hermesgadget.talaria.core.network.ProfileRegistry
 import com.hermesgadget.talaria.core.network.PromptKind
 import com.hermesgadget.talaria.core.network.PtyEvent
-import com.hermesgadget.talaria.core.network.PtyWebSocketSession
+import com.hermesgadget.talaria.core.network.PtyPromptDeliveryLedger
+import com.hermesgadget.talaria.core.network.PtyPromptDeliveryStart
+import com.hermesgadget.talaria.core.network.PtyTransportFactory
+import com.hermesgadget.talaria.core.network.PtyTransportState
+import com.hermesgadget.talaria.core.network.PtyTransportSupervisor
+import com.hermesgadget.talaria.core.network.PtyWebSocketTransportConnection
 import com.hermesgadget.talaria.core.notifications.AgentTaskNotificationService
 import com.hermesgadget.talaria.core.notifications.AgentThreadIdentity
 import com.hermesgadget.talaria.core.voice.SpeechCoordinator
@@ -64,6 +69,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -107,6 +113,18 @@ data class ChatImageAttachmentUi(
     val error: String? = null,
 )
 
+sealed interface ChatTransportRecoveryState {
+    data object None : ChatTransportRecoveryState
+    data class Recovering(
+        val attempt: Int,
+        val maxAttempts: Int,
+        val delayMs: Long,
+        val reason: String,
+    ) : ChatTransportRecoveryState
+    data object Reconciled : ChatTransportRecoveryState
+    data class Retry(val message: String) : ChatTransportRecoveryState
+}
+
 /** One running Hermes agent (its own PTY + sidecar), shown as a tab. */
 data class ChatTab(
     val id: String,
@@ -147,6 +165,7 @@ data class ChatTab(
     val queuedPrompts: List<String> = emptyList(),
     val imageAttachments: List<ChatImageAttachmentUi> = emptyList(),
     val hasSent: Boolean = false,
+    val transportRecovery: ChatTransportRecoveryState = ChatTransportRecoveryState.None,
 )
 
 data class ChatUiState(
@@ -192,9 +211,10 @@ data class ChatPromptUi(
 )
 
 private class SessionRuntime(
-    val session: PtyWebSocketSession,
+    val transport: PtyTransportSupervisor,
     val eventClient: HermesEventClient,
     var collectJob: Job? = null,
+    var transportStateJob: Job? = null,
     var sideJob: Job? = null,
     var readingJob: Job? = null,
     var readingRequestJob: Job? = null,
@@ -208,6 +228,8 @@ private class SessionRuntime(
     var baselineSessions: Set<String> = emptySet(),
     var baselineReady: Boolean = false,
     var sidecarEventsSeen: Boolean = false,
+    var recoveryPending: Boolean = false,
+    val promptDelivery: PtyPromptDeliveryLedger = PtyPromptDeliveryLedger(),
 )
 
 private data class PendingChatImage(
@@ -281,6 +303,35 @@ class ChatViewModel(
     private var serverSttScope: String? = null
     private var serverSttProbeGeneration = 0L
     private val serverSttCapabilities = mutableMapOf<String, CachedServerSttCapability>()
+
+    private fun createPtyTransport(
+        snapshot: com.hermesgadget.talaria.core.network.ConnectionSnapshot,
+        resumeSessionId: String?,
+        channelId: String,
+        tabId: String? = null,
+    ): PtyTransportSupervisor = PtyTransportSupervisor(
+        scope = viewModelScope,
+        factory = PtyTransportFactory { generation, gate ->
+            val (session, flow) = chatRepository.openPty(
+                snapshot = snapshot,
+                // A blank tab may learn its durable Hermes id after the first
+                // PTY output. Every later generation must use that id rather
+                // than creating a second session with resume=null.
+                resumeSessionId = tabId?.let { id ->
+                    _ui.value.tabs.firstOrNull { it.id == id }
+                        ?.let { it.resumeSessionId ?: it.liveSessionId }
+                } ?: resumeSessionId,
+                channelId = channelId,
+                cols = lastCols,
+                rows = lastRows,
+                generationId = generation,
+                generationGate = gate,
+            )
+            // openPty constructs a new PtyWebSocketSession for every attempt;
+            // its connect() call therefore mints a fresh ticket per generation.
+            PtyWebSocketTransportConnection(session, flow)
+        },
+    )
 
     /** Called by the screen: make sure at least one session exists (optionally resuming). */
     fun ensureStarted(resume: String? = null) {
@@ -385,10 +436,11 @@ class ChatViewModel(
         slashCompletionJob?.cancel()
         runtimes.values.forEach {
             it.collectJob?.cancel()
+            it.transportStateJob?.cancel()
             it.sideJob?.cancel()
             it.readingJob?.cancel()
             it.readingRequestJob?.cancel()
-            it.session.close()
+            it.transport.stop()
             it.eventClient.dispose()
         }
         _ui.value.tabs.forEach { AgentTaskNotificationService.stopWatching(TalariaApp.instance, it.id) }
@@ -484,12 +536,53 @@ class ChatViewModel(
             // PtyWebSocketSession reads the active connection profile when it
             // opens. Keep reconnects on the foreground profile; background
             // runtimes already have their sockets and are left untouched.
-            .filter { it.profileName == activeProfileName && !it.connected && !it.connecting }
+            .filter {
+                it.profileName == activeProfileName &&
+                    !it.connected &&
+                    !it.connecting &&
+                    it.transportRecovery !is ChatTransportRecoveryState.Retry
+            }
             .forEach { reconnectTab(it.id) }
+    }
+
+    private fun startRuntime(tabId: String, runtime: SessionRuntime) {
+        runtime.sideJob = viewModelScope.launch {
+            runtime.eventClient.events.collect {
+                if (runtimes[tabId] === runtime) handleSideEvent(tabId, it)
+            }
+        }
+        runtime.collectJob = viewModelScope.launch {
+            runtime.transport.events.collect { event ->
+                if (runtimes[tabId] === runtime) {
+                    handlePtyEvent(tabId, event.generation, event.event)
+                }
+            }
+        }
+        runtime.transportStateJob = viewModelScope.launch {
+            runtime.transport.state.collect { state ->
+                if (runtimes[tabId] === runtime) handleTransportState(tabId, runtime, state)
+            }
+        }
+        runtime.transport.start()
     }
 
     fun reconnectTab(tabId: String) {
         val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return
+        val existing = runtimes[tabId]
+        if (tab.transportRecovery is ChatTransportRecoveryState.Retry && existing != null) {
+            if (existing.transport.retry()) {
+                existing.recoveryPending = true
+                updateTab(tabId) {
+                    it.copy(
+                        error = null,
+                        connecting = true,
+                        connected = false,
+                        transportRecovery = ChatTransportRecoveryState.None,
+                    )
+                }
+            }
+            return
+        }
         if (tab.connected || tab.connecting) return
         val snapshot = container.clientFactory.snapshot()
         if (snapshot == null || snapshot.managementProfile != tab.profileName) {
@@ -505,10 +598,11 @@ class ChatViewModel(
 
         val old = runtimes.remove(tabId)
         old?.collectJob?.cancel()
+        old?.transportStateJob?.cancel()
         old?.sideJob?.cancel()
         old?.readingJob?.cancel()
         old?.readingRequestJob?.cancel()
-        old?.session?.close()
+        old?.transport?.stop()
         old?.eventClient?.dispose()
         removePendingLocalCreation(tabId)
 
@@ -529,9 +623,8 @@ class ChatViewModel(
             .orEmpty()
             .map { it.id }
             .toSet()
-        val (pty, flow) = chatRepository.openPty(snapshot, resume, channel, lastCols, lastRows)
         val rt = SessionRuntime(
-            session = pty,
+            transport = createPtyTransport(snapshot, resume, channel, tabId),
             eventClient = eventClient,
             baselineSessions = old?.baselineSessions ?: baselineBeforeOpen,
             baselineReady = old?.baselineReady ?: true,
@@ -559,27 +652,16 @@ class ChatViewModel(
                 connecting = true,
                 connected = false,
                 error = null,
-                working = false,
                 imageAttachments = it.imageAttachments.map { image ->
                     image.copy(status = ChatImageAttachmentStatus.READY, error = null)
                 },
+                transportRecovery = ChatTransportRecoveryState.None,
             )
         }
         resume?.let { ProfileRegistry.markConnecting(tab.profileName, it) }
 
         eventClient.start(channel)
-        rt.sideJob = viewModelScope.launch {
-            eventClient.events.collect { handleSideEvent(tabId, it) }
-        }
-        rt.collectJob = viewModelScope.launch {
-            try {
-                flow.collect { event -> handlePtyEvent(tabId, event) }
-            } catch (t: Throwable) {
-                updateTab(tabId) {
-                    it.copy(error = t.message ?: "Chat connection failed", connecting = false, connected = false)
-                }
-            }
-        }
+        startRuntime(tabId, rt)
         if (old == null || !rt.baselineReady) {
             viewModelScope.launch {
                 val list = sessionsForProfile(tab.profileName)
@@ -613,9 +695,8 @@ class ChatViewModel(
             .orEmpty()
             .map { it.id }
             .toSet()
-        val (pty, flow) = chatRepository.openPty(snapshot, resume, channel, lastCols, lastRows)
         val rt = SessionRuntime(
-            session = pty,
+            transport = createPtyTransport(snapshot, resume, channel, id),
             eventClient = eventClient,
             baselineSessions = baselineBeforeOpen,
             baselineReady = true,
@@ -655,18 +736,7 @@ class ChatViewModel(
         }
 
         eventClient.start(channel)
-        rt.sideJob = viewModelScope.launch {
-            eventClient.events.collect { handleSideEvent(id, it) }
-        }
-        rt.collectJob = viewModelScope.launch {
-            try {
-                flow.collect { event -> handlePtyEvent(id, event) }
-            } catch (t: Throwable) {
-                updateTab(id) {
-                    it.copy(error = t.message ?: "Chat connection failed", connecting = false, connected = false)
-                }
-            }
-        }
+        startRuntime(id, rt)
         // Snapshot existing sessions so this tab only claims the new one it creates.
         viewModelScope.launch {
             val list = hermesRepository.refreshSessions().getOrNull().orEmpty()
@@ -694,10 +764,11 @@ class ChatViewModel(
         pendingImages.remove(tabId)
         val rt = runtimes.remove(tabId)
         rt?.collectJob?.cancel()
+        rt?.transportStateJob?.cancel()
         rt?.sideJob?.cancel()
         rt?.readingJob?.cancel()
         rt?.readingRequestJob?.cancel()
-        rt?.session?.close()
+        rt?.transport?.stop()
         rt?.eventClient?.dispose()
         _ui.value.tabs.firstOrNull { it.id == tabId }?.let { tab ->
             releaseSession(tabId, tab.liveSessionId)
@@ -809,13 +880,15 @@ class ChatViewModel(
                     container.wsAuthHelper,
                     fixedSnapshot = snapshot,
                 )
-                val (pty, flow) = chatRepository.openPty(snapshot, s.id, channel, lastCols, lastRows)
-                val rt = SessionRuntime(session = pty, eventClient = eventClient)
+                val rt = SessionRuntime(
+                    transport = createPtyTransport(snapshot, s.id, channel, id),
+                    eventClient = eventClient,
+                )
                 runtimes[id] = rt
                 autoOpenedTabs.add(id)
                 if (!claimSession(id, s.id)) {
                     runtimes.remove(id)
-                    rt.session.close()
+                    rt.transport.stop()
                     rt.eventClient.dispose()
                     autoOpenedTabs.remove(id)
                     continue
@@ -838,18 +911,7 @@ class ChatViewModel(
                 ProfileRegistry.markConnecting(profileName, s.id)
 
                 eventClient.start(channel)
-                rt.sideJob = viewModelScope.launch {
-                    eventClient.events.collect { handleSideEvent(id, it) }
-                }
-                rt.collectJob = viewModelScope.launch {
-                    try {
-                        flow.collect { event -> handlePtyEvent(id, event) }
-                    } catch (t: Throwable) {
-                        updateTab(id) {
-                            it.copy(error = t.message ?: "Chat connection failed", connecting = false, connected = false)
-                        }
-                    }
-                }
+                startRuntime(id, rt)
                 requestReading(id, s.id)
                 startReadingPoll(id)
 
@@ -994,8 +1056,9 @@ class ChatViewModel(
                 runtime.readingJob?.cancel()
                 runtime.readingRequestJob?.cancel()
                 runtime.collectJob?.cancel()
+                runtime.transportStateJob?.cancel()
                 runtime.sideJob?.cancel()
-                runtime.session.close()
+                runtime.transport.stop()
                 runtime.eventClient.dispose()
                 AgentTaskNotificationService.stopWatching(TalariaApp.instance, creation.tabId)
                 updateTab(creation.tabId) {
@@ -1021,10 +1084,11 @@ class ChatViewModel(
         pendingImages.remove(tabId)
         val rt = runtimes.remove(tabId)
         rt?.collectJob?.cancel()
+        rt?.transportStateJob?.cancel()
         rt?.sideJob?.cancel()
         rt?.readingJob?.cancel()
         rt?.readingRequestJob?.cancel()
-        rt?.session?.close()
+        rt?.transport?.stop()
         rt?.eventClient?.dispose()
         _ui.value.tabs.firstOrNull { it.id == tabId }?.let { tab ->
             releaseSession(tabId, tab.liveSessionId)
@@ -1542,7 +1606,7 @@ class ChatViewModel(
         if (sessionId == null) {
             // Before the gateway has assigned a session id, the PTY command is
             // the only session-scoped path available.
-            runtime.session.sendText("/model $modelId")
+            runtime.transport.sendTextChecked("/model $modelId")
             updateTab(tabId) { it.copy(modelLabel = modelId) }
             return
         }
@@ -2031,6 +2095,15 @@ class ChatViewModel(
             if (imageNames.isNotEmpty()) add(imageNames.joinToString(prefix = "🖼 ", separator = ", "))
             if (payload.isNotEmpty()) add(payload)
         }.joinToString("\n\n").ifEmpty { prompt }
+        val deliveryId = UUID.randomUUID().toString()
+        if (runtime.promptDelivery.begin(deliveryId) != PtyPromptDeliveryStart.SEND) return
+        val sendResult = runtime.transport.sendTextChecked(prompt)
+        val frameAccepted = runtime.promptDelivery.complete(deliveryId, sendResult)
+        if (sendResult.isFailure && !frameAccepted) {
+            val message = sendResult.exceptionOrNull()?.message ?: "PTY rejected the prompt"
+            updateTab(tabId) { it.copy(error = message, working = false) }
+            return
+        }
         val userLine = ChatLine(UUID.randomUUID().toString(), "user", displayText)
         updateTab(tabId) {
             it.copy(
@@ -2054,7 +2127,6 @@ class ChatViewModel(
         _ui.value.tabs.firstOrNull { it.id == tabId }?.let { current ->
             AgentTaskNotificationService.startWatching(TalariaApp.instance, current.toAgentWatch())
         }
-        runtime.session.sendText(prompt)
         if (_ui.value.activeTabId == tabId && _ui.value.active?.draft.isNullOrEmpty()) {
             viewModelScope.launch { chatRepository.saveDraft("") }
         }
@@ -2063,7 +2135,7 @@ class ChatViewModel(
     /** Send Ctrl-C (interrupt) to the active agent's PTY (terminal pane, 15.13). */
     fun sendInterrupt() {
         val tabId = _ui.value.active?.id ?: return
-        runtimes[tabId]?.session?.sendRaw("")
+        runtimes[tabId]?.transport?.sendRawChecked("")
         AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
         updateTab(tabId) { it.copy(working = false, tools = emptyList()) }
         _ui.update { it.copy(transcriptMode = TranscriptMode.READING) }
@@ -2072,7 +2144,7 @@ class ChatViewModel(
     fun resizePty(cols: Int, rows: Int) {
         lastCols = cols.coerceIn(20, 200)
         lastRows = rows.coerceIn(10, 80)
-        runtimes.values.forEach { it.session.resize(lastCols, lastRows) }
+        runtimes.values.forEach { it.transport.resizeChecked(lastCols, lastRows) }
     }
 
     fun respondPrompt(approved: Boolean, text: String? = null) {
@@ -2351,7 +2423,124 @@ class ChatViewModel(
         }
     }
 
-    private fun handlePtyEvent(tabId: String, event: PtyEvent) {
+    private fun handleTransportState(
+        tabId: String,
+        runtime: SessionRuntime,
+        state: PtyTransportState,
+    ) {
+        if (runtimes[tabId] !== runtime) return
+        when (state) {
+            PtyTransportState.Idle -> Unit
+            PtyTransportState.Stopped -> updateTab(tabId) {
+                it.copy(connected = false, connecting = false)
+            }
+            is PtyTransportState.Connecting -> updateTab(tabId) {
+                it.copy(
+                    connecting = true,
+                    connected = false,
+                    error = null,
+                    transportRecovery = if (runtime.recoveryPending) {
+                        it.transportRecovery
+                    } else {
+                        ChatTransportRecoveryState.None
+                    },
+                )
+            }
+            is PtyTransportState.Connected -> {
+                val tab = _ui.value.tabs.firstOrNull { it.id == tabId }
+                tab?.let { it.liveSessionId ?: it.resumeSessionId }
+                    ?.let { ProfileRegistry.markActive(tab.profileName, it) }
+                updateTab(tabId) { it.copy(connecting = false, connected = true, error = null) }
+                if (runtime.recoveryPending) {
+                    val sessionId = tab?.resumeSessionId ?: tab?.liveSessionId
+                    if (sessionId.isNullOrBlank()) {
+                        runtime.recoveryPending = false
+                        updateTab(tabId) { it.copy(transportRecovery = ChatTransportRecoveryState.Reconciled) }
+                    } else {
+                        requestReading(tabId, sessionId) { loaded ->
+                            if (runtimes[tabId] === runtime) {
+                                runtime.recoveryPending = false
+                                updateTab(tabId) {
+                                    it.copy(
+                                        transportRecovery = if (loaded) {
+                                            ChatTransportRecoveryState.Reconciled
+                                        } else {
+                                            ChatTransportRecoveryState.Retry(
+                                                "PTY reconnected, but the REST transcript could not be refreshed.",
+                                            )
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                applyProfileRegistry(ProfileRegistry.state.value)
+            }
+            is PtyTransportState.Recovering -> {
+                runtime.recoveryPending = true
+                updateTab(tabId) {
+                    it.copy(
+                        connected = false,
+                        connecting = true,
+                        error = null,
+                        transportRecovery = ChatTransportRecoveryState.Recovering(
+                            attempt = state.attempt,
+                            maxAttempts = state.maxAttempts,
+                            delayMs = state.delayMs,
+                            reason = state.reason,
+                        ),
+                    )
+                }
+            }
+            is PtyTransportState.Exhausted -> {
+                val tab = _ui.value.tabs.firstOrNull { it.id == tabId }
+                runtime.recoveryPending = false
+                finalizeAssistant(tabId)
+                AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
+                if (tab?.resumeSessionId == null && tab?.liveSessionId == null) {
+                    removePendingLocalCreation(tabId)
+                }
+                tab?.let { it.liveSessionId ?: it.resumeSessionId }
+                    ?.let { ProfileRegistry.markDisconnected(tab.profileName, it) }
+                updateTab(tabId) {
+                    it.copy(
+                        connected = false,
+                        connecting = false,
+                        working = false,
+                        error = null,
+                        transportRecovery = ChatTransportRecoveryState.Retry(state.message),
+                    )
+                }
+                container.notifier.notifyError("Chat disconnected", state.message)
+                applyProfileRegistry(ProfileRegistry.state.value)
+                val sessionId = tab?.resumeSessionId ?: tab?.liveSessionId
+                if (!sessionId.isNullOrBlank()) {
+                    // Show the last authoritative REST transcript before the
+                    // single manual retry action becomes the only recovery path.
+                    requestReading(tabId, sessionId) { loaded ->
+                        updateTab(tabId) { current ->
+                            if (current.transportRecovery !is ChatTransportRecoveryState.Retry) {
+                                current
+                            } else if (loaded) {
+                                current.copy(
+                                    transportRecovery = ChatTransportRecoveryState.Retry(
+                                        "${state.message} Latest REST transcript loaded.",
+                                    ),
+                                )
+                            } else {
+                                current
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun handlePtyEvent(tabId: String, generation: Long, event: PtyEvent) {
+        val runtime = runtimes[tabId] ?: return
+        if (!runtime.transport.isCurrentGeneration(generation)) return
         val profileName = profileNameForTab(tabId)
         val tab = _ui.value.tabs.firstOrNull { it.id == tabId }
         when (event) {
@@ -2362,28 +2551,10 @@ class ChatViewModel(
                 applyProfileRegistry(ProfileRegistry.state.value)
             }
             is PtyEvent.Output -> appendAssistant(tabId, event.text)
-            is PtyEvent.Closed -> {
-                AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
-                finalizeAssistant(tabId)
-                if (tab?.resumeSessionId == null && tab?.liveSessionId == null) {
-                    removePendingLocalCreation(tabId)
-                }
-                tab?.let { it.liveSessionId ?: it.resumeSessionId }
-                    ?.let { ProfileRegistry.markDisconnected(profileName, it) }
-                updateTab(tabId) { it.copy(connected = false, connecting = false, working = false) }
-                applyProfileRegistry(ProfileRegistry.state.value)
-            }
-            is PtyEvent.Failure -> {
-                AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
-                if (tab?.resumeSessionId == null && tab?.liveSessionId == null) {
-                    removePendingLocalCreation(tabId)
-                }
-                tab?.let { it.liveSessionId ?: it.resumeSessionId }
-                    ?.let { ProfileRegistry.markDisconnected(profileName, it) }
-                updateTab(tabId) { it.copy(error = event.message, connecting = false, connected = false, working = false) }
-                container.notifier.notifyError("Chat disconnected", event.message)
-                applyProfileRegistry(ProfileRegistry.state.value)
-            }
+            // Failure/close is owned by the supervisor state machine. Keeping
+            // these callbacks side-effect free lets transient PTY loss retain
+            // the sidecar's working/complete events during recovery.
+            is PtyEvent.Closed, is PtyEvent.Failure -> Unit
         }
     }
 
@@ -2444,13 +2615,20 @@ class ChatViewModel(
         return candidate.id
     }
 
-    private fun requestReading(tabId: String, sessionId: String) {
+    private fun requestReading(
+        tabId: String,
+        sessionId: String,
+        onComplete: ((loaded: Boolean) -> Unit)? = null,
+    ) {
         val rt = runtimes[tabId] ?: return
         rt.readingRequestJob?.cancel()
         val generation = ++rt.readingGeneration
         rt.readingRequestJob = viewModelScope.launch {
             try {
-                loadReading(tabId, sessionId, rt, generation)
+                val loaded = loadReading(tabId, sessionId, rt, generation)
+                if (runtimes[tabId] === rt && rt.readingGeneration == generation) {
+                    onComplete?.invoke(loaded)
+                }
             } finally {
                 if (rt.readingRequestJob === kotlinx.coroutines.currentCoroutineContext()[Job]) {
                     rt.readingRequestJob = null
@@ -2464,7 +2642,8 @@ class ChatViewModel(
         sessionId: String,
         rt: SessionRuntime,
         generation: Long,
-    ) {
+    ): Boolean {
+        var loaded = false
         rt.readingMutex.withLock {
             if (runtimes[tabId] !== rt || rt.readingGeneration != generation) {
                 return@withLock
@@ -2473,6 +2652,7 @@ class ChatViewModel(
                 if (runtimes[tabId] !== rt || rt.readingGeneration != generation) {
                     return@onSuccess
                 }
+                loaded = true
                 val lines = msgs.mapIndexed { idx, m ->
                     ChatLine(id = "$sessionId-$idx", role = m.role ?: "assistant", text = m.content.orEmpty())
                 }.filter {
@@ -2513,6 +2693,7 @@ class ChatViewModel(
                 if (shouldDrainQueue) drainQueuedPrompt(tabId)
             }
         }
+        return loaded
     }
 
     private suspend fun sessionsForProfile(profileName: String): List<SessionSummary> {
@@ -2826,10 +3007,11 @@ class ChatViewModel(
         }
         runtimes.values.forEach {
             it.collectJob?.cancel()
+            it.transportStateJob?.cancel()
             it.sideJob?.cancel()
             it.readingJob?.cancel()
             it.readingRequestJob?.cancel()
-            it.session.close()
+            it.transport.stop()
             it.eventClient.dispose()
         }
         runtimes.clear()

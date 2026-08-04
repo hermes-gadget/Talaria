@@ -32,7 +32,7 @@ sealed class PtyEvent {
     data class Output(val text: String, val raw: String) : PtyEvent()
     data class Connected(val sessionKey: String, val channel: String) : PtyEvent()
     data class Closed(val code: Int, val reason: String) : PtyEvent()
-    data class Failure(val message: String) : PtyEvent()
+    data class Failure(val message: String, val code: Int? = null) : PtyEvent()
 }
 
 /** The individual WebSocket frames accepted by a prompt send. */
@@ -64,6 +64,9 @@ class PtyWebSocketSession(
     private val snapshot: ConnectionSnapshot,
     /** Optional auth value captured for the same immutable transport snapshot. */
     private val fixedAuthQuery: String? = null,
+    /** Optional supervisor generation; stale sockets cannot emit or send. */
+    private val generationId: Long? = null,
+    private val generationGate: PtyGenerationGate? = null,
 ) {
     private enum class SocketState {
         DISCONNECTED,
@@ -88,12 +91,23 @@ class PtyWebSocketSession(
         rows: Int = 24,
         attachToken: String? = null,
     ): Flow<PtyEvent> = callbackFlow {
+        if (!generationIsCurrent()) {
+            trySend(PtyEvent.Failure(staleGenerationMessage()))
+            close()
+            return@callbackFlow
+        }
         this@PtyWebSocketSession.channel = channelId
         state = SocketState.CONNECTING
         // callbackFlow's builder is already suspendable. Waiting directly keeps
         // token discovery and ticket minting off the main thread instead of
         // freezing Compose during a remote HTTP round trip.
         val auth = fixedAuthQuery ?: wsAuth.authQueryParam(snapshot)
+        if (!generationIsCurrent()) {
+            state = SocketState.DISCONNECTED
+            trySend(PtyEvent.Failure(staleGenerationMessage()))
+            close()
+            return@callbackFlow
+        }
         val url = HermesWebSocketUrlBuilder.build(
             baseUrl = snapshot.baseUrl,
             endpoint = "api/pty",
@@ -117,31 +131,39 @@ class PtyWebSocketSession(
         val request = Request.Builder().url(url).build()
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (!generationIsCurrent()) {
+                    webSocket.close(1000, "stale generation")
+                    return
+                }
                 socket = webSocket
                 state = SocketState.CONNECTED
                 trySend(PtyEvent.Connected(key, channelId))
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (!generationIsCurrent()) return
                 trySend(PtyEvent.Output(ansi.append(text), text))
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                if (!generationIsCurrent()) return
                 val text = bytes.utf8()
                 trySend(PtyEvent.Output(ansi.append(text), text))
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                if (!generationIsCurrent()) return
                 state = SocketState.CLOSING
                 webSocket.close(code, reason)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (!generationIsCurrent()) return
                 state = SocketState.DISCONNECTED
                 if (socket === webSocket) socket = null
                 val hint = WsAuthHelper.explainCloseCode(code)
                 if (hint != null) {
-                    trySend(PtyEvent.Failure(hint))
+                    trySend(PtyEvent.Failure(hint, code))
                 } else {
                     trySend(PtyEvent.Closed(code, reason))
                 }
@@ -149,9 +171,10 @@ class PtyWebSocketSession(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (!generationIsCurrent()) return
                 state = SocketState.DISCONNECTED
                 if (socket === webSocket) socket = null
-                trySend(PtyEvent.Failure(t.message ?: "WebSocket failure"))
+                trySend(PtyEvent.Failure(t.message ?: "WebSocket failure", response?.code))
                 close()
             }
         }
@@ -172,6 +195,7 @@ class PtyWebSocketSession(
      * background prompt paths.
      */
     fun sendTextChecked(text: String): Result<PtySendReceipt> {
+        if (!generationIsCurrent()) return staleGenerationFailure()
         val ws = connectedSocket() ?: return Result.failure(
             PtySendException(
                 "PTY is not connected",
@@ -212,6 +236,7 @@ class PtyWebSocketSession(
 
     /** Send one raw PTY frame and report whether OkHttp accepted it. */
     fun sendRawChecked(text: String): Result<PtySendReceipt> {
+        if (!generationIsCurrent()) return staleGenerationFailure()
         if (text.isEmpty()) {
             return Result.failure(
                 PtySendException("PTY raw frame is empty", PtySendReceipt()),
@@ -256,7 +281,7 @@ class PtyWebSocketSession(
         // as garbage, flooding the transcript and corrupting typed input. Send
         // just the escape, and only when the dimensions actually change so we
         // don't spam the socket on every IME/layout tick.
-        if (state != SocketState.CONNECTED) {
+        if (!generationIsCurrent() || state != SocketState.CONNECTED) {
             return Result.failure(PtySendException("PTY is not connected", PtySendReceipt()))
         }
         if (lastResize == cols to rows) {
@@ -275,5 +300,15 @@ class PtyWebSocketSession(
     }
 
     private fun connectedSocket(): WebSocket? =
-        socket?.takeIf { state == SocketState.CONNECTED }
+        socket?.takeIf { state == SocketState.CONNECTED && generationIsCurrent() }
+
+    private fun generationIsCurrent(): Boolean =
+        generationId == null || generationGate?.isCurrent(generationId) == true
+
+    private fun staleGenerationMessage(): String =
+        "PTY generation ${generationId ?: "unknown"} is stale and cannot accept input"
+
+    private fun staleGenerationFailure(): Result<PtySendReceipt> = Result.failure(
+        PtySendException(staleGenerationMessage(), PtySendReceipt()),
+    )
 }

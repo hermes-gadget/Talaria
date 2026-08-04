@@ -22,6 +22,7 @@ import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
 import com.hermesgadget.talaria.core.network.HermesClientFactory
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.PtyEvent
+import com.hermesgadget.talaria.core.network.PtyGenerationGate
 import com.hermesgadget.talaria.core.network.PtyWebSocketSession
 import com.hermesgadget.talaria.core.network.WsAuthHelper
 import com.hermesgadget.talaria.domain.model.scopeId
@@ -41,11 +42,15 @@ class ChatRepository(
         cols: Int = 80,
         rows: Int = 24,
         attachToken: String? = null,
+        generationId: Long? = null,
+        generationGate: PtyGenerationGate? = null,
     ): Pair<PtyWebSocketSession, Flow<PtyEvent>> {
         val session = PtyWebSocketSession(
             client = clientFactory.webSocketClient(snapshot),
             wsAuth = wsAuth,
             snapshot = snapshot,
+            generationId = generationId,
+            generationGate = generationGate,
         )
         return session to session.connect(resumeSessionId, channelId, cols, rows, attachToken)
     }
