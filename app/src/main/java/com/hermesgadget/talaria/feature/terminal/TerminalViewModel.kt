@@ -27,6 +27,7 @@ import com.hermesgadget.talaria.core.network.HermesSideEvent
 import com.hermesgadget.talaria.core.network.PtyEvent
 import com.hermesgadget.talaria.core.network.PtyWebSocketSession
 import com.hermesgadget.talaria.domain.model.TerminalBackendsResponse
+import com.hermesgadget.talaria.core.util.suspendResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -110,7 +111,7 @@ class TerminalViewModel(
         val profile = container.connectionStore.activeProfile()?.effectiveManagementProfile() ?: return
         viewModelScope.launch {
             _ui.update { it.copy(backendsLoading = true, backendError = null) }
-            runCatching {
+            suspendResult {
                 container.clientFactory.api().getTerminalBackends(profile)
             }.fold(
                 onSuccess = { response ->
@@ -141,7 +142,7 @@ class TerminalViewModel(
         if (requested.isEmpty() || _ui.value.backendSelecting != null) return
         viewModelScope.launch {
             _ui.update { it.copy(backendSelecting = requested, backendError = null) }
-            runCatching {
+            suspendResult {
                 container.clientFactory.api().selectTerminalBackend(
                     body = buildJsonObject { put("backend", requested) },
                     profile = profile,
@@ -300,8 +301,8 @@ class TerminalViewModel(
             }
             is PtyEvent.Output -> {
                 val raw = event.raw.ifEmpty { event.text }
-                val nextOutput = output.append(raw)
-                _ui.update { it.copy(output = nextOutput) }
+                output.append(raw)
+                _ui.update { it.copy(output = output.displayText) }
             }
             is PtyEvent.Closed -> {
                 eventClient?.stop()

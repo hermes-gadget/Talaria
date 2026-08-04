@@ -19,6 +19,8 @@ package com.hermesgadget.talaria.core.network
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
 import com.hermesgadget.talaria.domain.model.AuthMode
 import com.hermesgadget.talaria.domain.model.ConnectionSecrets
+import com.hermesgadget.talaria.core.util.suspendResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -57,71 +59,78 @@ class WsAuthHelper(
      * Returns e.g. `ticket=…` or `token=…` (without leading `?` / `&`).
      * Empty string when no credentials are available.
      */
-    suspend fun authQueryParam(snapshot: ConnectionSnapshot): String = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            SnapshotAuthGuard.requireCurrent(
-                snapshot,
-                connectionStore.snapshotFor(snapshot.connectionId),
-            )
-            val scope = snapshot.transportScope()
-            val api = clientFactory.api(snapshot)
-            val authRequired = cachedAuthRequired
-                ?.takeIf { it.first == scope }
-                ?.second
-                ?: run {
-                    val discovery = runCatching {
-                        api.getStatus(profile = snapshot.managementProfile).auth_required == true
+    suspend fun authQueryParam(snapshot: ConnectionSnapshot): String = try {
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                SnapshotAuthGuard.requireCurrent(
+                    snapshot,
+                    connectionStore.snapshotFor(snapshot.connectionId),
+                )
+                val scope = snapshot.transportScope()
+                val api = clientFactory.api(snapshot)
+                val authRequired = cachedAuthRequired
+                    ?.takeIf { it.first == scope }
+                    ?.second
+                    ?: run {
+                        val discovery = suspendResult {
+                            api.getStatus(profile = snapshot.managementProfile).auth_required == true
+                        }
+                        discovery.exceptionOrNull()?.rethrowIfCancellationLike()
+                        discovery.getOrDefault(
+                            snapshot.authMode == AuthMode.BASIC || snapshot.authMode == AuthMode.OIDC_BROWSER,
+                        ).also { cachedAuthRequired = scope to it }
                     }
-                    discovery.exceptionOrNull()?.rethrowSafeCancellation()
-                    discovery.getOrDefault(
-                        snapshot.authMode == AuthMode.BASIC || snapshot.authMode == AuthMode.OIDC_BROWSER,
-                    ).also { cachedAuthRequired = scope to it }
+
+                if (authRequired) {
+                    val ticketResult = suspendResult { api.wsTicket().ticket }
+                    ticketResult.exceptionOrNull()?.rethrowIfCancellationLike()
+                    val ticket = ticketResult.getOrNull()
+                    if (!ticket.isNullOrBlank()) return@withLock "ticket=${ticket.trim()}"
                 }
 
-            if (authRequired) {
-                val ticketResult = runCatching { api.wsTicket().ticket }
-                ticketResult.exceptionOrNull()?.rethrowSafeCancellation()
-                val ticket = ticketResult.getOrNull()
-                if (!ticket.isNullOrBlank()) return@withLock "ticket=${ticket.trim()}"
-            }
-
-            // Loopback dashboards embed the process session token in the SPA shell.
-            // REST often works without it when auth_required=false, but /api/pty and
-            // /api/ws reject the previous process token after a dashboard restart.
-            // Always prefer the currently advertised token here: the encrypted value
-            // is only a fallback for a temporarily unavailable SPA shell.
-            if (!authRequired) {
-                fetchLoopbackSessionToken(snapshot)?.let { current ->
-                    SnapshotAuthGuard.requireCurrent(
-                        snapshot,
-                        connectionStore.snapshotFor(snapshot.connectionId),
-                    )
-                    return@withLock "token=$current"
+                // Loopback dashboards embed the process session token in the SPA shell.
+                // REST often works without it when auth_required=false, but /api/pty and
+                // /api/ws reject the previous process token after a dashboard restart.
+                // Always prefer the currently advertised token here: the encrypted value
+                // is only a fallback for a temporarily unavailable SPA shell.
+                if (!authRequired) {
+                    fetchLoopbackSessionToken(snapshot)?.let { current ->
+                        SnapshotAuthGuard.requireCurrent(
+                            snapshot,
+                            connectionStore.snapshotFor(snapshot.connectionId),
+                        )
+                        return@withLock "token=$current"
+                    }
                 }
-            }
 
-            snapshot.sessionToken?.takeIf { it.isNotBlank() }?.let {
-                return@withLock "token=${it.trim()}"
+                snapshot.sessionToken?.takeIf { it.isNotBlank() }?.let {
+                    return@withLock "token=${it.trim()}"
+                }
+                ""
             }
-            ""
         }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Throwable) {
+        failure.rethrowIfCancellationLike()
+        throw failure
     }
 
-    private fun fetchLoopbackSessionToken(snapshot: ConnectionSnapshot): String? {
+    private suspend fun fetchLoopbackSessionToken(snapshot: ConnectionSnapshot): String? {
         val base = snapshot.baseUrl.trimEnd('/')
         val req = Request.Builder()
             .url("$base/")
             .header("Accept", "text/html")
             .get()
             .build()
-        val result = runCatching {
+        val result = suspendResult {
             clientFactory.okHttp(snapshot).newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 val body = resp.body?.string().orEmpty()
                 SESSION_TOKEN_RE.find(body)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
             }
         }
-        result.exceptionOrNull()?.rethrowSafeCancellation()
+        result.exceptionOrNull()?.rethrowIfCancellationLike()
         return result.getOrNull()
     }
 
@@ -151,7 +160,16 @@ class WsAuthHelper(
         )
     }
 
-    private fun Throwable.rethrowSafeCancellation() {
-        if (message.orEmpty().contains("operation was safely canceled", ignoreCase = true)) throw this
+    private fun Throwable.rethrowIfCancellationLike() {
+        var current: Throwable? = this
+        while (current != null) {
+            if (current is CancellationException) throw current
+            if (current.message.orEmpty().contains("operation was safely canceled", ignoreCase = true) ||
+                current.message.orEmpty().contains("operation was safely cancelled", ignoreCase = true)
+            ) {
+                throw CancellationException("WebSocket authentication canceled", current)
+            }
+            current = current.cause
+        }
     }
 }

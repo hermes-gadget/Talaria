@@ -67,7 +67,9 @@ import com.hermesgadget.talaria.domain.model.ToolCallUi
 import com.hermesgadget.talaria.domain.model.scopeId
 import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
 import com.hermesgadget.talaria.feature.manage.sessions.SessionFilters
+import com.hermesgadget.talaria.core.util.BoundedTextBuffer
 import com.hermesgadget.talaria.core.util.suspendResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
@@ -96,6 +98,9 @@ import java.util.Base64
 import java.util.UUID
 
 enum class TranscriptMode { TERMINAL, READING }
+
+private const val MAX_ANSWER_BUFFER_CHARS = 256 * 1024
+private const val ANSWER_TRUNCATION_MARKER = "Earlier live output omitted; full history remains on server"
 
 internal val CHAT_REASONING_EFFORTS = listOf(
     "none",
@@ -229,8 +234,8 @@ private class SessionRuntime(
     var readingRequestJob: Job? = null,
     var readingGeneration: Long = 0L,
     val readingMutex: Mutex = Mutex(),
-    var assistantBuffer: StringBuilder = StringBuilder(),
-    var sidecarAssistantBuffer: StringBuilder = StringBuilder(),
+    var assistantBuffer: BoundedTextBuffer = BoundedTextBuffer(MAX_ANSWER_BUFFER_CHARS),
+    var sidecarAssistantBuffer: BoundedTextBuffer = BoundedTextBuffer(MAX_ANSWER_BUFFER_CHARS),
     var readingSessionId: String? = null,
     // Sessions that already existed when this tab opened; its own session is a
     // NEW id that appears afterwards, which lets concurrent tabs each claim theirs.
@@ -1614,6 +1619,8 @@ class ChatViewModel(
                     )
                 }
                 refreshSessions()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (failure: Throwable) {
                 setSessionActionFailure(
                     ChatSessionActionKind.REWIND,
@@ -1670,6 +1677,8 @@ class ChatViewModel(
                     )
                 }
                 refreshSessions()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (failure: Throwable) {
                 setSessionActionFailure(
                     ChatSessionActionKind.EDIT,
@@ -1741,6 +1750,8 @@ class ChatViewModel(
                     )
                 }
                 refreshSessions()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (failure: Throwable) {
                 setSessionActionFailure(
                     ChatSessionActionKind.COMPACT,
@@ -2225,6 +2236,8 @@ class ChatViewModel(
                 if (runtimes[tabId] !== runtime || _ui.value.tabs.none { it.id == tabId }) return@launch
                 val names = attachmentIds.mapNotNull { pendingImages[tabId]?.get(it)?.image?.filename }
                 commitSend(tabId, payload, names, runtime)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (failure: Throwable) {
                 updateTab(tabId) { tab ->
                     tab.copy(
@@ -2289,7 +2302,8 @@ class ChatViewModel(
         // diagnostic idle view and must not expose model reasoning in flight.
         _ui.update { it.copy(showSlashPalette = false, transcriptMode = TranscriptMode.READING) }
         pendingImages.remove(tabId)
-        runtime.assistantBuffer = StringBuilder()
+        runtime.assistantBuffer = BoundedTextBuffer(MAX_ANSWER_BUFFER_CHARS)
+        runtime.sidecarAssistantBuffer = BoundedTextBuffer(MAX_ANSWER_BUFFER_CHARS)
         _ui.value.tabs.firstOrNull { it.id == tabId }?.let { current ->
             // Foreground sends are covered by the tab's own runtime socket;
             // only arm the background watch while actually backgrounded.
@@ -2547,6 +2561,8 @@ class ChatViewModel(
                 // STT is a tab-scoped producer, but it must use the same
                 // analysis/persistence path as ordinary composer edits.
                 updateDraft(tabId, merged, recordManualEdit = false)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: HttpException) {
                 if (!isCurrentVoiceScope(scopeId, generation, tabId)) return@launch
                 if (error.code() == 404) {
@@ -3015,24 +3031,21 @@ class ChatViewModel(
     private fun appendAssistant(tabId: String, text: String) {
         if (text.isBlank()) return
         val rt = runtimes[tabId] ?: return
-        // Bound the live answer builder: a runaway PTY stream must not grow the
-        // buffer without limit. Completion reloads the authoritative transcript
-        // from the server, so dropping late deltas only affects live preview.
-        if (rt.assistantBuffer.length < MAX_ANSWER_BUFFER_CHARS) {
-            rt.assistantBuffer.append(text)
-        }
+        // Append only remaining capacity. The server transcript remains
+        // authoritative after completion; the marker makes live omission clear.
+        rt.assistantBuffer.append(text)
         updateTab(tabId) { tab ->
             tab.copy(
                 assistantStreaming = true,
-                streamingText = rt.assistantBuffer.toString(),
+                streamingText = rt.assistantBuffer.displayText(ANSWER_TRUNCATION_MARKER),
             )
         }
     }
 
     private fun finalizeAssistant(tabId: String) {
         val rt = runtimes[tabId] ?: return
-        val full = rt.assistantBuffer.toString().trim()
-        rt.assistantBuffer = StringBuilder()
+        val full = rt.assistantBuffer.displayText(ANSWER_TRUNCATION_MARKER).trim()
+        rt.assistantBuffer = BoundedTextBuffer(MAX_ANSWER_BUFFER_CHARS)
         updateTab(tabId) { tab ->
             if (!tab.assistantStreaming) return@updateTab tab
             tab.copy(
@@ -3070,7 +3083,7 @@ class ChatViewModel(
                 bindSession(tabId, event.sessionId)
                 event.sessionId?.let { ProfileRegistry.markStreaming(profileNameForTab(tabId), it) }
                 runtimes[tabId]?.sidecarEventsSeen = true
-                runtimes[tabId]?.sidecarAssistantBuffer = StringBuilder()
+                runtimes[tabId]?.sidecarAssistantBuffer = BoundedTextBuffer(MAX_ANSWER_BUFFER_CHARS)
                 updateTab(tabId) {
                     it.copy(working = true, error = null)
                 }
@@ -3083,10 +3096,7 @@ class ChatViewModel(
                     val rt = runtimes[tabId] ?: return
                     // Buffer final-answer deltas for message.complete fallback,
                     // but do not expose partial output or reasoning in the UI.
-                    // Bounded like the main buffer — never grow without limit.
-                    if (rt.sidecarAssistantBuffer.length < MAX_ANSWER_BUFFER_CHARS) {
-                        rt.sidecarAssistantBuffer.append(event.text)
-                    }
+                    rt.sidecarAssistantBuffer.append(event.text)
                     updateTab(tabId) { it.copy(working = true) }
                 }
             }
@@ -3213,8 +3223,14 @@ class ChatViewModel(
         event.sessionId?.let { ProfileRegistry.markIdle(profileNameForTab(tabId), it) }
         val rt = runtimes[tabId] ?: return
         rt.sidecarEventsSeen = true
-        val full = event.text.trim().ifEmpty { rt.sidecarAssistantBuffer.toString().trim() }
-        rt.sidecarAssistantBuffer = StringBuilder()
+        val full = if (event.text.isNotBlank()) {
+            BoundedTextBuffer(MAX_ANSWER_BUFFER_CHARS).also { it.append(event.text) }
+                .displayText(ANSWER_TRUNCATION_MARKER)
+                .trim()
+        } else {
+            rt.sidecarAssistantBuffer.displayText(ANSWER_TRUNCATION_MARKER).trim()
+        }
+        rt.sidecarAssistantBuffer = BoundedTextBuffer(MAX_ANSWER_BUFFER_CHARS)
 
         updateTab(tabId) { tab ->
             val duplicate = full.isNotEmpty() && tab.readingMessages.lastOrNull()?.let {
@@ -3334,8 +3350,6 @@ class ChatViewModel(
         private const val SESSION_POLL_INTERVAL_MS = 30_000L
         private const val LOCAL_SESSION_DISCOVERY_TIMEOUT_MS = 60_000L
         private const val SERVER_STT_CAPABILITY_TTL_MS = 5 * 60 * 1000L
-        /** Live answer preview cap; authoritative transcript loads from the server on completion. */
-        private const val MAX_ANSWER_BUFFER_CHARS = 256 * 1024
         private val ARGUMENT_HINT = Regex("""\[[^]]+]|<[^>]+>""")
 
         fun factory() = object : ViewModelProvider.Factory {

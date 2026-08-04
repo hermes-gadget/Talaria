@@ -17,8 +17,11 @@
 package com.hermesgadget.talaria.core.network
 
 import com.hermesgadget.talaria.core.util.AnsiStripper
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -27,6 +30,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 sealed class PtyEvent {
     data class Output(val text: String, val raw: String) : PtyEvent()
@@ -92,7 +96,7 @@ class PtyWebSocketSession(
         attachToken: String? = null,
     ): Flow<PtyEvent> = callbackFlow {
         if (!generationIsCurrent()) {
-            trySend(PtyEvent.Failure(staleGenerationMessage()))
+            trySendBlocking(PtyEvent.Failure(staleGenerationMessage()))
             close()
             return@callbackFlow
         }
@@ -104,7 +108,7 @@ class PtyWebSocketSession(
         val auth = fixedAuthQuery ?: wsAuth.authQueryParam(snapshot)
         if (!generationIsCurrent()) {
             state = SocketState.DISCONNECTED
-            trySend(PtyEvent.Failure(staleGenerationMessage()))
+            trySendBlocking(PtyEvent.Failure(staleGenerationMessage()))
             close()
             return@callbackFlow
         }
@@ -122,13 +126,40 @@ class PtyWebSocketSession(
             ),
         ) ?: run {
             state = SocketState.DISCONNECTED
-            trySend(PtyEvent.Failure("Invalid dashboard URL"))
+            trySendBlocking(PtyEvent.Failure("Invalid dashboard URL"))
             close()
             return@callbackFlow
         }
         val key = UUID.randomUUID().toString()
         val ansi = AnsiStripper.Stream()
+        val oversizedFailurePending = AtomicBoolean(false)
         val request = Request.Builder().url(url).build()
+
+        fun emit(event: PtyEvent) {
+            // Connection, close, failure, and output events are delivered with
+            // bounded-channel backpressure instead of silently dropping a
+            // prompt boundary or a diagnostic frame when the UI is behind.
+            trySendBlocking(event)
+        }
+
+        fun rejectOversizedFrame(webSocket: WebSocket, binary: Boolean) {
+            if (!generationIsCurrent()) return
+            state = SocketState.CLOSING
+            oversizedFailurePending.set(true)
+            webSocket.close(
+                WebSocketFrameBudget.MESSAGE_TOO_BIG_CLOSE_CODE,
+                "message too large",
+            )
+            emit(
+                PtyEvent.Failure(
+                    "PTY ${if (binary) "binary" else "text"} frame exceeds ${WebSocketFrameBudget.MAX_FRAME_BYTES} bytes",
+                    WebSocketFrameBudget.MESSAGE_TOO_BIG_CLOSE_CODE,
+                ),
+            )
+            oversizedFailurePending.set(false)
+            close()
+        }
+
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (!generationIsCurrent()) {
@@ -137,18 +168,26 @@ class PtyWebSocketSession(
                 }
                 socket = webSocket
                 state = SocketState.CONNECTED
-                trySend(PtyEvent.Connected(key, channelId))
+                emit(PtyEvent.Connected(key, channelId))
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (!generationIsCurrent()) return
-                trySend(PtyEvent.Output(ansi.append(text), text))
+                if (!WebSocketFrameBudget.textWithinLimit(text)) {
+                    rejectOversizedFrame(webSocket, binary = false)
+                    return
+                }
+                emit(PtyEvent.Output(ansi.append(text), text))
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
                 if (!generationIsCurrent()) return
+                if (!WebSocketFrameBudget.binaryWithinLimit(bytes)) {
+                    rejectOversizedFrame(webSocket, binary = true)
+                    return
+                }
                 val text = bytes.utf8()
-                trySend(PtyEvent.Output(ansi.append(text), text))
+                emit(PtyEvent.Output(ansi.append(text), text))
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -161,11 +200,17 @@ class PtyWebSocketSession(
                 if (!generationIsCurrent()) return
                 state = SocketState.DISCONNECTED
                 if (socket === webSocket) socket = null
+                if (oversizedFailurePending.get() && code == WebSocketFrameBudget.MESSAGE_TOO_BIG_CLOSE_CODE) {
+                    // rejectOversizedFrame owns the failure event and closes
+                    // the flow after enqueueing it; keep the close callback
+                    // from racing a Closed event ahead of that failure.
+                    return
+                }
                 val hint = WsAuthHelper.explainCloseCode(code)
                 if (hint != null) {
-                    trySend(PtyEvent.Failure(hint, code))
+                    emit(PtyEvent.Failure(hint, code))
                 } else {
-                    trySend(PtyEvent.Closed(code, reason))
+                    emit(PtyEvent.Closed(code, reason))
                 }
                 close()
             }
@@ -174,7 +219,7 @@ class PtyWebSocketSession(
                 if (!generationIsCurrent()) return
                 state = SocketState.DISCONNECTED
                 if (socket === webSocket) socket = null
-                trySend(PtyEvent.Failure(t.message ?: "WebSocket failure", response?.code))
+                emit(PtyEvent.Failure(t.message ?: "WebSocket failure", response?.code))
                 close()
             }
         }
@@ -185,7 +230,10 @@ class PtyWebSocketSession(
             if (socket === ws) socket = null
             ws.close(1000, "client close")
         }
-    }
+    }.buffer(
+        capacity = PTY_EVENT_BUFFER_CAPACITY,
+        onBufferOverflow = BufferOverflow.SUSPEND,
+    )
 
     /**
      * Send the body and Enter frames, reporting whether each was accepted by
@@ -202,6 +250,14 @@ class PtyWebSocketSession(
                 PtySendReceipt(),
             ),
         )
+        if (!WebSocketFrameBudget.textWithinLimit(text)) {
+            return Result.failure(
+                PtySendException(
+                    "PTY prompt exceeds ${WebSocketFrameBudget.MAX_FRAME_BYTES} bytes",
+                    PtySendReceipt(),
+                ),
+            )
+        }
         val body = text.trimEnd('\n', '\r')
         var bodyAccepted = false
         if (body.isNotEmpty()) {
@@ -240,6 +296,14 @@ class PtyWebSocketSession(
         if (text.isEmpty()) {
             return Result.failure(
                 PtySendException("PTY raw frame is empty", PtySendReceipt()),
+            )
+        }
+        if (!WebSocketFrameBudget.textWithinLimit(text)) {
+            return Result.failure(
+                PtySendException(
+                    "PTY raw frame exceeds ${WebSocketFrameBudget.MAX_FRAME_BYTES} bytes",
+                    PtySendReceipt(),
+                ),
             )
         }
         val ws = connectedSocket() ?: return Result.failure(
@@ -312,3 +376,5 @@ class PtyWebSocketSession(
         PtySendException(staleGenerationMessage(), PtySendReceipt()),
     )
 }
+
+private const val PTY_EVENT_BUFFER_CAPACITY = 256

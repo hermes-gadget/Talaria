@@ -18,6 +18,7 @@ package com.hermesgadget.talaria.feature.terminal
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TerminalOutputBufferTest {
@@ -34,10 +35,14 @@ class TerminalOutputBufferTest {
     }
 
     @Test
-    fun boundsLongOutputToTheNewestCharacters() {
+    fun `bounds long output to the newest characters and displays truncation`() {
         val buffer = TerminalOutputBuffer(maxChars = 5)
 
         assertEquals("23456", buffer.append("123456"))
         assertEquals("6789a", buffer.append("789a"))
+        assertTrue(buffer.isTruncated)
+        assertEquals(5, buffer.droppedChars)
+        assertTrue(buffer.displayText.startsWith(TerminalOutputBuffer.TRUNCATION_MARKER))
+        assertTrue(buffer.diagnosticTailText.isNotEmpty())
     }
 }
