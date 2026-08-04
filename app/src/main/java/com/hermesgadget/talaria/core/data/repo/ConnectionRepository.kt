@@ -21,6 +21,9 @@ import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
 import com.hermesgadget.talaria.core.network.CleartextPolicy
 import com.hermesgadget.talaria.core.network.HermesClientFactory
 import com.hermesgadget.talaria.core.network.WsAuthHelper
+import com.hermesgadget.talaria.core.network.ConnectionSnapshot
+import com.hermesgadget.talaria.core.network.AuthInterceptor
+import com.hermesgadget.talaria.core.network.SnapshotAuthGuard
 import com.hermesgadget.talaria.core.security.CertificatePinnerFactory
 import com.hermesgadget.talaria.domain.model.AuthMode
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
@@ -31,6 +34,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Request
+import java.io.IOException
 import java.util.UUID
 
 class ConnectionRepository(
@@ -151,6 +156,7 @@ class ConnectionRepository(
             lastConnectedAt = previousProfile?.lastConnectedAt,
         )
         store.upsert(profile, secrets)
+        wsAuthHelper.invalidate()
         clientFactory.invalidate()
         profile
     }
@@ -165,19 +171,19 @@ class ConnectionRepository(
         clientFactory.invalidate()
     }
 
-    suspend fun testConnection(): Result<StatusResponse> = withContext(Dispatchers.IO) {
+    suspend fun testConnection(
+        snapshot: ConnectionSnapshot? = clientFactory.snapshot(),
+    ): Result<StatusResponse> = withContext(Dispatchers.IO) {
         runCatching {
-            val profile = store.activeProfile()
-                ?: error("Save a connection profile before testing it")
-            val snapshot = clientFactory.snapshotFor(profile.id, profile.managementProfile)
-                ?: error("The selected Hermes connection is no longer available")
-            val api = clientFactory.api(snapshot)
-            val status = api.getStatus(profile = snapshot.managementProfile)
+            val bound = snapshot ?: error("Save a connection profile before testing it")
+            val api = clientFactory.api(bound)
+            val status = api.getStatus(profile = bound.managementProfile)
+            var discoveredSessionToken: String? = null
             if (status.auth_required == true) {
-                check(profile.authMode != AuthMode.NONE) {
+                check(bound.authMode != AuthMode.NONE) {
                     "This Hermes dashboard requires authentication"
                 }
-                check(profile.authMode != AuthMode.SESSION_TOKEN) {
+                check(bound.authMode != AuthMode.SESSION_TOKEN) {
                     "This gated Hermes dashboard requires password, bearer, or browser authentication"
                 }
                 // This protected endpoint proves that password cookies or bearer
@@ -188,13 +194,40 @@ class ConnectionRepository(
                 // SPA shell. Discover it before probing a protected endpoint so
                 // a freshly saved, zero-config local connection can be tested.
                 wsAuthHelper.invalidate()
-                wsAuthHelper.authQueryParam()
+                val auth = wsAuthHelper.authQueryParam(bound)
                 // Prove the legacy session token/header on a protected endpoint.
-                api.getSessions(limit = 1, profile = snapshot.managementProfile)
+                discoveredSessionToken = auth.removePrefix("token=")
+                    .takeIf { auth.startsWith("token=") && it.isNotBlank() }
+                val currentToken = discoveredSessionToken
+                if (currentToken == null || currentToken == bound.sessionToken) {
+                    api.getSessions(limit = 1, profile = bound.managementProfile)
+                } else {
+                    val base = bound.baseUrl.toHttpUrlOrNull() ?: error("Invalid dashboard URL")
+                    val url = base.newBuilder()
+                        .addPathSegments("api/sessions")
+                        .addQueryParameter("limit", "1")
+                        .addQueryParameter("profile", bound.managementProfile)
+                        .build()
+                    val request = Request.Builder()
+                        .url(url)
+                        .header(AuthInterceptor.SESSION_HEADER, currentToken)
+                        .get()
+                        .build()
+                    clientFactory.okHttp(bound).newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            throw IOException("Hermes rejected the discovered session token (${response.code})")
+                        }
+                    }
+                }
             }
-            store.profiles.value.find { it.id == profile.id }
-                ?.copy(lastConnectedAt = System.currentTimeMillis())
-                ?.let(store::upsert)
+            check(
+                store.completeConnectionTestIfSnapshot(
+                    snapshot = bound,
+                    discoveredSessionToken = discoveredSessionToken,
+                    connectedAt = System.currentTimeMillis(),
+                ),
+            ) { SnapshotAuthGuard.CHANGED_MESSAGE }
+            clientFactory.invalidate()
             status
         }
     }

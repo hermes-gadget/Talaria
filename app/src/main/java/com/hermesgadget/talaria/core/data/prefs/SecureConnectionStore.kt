@@ -126,6 +126,26 @@ class SecureConnectionStore(context: Context) {
         )
     }
 
+    /** Commit connection-test metadata and an optional discovered token as one CAS update. */
+    fun completeConnectionTestIfSnapshot(
+        snapshot: ConnectionSnapshot,
+        discoveredSessionToken: String?,
+        connectedAt: Long,
+    ): Boolean = synchronized(mutationLock) {
+        val profile = _profiles.value.find { it.id == snapshot.connectionId } ?: return false
+        val current = ConnectionSnapshot.from(profile, readSecrets(snapshot.connectionId))
+        if (current.profile != snapshot.profile || current.secrets != snapshot.secrets) return false
+        val token = discoveredSessionToken?.trim()?.takeIf { it.isNotEmpty() }
+        upsert(
+            profile.copy(
+                hasSessionToken = profile.hasSessionToken || token != null,
+                lastConnectedAt = connectedAt,
+            ),
+            current.secrets.copy(sessionToken = token ?: current.sessionToken),
+        )
+        true
+    }
+
     /** Store native-app OAuth tokens in the encrypted connection record. */
     fun updateOidcTokens(
         id: String,

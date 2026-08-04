@@ -54,7 +54,7 @@ class AppContainer(context: Context) {
     val clientFactory = HermesClientFactory(connectionStore, settingsStore)
     val nativeOidcLogin = NativeOidcLogin(clientFactory, connectionStore)
     val wsAuthHelper = WsAuthHelper(clientFactory, connectionStore)
-    val eventClient = HermesEventClient(clientFactory, connectionStore, wsAuthHelper)
+    val eventClient = HermesEventClient(clientFactory, wsAuthHelper)
     val connectionRepository = ConnectionRepository(connectionStore, clientFactory, wsAuthHelper)
     val hermesRepository = HermesRepository(clientFactory, database, connectionStore, appContext)
     val chatRepository = ChatRepository(clientFactory, database, connectionStore, wsAuthHelper)

@@ -22,6 +22,7 @@ import com.hermesgadget.talaria.domain.model.ConnectionSecrets
 import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
 import com.hermesgadget.talaria.domain.model.scopeId
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.IOException
 
 /**
@@ -92,6 +93,55 @@ data class ConnectionSnapshot(
                 httpLoggingEnabled = httpLoggingEnabled,
             )
     }
+}
+
+/** Pure checks shared by REST, WebSocket, worker, car, and OIDC operation boundaries. */
+internal object SnapshotAuthGuard {
+    const val CHANGED_MESSAGE =
+        "The saved connection changed and the operation was safely canceled."
+    const val OIDC_CHANGED_MESSAGE =
+        "The saved connection changed while signing in and the operation was safely canceled."
+
+    fun isCurrent(saved: ConnectionSnapshot, current: ConnectionSnapshot?): Boolean =
+        current != null && current.sameTransportAs(saved) && current.secrets == saved.secrets
+
+    fun isExactCurrent(saved: ConnectionSnapshot, current: ConnectionSnapshot?): Boolean =
+        current != null && current.profile == saved.profile && current.secrets == saved.secrets
+
+    @Throws(IOException::class)
+    fun requireCurrent(
+        saved: ConnectionSnapshot,
+        current: ConnectionSnapshot?,
+        message: String = CHANGED_MESSAGE,
+    ) {
+        if (!isCurrent(saved, current)) throw IOException(message)
+    }
+
+    @Throws(IOException::class)
+    fun requireExactCurrent(
+        saved: ConnectionSnapshot,
+        current: ConnectionSnapshot?,
+        message: String = CHANGED_MESSAGE,
+    ) {
+        if (!isExactCurrent(saved, current)) throw IOException(message)
+    }
+
+    fun hasSameOrigin(snapshot: ConnectionSnapshot, url: HttpUrl): Boolean {
+        val saved = snapshot.baseUrl.toHttpUrlOrNull() ?: return false
+        return saved.scheme == url.scheme && saved.host == url.host && saved.port == url.port
+    }
+
+    @Throws(IOException::class)
+    fun requireSameOrigin(snapshot: ConnectionSnapshot, url: HttpUrl) {
+        if (!hasSameOrigin(snapshot, url)) {
+            throw IOException(
+                "The request origin did not match the saved connection and the operation was safely canceled.",
+            )
+        }
+    }
+
+    /** Native OIDC bootstrap and exchange routes never receive stored credentials. */
+    fun suppressCredentials(path: String): Boolean = path.startsWith("/auth/native/")
 }
 
 /** Cleartext is only a supported transport for explicitly verified local hosts. */

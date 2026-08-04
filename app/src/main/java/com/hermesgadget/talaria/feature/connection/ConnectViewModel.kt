@@ -26,6 +26,7 @@ import com.hermesgadget.talaria.core.network.CleartextPolicy
 import com.hermesgadget.talaria.core.network.WsAuthHelper
 import com.hermesgadget.talaria.core.network.NativeOidcLogin
 import com.hermesgadget.talaria.core.network.NativeOidcProvider
+import com.hermesgadget.talaria.core.network.SnapshotAuthGuard
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import com.hermesgadget.talaria.domain.model.AuthMode
 import com.hermesgadget.talaria.domain.model.CredentialPoolEntry
@@ -706,7 +707,11 @@ class ConnectViewModel(
                 )
                 draftProfileId = profile.id
                 repo.setActive(profile.id)
-                val result = repo.testConnection()
+                val snapshot = TalariaApp.instance.container.clientFactory.snapshotFor(
+                    profile.id,
+                    profile.managementProfile,
+                ) ?: error(SnapshotAuthGuard.CHANGED_MESSAGE)
+                val result = repo.testConnection(snapshot)
                 result.fold(
                     onSuccess = {
                         _ui.value = _ui.value.copy(
@@ -784,7 +789,7 @@ class ConnectViewModel(
             _ui.value = s.copy(diagnosing = true, doctorReport = null, error = null)
             val lines = mutableListOf<String>()
             try {
-                repo.save(
+                val profile = repo.save(
                     name = s.name,
                     baseUrl = s.baseUrl,
                     authMode = s.authMode,
@@ -796,17 +801,20 @@ class ConnectViewModel(
                     managementProfile = s.managementProfile,
                     pinSha256 = s.pinSha256.ifBlank { null },
                     existingId = draftProfileId,
-                ).also {
-                    draftProfileId = it.id
-                    repo.setActive(it.id)
-                }
+                )
+                draftProfileId = profile.id
+                repo.setActive(profile.id)
+                var snapshot = TalariaApp.instance.container.clientFactory.snapshotFor(
+                    profile.id,
+                    profile.managementProfile,
+                ) ?: error(SnapshotAuthGuard.CHANGED_MESSAGE)
 
                 lines += "URL: ${s.baseUrl.trimEnd('/')}"
                 if (s.baseUrl.contains("127.0.0.1") || s.baseUrl.contains("localhost")) {
                     lines += "Hint: On emulator use http://10.0.2.2:9119 (host loopback), not 127.0.0.1."
                 }
 
-                val status = repo.testConnection()
+                val status = repo.testConnection(snapshot)
                 status.fold(
                     onSuccess = { st ->
                         lines += "GET /api/status · OK · Hermes ${st.version ?: "?"}"
@@ -820,10 +828,16 @@ class ConnectViewModel(
                         lines += "Fix: confirm dashboard is up (`hermes dashboard`), URL reachable, and auth mode matches."
                     },
                 )
+                if (status.isSuccess) {
+                    snapshot = TalariaApp.instance.container.clientFactory.snapshotFor(
+                        profile.id,
+                        profile.managementProfile,
+                    ) ?: error(SnapshotAuthGuard.CHANGED_MESSAGE)
+                }
 
                 val container = TalariaApp.instance.container
                 container.wsAuthHelper.invalidate()
-                val authParam = container.wsAuthHelper.authQueryParam()
+                val authParam = container.wsAuthHelper.authQueryParam(snapshot)
                 when {
                     authParam.startsWith("ticket=") -> lines += "WS auth · ticket minted (gated dashboard path)"
                     authParam.startsWith("token=") -> lines += "WS auth · session token attached"
@@ -836,7 +850,11 @@ class ConnectViewModel(
                 lines += "Close 4403: ${WsAuthHelper.explainCloseCode(4403)}"
 
                 // Short PTY probe
-                val (pty, flow) = container.chatRepository.openPty(null, java.util.UUID.randomUUID().toString())
+                val (pty, flow) = container.chatRepository.openPty(
+                    snapshot,
+                    null,
+                    java.util.UUID.randomUUID().toString(),
+                )
                 var ptyResult = "timeout (3s) — check Host guards / pty extra"
                 try {
                     kotlinx.coroutines.withTimeout(3_000) {
@@ -905,8 +923,12 @@ class ConnectViewModel(
                 )
                 draftProfileId = profile.id
                 repo.setActive(profile.id)
+                val snapshot = TalariaApp.instance.container.clientFactory.snapshotFor(
+                    profile.id,
+                    profile.managementProfile,
+                ) ?: error(SnapshotAuthGuard.OIDC_CHANGED_MESSAGE)
 
-                val providers = nativeOidc.providers()
+                val providers = nativeOidc.providers(snapshot)
                 _ui.value = _ui.value.copy(oidcProviders = providers)
                 val provider = s.oidcProvider.takeIf { selected -> providers.any { it.name == selected } }
                     ?: providers.singleOrNull()?.name
@@ -915,8 +937,12 @@ class ConnectViewModel(
                     } else {
                         error("Choose an OAuth provider, then tap Sign in again")
                     }
-                nativeOidc.signIn(profile.id, provider, openBrowser)
-                val status = repo.testConnection().getOrThrow()
+                nativeOidc.signIn(snapshot, provider, openBrowser)
+                val completingSnapshot = TalariaApp.instance.container.clientFactory.snapshotFor(
+                    profile.id,
+                    profile.managementProfile,
+                ) ?: error(SnapshotAuthGuard.OIDC_CHANGED_MESSAGE)
+                val status = repo.testConnection(completingSnapshot).getOrThrow()
                 _ui.value = _ui.value.copy(
                     oidcSigningIn = false,
                     statusLine = "Signed in · Hermes ${status.version ?: "unknown"}",
