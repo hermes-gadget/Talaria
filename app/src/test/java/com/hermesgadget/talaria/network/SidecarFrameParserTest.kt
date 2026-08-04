@@ -49,8 +49,23 @@ class SidecarFrameParserTest {
     fun eventEnvelopeTypeIsNotClobbered() {
         val frame = """{"jsonrpc":"2.0","method":"event","params":{"type":"sessions.changed","session_id":"","payload":{}}}"""
         val event = SidecarFrameParser.parse(frame)
-        assertTrue(event is HermesSideEvent.Raw)
-        assertEquals("sessions.changed", (event as HermesSideEvent.Raw).type)
+        assertTrue(event is HermesSideEvent.SessionsChanged)
+        assertEquals("", (event as HermesSideEvent.SessionsChanged).sessionId)
+    }
+
+    @Test
+    fun parsesSessionEndedAndEventGap() {
+        val ended = SidecarFrameParser.parse(
+            """{"method":"event","params":{"type":"session.ended","session_id":"s1","payload":{"reason":"agent_close"}}}""",
+        ) as HermesSideEvent.SessionEnded
+        assertEquals("s1", ended.sessionId)
+        assertEquals("agent_close", ended.reason)
+
+        val gap = SidecarFrameParser.parse(
+            """{"type":"event.gap","session_id":"s1","payload":{"reason":"missed sequence"}}""",
+        ) as HermesSideEvent.EventGap
+        assertEquals("s1", gap.sessionId)
+        assertEquals("missed sequence", gap.reason)
     }
 
     @Test

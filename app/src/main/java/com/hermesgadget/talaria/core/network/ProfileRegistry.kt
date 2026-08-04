@@ -32,6 +32,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
@@ -54,6 +56,7 @@ object ProfileRegistry {
     val refreshErrors: StateFlow<Map<String, String>> = _refreshErrors.asStateFlow()
     private val _lastSuccessfulAt = MutableStateFlow<Map<String, Long>>(emptyMap())
     val lastSuccessfulAt: StateFlow<Map<String, Long>> = _lastSuccessfulAt.asStateFlow()
+    private val profileFetchSemaphore = Semaphore(MAX_PROFILE_FETCH_CONCURRENCY)
 
     fun reset() {
         _state.value = ProfileRegistryState()
@@ -104,6 +107,7 @@ object ProfileRegistry {
     suspend fun refresh(
         api: HermesApi,
         limit: Int = DEFAULT_SESSION_LIMIT,
+        preferredProfiles: Collection<String> = emptyList(),
     ): Result<ProfileRegistryState> = mutex.withLock {
         _state.updateLoading()
         try {
@@ -113,24 +117,27 @@ object ProfileRegistry {
             val names = (profiles.map(ProfileInfo::name) + HERMES_DEFAULT_PROFILE)
                 .map(::normalizeProfile)
                 .distinct()
+            val orderedNames = orderProfiles(names, preferredProfiles)
             val fetched = coroutineScope {
-                names.map { profile ->
+                orderedNames.map { profile ->
                     async(Dispatchers.IO) {
-                        val result = try {
-                            Result.success(
-                                decodeSessions(
-                                    api.getSessionsForProfile(
-                                        profile = profile,
-                                        limit = limit,
-                                        offset = 0,
-                                        order = "recent",
+                        val result = profileFetchSemaphore.withPermit {
+                            try {
+                                Result.success(
+                                    decodeSessions(
+                                        api.getSessionsForProfile(
+                                            profile = profile,
+                                            limit = limit,
+                                            offset = 0,
+                                            order = "recent",
+                                        ),
                                     ),
-                                ),
-                            )
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (failure: Throwable) {
-                            Result.failure(failure)
+                                )
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (failure: Throwable) {
+                                Result.failure(failure)
+                            }
                         }
                         profile to result
                     }
@@ -162,25 +169,44 @@ object ProfileRegistry {
                 loading = false,
                 error = failures.takeIf { it.isNotEmpty() }?.joinToString("; "),
             )
-            _refreshErrors.value = failureByProfile
-            _lastSuccessfulAt.value = _lastSuccessfulAt.value + successful.keys.associateWith {
+            if (_refreshErrors.value != failureByProfile) _refreshErrors.value = failureByProfile
+            val successfulAt = _lastSuccessfulAt.value + successful.keys.associateWith {
                 System.currentTimeMillis()
             }
-            _state.value = next
-            Result.success(next)
+            if (_lastSuccessfulAt.value != successfulAt) _lastSuccessfulAt.value = successfulAt
+            _state.publishIfChanged(next)
+            Result.success(_state.value)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
-            _state.value = _state.value.copy(
+            _state.publishIfChanged(_state.value.copy(
                 loading = false,
                 error = failure.message ?: "Profile registry refresh failed",
-            )
+            ))
             Result.failure(failure)
         }
     }
 
     private fun MutableStateFlow<ProfileRegistryState>.updateLoading() {
-        value = value.copy(loading = true, error = null)
+        publishIfChanged(value.copy(loading = true, error = null))
+    }
+
+    private fun MutableStateFlow<ProfileRegistryState>.publishIfChanged(next: ProfileRegistryState) {
+        if (value != next) value = next
+    }
+
+    /** Preferred/visible profiles are submitted first; the semaphore caps the rest. */
+    internal fun orderProfiles(
+        names: List<String>,
+        preferredProfiles: Collection<String>,
+    ): List<String> {
+        val preferred = preferredProfiles.map(::normalizeProfile).distinct()
+            .withIndex()
+            .associate { it.value to it.index }
+        return names.sortedWith(
+            compareBy<String> { preferred[it] ?: Int.MAX_VALUE }
+                .thenBy { it },
+        )
     }
 
     private fun mergeServerActivity(
@@ -222,4 +248,5 @@ object ProfileRegistry {
         profileName.trim().ifBlank { HERMES_DEFAULT_PROFILE }
 
     private const val DEFAULT_SESSION_LIMIT = 100
+    private const val MAX_PROFILE_FETCH_CONCURRENCY = 3
 }

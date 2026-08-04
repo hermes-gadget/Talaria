@@ -124,6 +124,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.awaitCancellation
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.MainActivity
 import com.hermesgadget.talaria.R
@@ -203,7 +204,13 @@ fun ChatScreen(
     LaunchedEffect(lifecycleOwner, connectionScope) {
         if (!hasConnection) return@LaunchedEffect
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            vm.reconnectDisconnected()
+            vm.setChatLifecycleStarted(true)
+            try {
+                vm.reconnectDisconnected()
+                awaitCancellation()
+            } finally {
+                vm.setChatLifecycleStarted(false)
+            }
         }
     }
     LaunchedEffect(initialShare, initialShareImage, ui.activeTabId) {
@@ -1221,6 +1228,14 @@ fun ChatScreen(
                     it,
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(vertical = 4.dp),
+                )
+            }
+            ui.reconciliationStatus?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 4.dp),
                 )
             }

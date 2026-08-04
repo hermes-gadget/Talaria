@@ -24,10 +24,10 @@ import kotlinx.coroutines.isActive
 
 /**
  * Runs [block] immediately and then every [intervalMs], but ONLY while the screen
- * is at least RESUMED. A plain `LaunchedEffect { while (isActive) … }` keeps firing
+ * is at least STARTED. A plain `LaunchedEffect { while (isActive) … }` keeps firing
  * when the app is backgrounded (the effect isn't lifecycle-aware), so poll-based
  * screens like Status and Logs would keep hitting the network off-screen. Gating on
- * [Lifecycle.State.RESUMED] pauses the loop on background and resumes it on return,
+ * [Lifecycle.State.STARTED] pauses the loop below a visible screen and resumes it on return,
  * saving battery, CPU and network. Pass [keys] to restart the loop (e.g. a manual
  * refresh tick or a changed filter).
  */
@@ -39,7 +39,7 @@ fun PollEffect(
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
     androidx.compose.runtime.LaunchedEffect(lifecycleOwner, *keys) {
-        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
                 block()
                 delay(intervalMs)

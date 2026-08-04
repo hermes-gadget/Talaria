@@ -28,6 +28,7 @@ import com.hermesgadget.talaria.core.data.prefs.PersistedChatTab
 import com.hermesgadget.talaria.core.data.prefs.PersistedAgentWatch
 import com.hermesgadget.talaria.core.data.repo.ChatRepository
 import com.hermesgadget.talaria.core.data.repo.HermesRepository
+import com.hermesgadget.talaria.core.data.repo.TranscriptSnapshot
 import com.hermesgadget.talaria.core.network.HermesEventClient
 import com.hermesgadget.talaria.core.network.HermesSideEvent
 import com.hermesgadget.talaria.core.network.ProfileRegistry
@@ -54,7 +55,6 @@ import com.hermesgadget.talaria.domain.model.MultiProfileSession
 import com.hermesgadget.talaria.domain.model.MultiProfileSessionMerger
 import com.hermesgadget.talaria.domain.model.ProfileRegistryState
 import com.hermesgadget.talaria.domain.model.ProfileStreamingState
-import com.hermesgadget.talaria.domain.model.SessionMessage
 import com.hermesgadget.talaria.domain.model.SessionSummary
 import com.hermesgadget.talaria.domain.model.SlashArgumentMode
 import com.hermesgadget.talaria.domain.model.SlashCommand
@@ -66,6 +66,9 @@ import com.hermesgadget.talaria.feature.manage.sessions.SessionFilters
 import com.hermesgadget.talaria.core.util.suspendResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -182,6 +185,8 @@ data class ChatUiState(
     /** Null means All profiles; a non-null value selects one profile. */
     val selectedSessionProfile: String? = null,
     val sessionListLoading: Boolean = false,
+    /** Non-fatal cached-data status; the last-good transcript remains visible. */
+    val reconciliationStatus: String? = null,
     val profileStreamingStates: Map<String, ProfileStreamingState> = emptyMap(),
     val modelOptions: List<ModelOption> = emptyList(),
     val showSessionRail: Boolean = false,
@@ -228,6 +233,10 @@ private class SessionRuntime(
     var baselineSessions: Set<String> = emptySet(),
     var baselineReady: Boolean = false,
     var sidecarEventsSeen: Boolean = false,
+    var eventsHealthy: Boolean = true,
+    var transcriptDirty: Boolean = false,
+    var transcriptDirtySessionId: String? = null,
+    var lastTranscriptContentKey: String? = null,
     var recoveryPending: Boolean = false,
     val promptDelivery: PtyPromptDeliveryLedger = PtyPromptDeliveryLedger(),
 )
@@ -277,6 +286,16 @@ class ChatViewModel(
     private var slashCompletionJob: Job? = null
     private var scopeLoadJob: Job? = null
     private var sessionPollJob: Job? = null
+    private var sessionRefreshJob: Job? = null
+    private var transcriptSignalJob: Job? = null
+    private var transcriptFallbackJob: Job? = null
+    private var chatLifecycleStarted = false
+    private var transcriptFallbackDelayMs = TranscriptSyncPolicy.IMMEDIATE_FALLBACK_DELAY_MS
+    private val transcriptSignals = MutableSharedFlow<String>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    private var sessionRegistryDirty = false
     private var lastCols = 80
     private var lastRows = 24
     private var initialDraft: String = ""
@@ -382,7 +401,11 @@ class ChatViewModel(
                 restorePersistedTabs()
             }
             refreshSessions()
-            startSessionPolling()
+            if (chatLifecycleStarted) {
+                startSessionPolling()
+                requestSessionRegistryRefresh()
+                markActiveTranscriptDirty(TranscriptDirtyReason.FOREGROUND_RESUME)
+            }
         }
     }
 
@@ -396,13 +419,57 @@ class ChatViewModel(
     private fun startSessionPolling() {
         if (sessionPollJob?.isActive == true) return
         sessionPollJob = viewModelScope.launch {
-            while (isActive) {
-                kotlinx.coroutines.delay(SESSION_POLL_INTERVAL_MS)
-                ProfileRegistry.refresh(container.clientFactory.api())
+            while (isActive && chatLifecycleStarted) {
+                delay(SESSION_POLL_INTERVAL_MS)
+                if (!chatLifecycleStarted) break
+                refreshProfileRegistry()
                     .onSuccess { applyProfileRegistry(it) }
+                    .onFailure {
+                        sessionRegistryDirty = true
+                        _ui.update { state ->
+                            state.copy(reconciliationStatus = LIVE_UPDATES_DELAYED_STATUS)
+                        }
+                    }
             }
         }
     }
+
+    /**
+     * Compose owns visibility; the ViewModel owns cancellation. A Chat route
+     * below STARTED cannot perform transcript or profile polling, even though
+     * its ViewModel may remain alive in the navigation back stack.
+     */
+    fun setChatLifecycleStarted(started: Boolean) {
+        if (chatLifecycleStarted == started) return
+        chatLifecycleStarted = started
+        if (!started) {
+            sessionPollJob?.cancel()
+            sessionPollJob = null
+            sessionRefreshJob?.cancel()
+            sessionRefreshJob = null
+            transcriptSignalJob?.cancel()
+            transcriptSignalJob = null
+            transcriptFallbackJob?.cancel()
+            transcriptFallbackJob = null
+            return
+        }
+        startTranscriptSync()
+        startSessionPolling()
+        requestSessionRegistryRefresh()
+        markActiveTranscriptDirty(TranscriptDirtyReason.FOREGROUND_RESUME)
+    }
+
+    private fun preferredRegistryProfiles(): Set<String> = buildSet {
+        _ui.value.selectedSessionProfile?.let(::add)
+        _ui.value.active?.profileName?.let(::add)
+        add(profileNameForActiveConnection())
+    }
+
+    private suspend fun refreshProfileRegistry(): Result<ProfileRegistryState> =
+        ProfileRegistry.refresh(
+            api = container.clientFactory.api(),
+            preferredProfiles = preferredRegistryProfiles(),
+        )
 
     private fun bindManagementProfile(scopeId: String, profileName: String, resume: String?) {
         scopeLoadJob?.cancel()
@@ -424,12 +491,25 @@ class ChatViewModel(
                 restorePersistedTabs()
             }
             refreshSessions()
+            if (chatLifecycleStarted) {
+                startSessionPolling()
+                requestSessionRegistryRefresh()
+                markActiveTranscriptDirty(TranscriptDirtyReason.FOREGROUND_RESUME)
+            }
         }
     }
 
     /** Tear down every socket and transient byte buffer before binding another Hermes home. */
     private fun resetForConnectionScope(scopeId: String) {
         scopeLoadJob?.cancel()
+        sessionPollJob?.cancel()
+        sessionPollJob = null
+        sessionRefreshJob?.cancel()
+        sessionRefreshJob = null
+        transcriptSignalJob?.cancel()
+        transcriptSignalJob = null
+        transcriptFallbackJob?.cancel()
+        transcriptFallbackJob = null
         connectionScopeGeneration += 1
         cancelVoiceInput()
         resetServerSttForScope(scopeId)
@@ -636,6 +716,10 @@ class ChatViewModel(
             rt.baselineReady = old.baselineReady
             rt.readingSessionId = old.readingSessionId
             rt.sidecarEventsSeen = old.sidecarEventsSeen
+            rt.eventsHealthy = old.eventsHealthy
+            rt.transcriptDirty = old.transcriptDirty
+            rt.transcriptDirtySessionId = old.transcriptDirtySessionId
+            rt.lastTranscriptContentKey = old.lastTranscriptContentKey
         }
         runtimes[tabId] = rt
         if (resume.isNullOrBlank()) {
@@ -671,7 +755,6 @@ class ChatViewModel(
             }
         }
         if (!resume.isNullOrBlank()) requestReading(tabId, resume)
-        startReadingPoll(tabId)
     }
 
     /** Open a brand-new concurrent agent in its own tab and focus it. */
@@ -746,7 +829,6 @@ class ChatViewModel(
             _ui.update { it.copy(sessions = list.take(40)) }
         }
         if (!resume.isNullOrBlank()) requestReading(id, resume)
-        startReadingPoll(id)
         persistChatState()
     }
 
@@ -755,6 +837,7 @@ class ChatViewModel(
         val tab = _ui.value.tabs.firstOrNull { it.id == tabId }
         updateComposerAnalysis(tab?.draft.orEmpty())
         persistChatState()
+        markTranscriptDirty(tabId, TranscriptDirtyReason.TAB_SELECTED)
     }
 
     fun closeTab(tabId: String) {
@@ -784,6 +867,7 @@ class ChatViewModel(
                 activeTabId = if (state.activeTabId == tabId) remaining.lastOrNull()?.id else state.activeTabId,
             )
         }
+        _ui.value.activeTabId?.let { markTranscriptDirty(it, TranscriptDirtyReason.TAB_SELECTED) }
         // Never leave the user on an empty Chats tab.
         if (_ui.value.tabs.isEmpty()) newSession() else persistChatState()
     }
@@ -795,22 +879,37 @@ class ChatViewModel(
     }
 
     fun refreshSessions() {
-        viewModelScope.launch {
-            _ui.update { it.copy(sessionListLoading = true) }
-            ProfileRegistry.refresh(container.clientFactory.api()).onSuccess { registry ->
-                applyProfileRegistry(registry)
-            }.onFailure { failure ->
-                _ui.update { it.copy(sessionListLoading = false) }
-            }
-            refreshSessionBranchOrigins()
+        if (!chatLifecycleStarted) {
+            sessionRegistryDirty = true
+            return
         }
+        requestSessionRegistryRefresh(showLoading = true)
     }
 
-    /** Select null for All profiles, or one of [ChatUiState.sessionProfileOptions]. */
-    fun selectSessionProfile(profileName: String?) {
-        val selected = profileName?.trim()?.takeIf { it.isNotEmpty() }
-        _ui.update { it.copy(selectedSessionProfile = selected) }
-        applyProfileRegistry(ProfileRegistry.state.value)
+    private fun requestSessionRegistryRefresh(showLoading: Boolean = false) {
+        sessionRegistryDirty = true
+        if (!chatLifecycleStarted || sessionRefreshJob?.isActive == true) return
+        sessionRefreshJob = viewModelScope.launch {
+            // Consume this request before the network call. A failure marks it
+            // dirty for the next lifecycle/30s refresh instead of spinning.
+            sessionRegistryDirty = false
+            if (showLoading) _ui.update { it.copy(sessionListLoading = true) }
+            refreshProfileRegistry().onSuccess { registry ->
+                applyProfileRegistry(registry)
+            }.onFailure {
+                // ProfileRegistry keeps each profile's last-good list. Do not
+                // replace the visible rail with an empty partial response.
+                sessionRegistryDirty = true
+                _ui.update {
+                    it.copy(
+                        sessionListLoading = false,
+                        reconciliationStatus = LIVE_UPDATES_DELAYED_STATUS,
+                    )
+                }
+            }
+            refreshSessionBranchOrigins()
+            sessionRefreshJob = null
+        }
     }
 
     private fun applyProfileRegistry(registry: ProfileRegistryState) {
@@ -831,7 +930,14 @@ class ChatViewModel(
                 profileStreamingStates = registry.streamingStates,
             )
         }
-        syncActiveSessions(registry)
+        if (chatLifecycleStarted) syncActiveSessions(registry)
+    }
+
+    /** Select null for All profiles, or one of [ChatUiState.sessionProfileOptions]. */
+    fun selectSessionProfile(profileName: String?) {
+        val selected = profileName?.trim()?.takeIf { it.isNotEmpty() }
+        _ui.update { it.copy(selectedSessionProfile = selected) }
+        applyProfileRegistry(ProfileRegistry.state.value)
     }
 
     /**
@@ -913,7 +1019,6 @@ class ChatViewModel(
                 eventClient.start(channel)
                 startRuntime(id, rt)
                 requestReading(id, s.id)
-                startReadingPoll(id)
 
                 // Register for background notifications so the user gets alerts
                 // for activity on every auto-opened session, not just the one
@@ -2558,39 +2663,121 @@ class ChatViewModel(
         }
     }
 
-    /** Reading mode = clean transcript from the sessions REST API, per tab. */
-    private fun startReadingPoll(tabId: String) {
-        val rt = runtimes[tabId] ?: return
-        rt.readingJob?.cancel()
-        rt.readingJob = viewModelScope.launch {
-            while (runtimes[tabId] === rt && isActive) {
-                val id = discoverSessionForTab(tabId)
-                if (id != null) {
-                    val tab = _ui.value.tabs.firstOrNull { it.id == tabId }
-                    if (tab?.liveSessionId == null && tab?.resumeSessionId != id) {
-                        bindSession(tabId, id)
-                        // A tab just claimed its session — snapshot so a cold start
-                        // resumes this thread (and every sibling) with its title.
-                        persistChatState(tab?.profileName ?: profileNameForTab(tabId))
-                    }
-                    // Await each read in this poll job. One-shot refreshes
-                    // cancel their own request and advance the generation so
-                    // an older equal-length response cannot overwrite it.
-                    rt.readingRequestJob?.cancel()
-                    val generation = ++rt.readingGeneration
-                    val request = launch {
-                        loadReading(tabId, id, rt, generation)
-                    }
-                    rt.readingRequestJob = request
-                    try {
-                        request.join()
-                    } finally {
-                        if (rt.readingRequestJob === request) rt.readingRequestJob = null
-                    }
+    /** One lifecycle-owned signal consumer plus one active-tab fallback timer. */
+    private fun startTranscriptSync() {
+        if (transcriptSignalJob?.isActive == true || transcriptFallbackJob?.isActive == true) return
+        transcriptSignalJob = viewModelScope.launch {
+            transcriptSignals.collect { tabId ->
+                if (!chatLifecycleStarted || _ui.value.activeTabId != tabId) return@collect
+                val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return@collect
+                val runtime = runtimes[tabId] ?: return@collect
+                val sessionId = runtime.transcriptDirtySessionId
+                    ?: tab.liveSessionId
+                    ?: tab.resumeSessionId
+                    ?: discoverSessionForTab(tabId)
+                    ?: return@collect
+                if (tab.liveSessionId == null && tab.resumeSessionId != sessionId) {
+                    bindSession(tabId, sessionId)
+                    persistChatState(tab.profileName)
                 }
-                kotlinx.coroutines.delay(2500)
+                val loaded = refreshReadingNow(tabId, sessionId)
+                if (loaded) {
+                    runtime.transcriptDirty = false
+                    runtime.transcriptDirtySessionId = null
+                    clearReconciliationStatus(tabId)
+                }
+                resolveTransportRecovery(tabId, runtime, loaded)
             }
         }
+        transcriptFallbackJob = viewModelScope.launch {
+            transcriptFallbackDelayMs = TranscriptSyncPolicy.IMMEDIATE_FALLBACK_DELAY_MS
+            while (isActive && chatLifecycleStarted) {
+                val tab = _ui.value.active
+                val runtime = tab?.id?.let(runtimes::get)
+                val shouldRun = TranscriptSyncPolicy.shouldRunFallback(
+                    lifecycleStarted = chatLifecycleStarted,
+                    activeTab = tab != null && tab.id == _ui.value.activeTabId,
+                    visible = chatLifecycleStarted,
+                    working = tab?.working == true,
+                    eventsHealthy = runtime?.eventsHealthy ?: true,
+                )
+                if (!shouldRun) {
+                    transcriptFallbackDelayMs = TranscriptSyncPolicy.IMMEDIATE_FALLBACK_DELAY_MS
+                    delay(500L)
+                    continue
+                }
+                delay(transcriptFallbackDelayMs)
+                if (!chatLifecycleStarted) break
+                val currentTab = _ui.value.active
+                val currentRuntime = currentTab?.id?.let(runtimes::get)
+                if (currentTab == null || currentRuntime == null) continue
+                val sessionId = currentRuntime.transcriptDirtySessionId
+                    ?: currentTab.liveSessionId
+                    ?: currentTab.resumeSessionId
+                    ?: continue
+                val loaded = refreshReadingNow(currentTab.id, sessionId)
+                transcriptFallbackDelayMs = TranscriptSyncPolicy.nextFallbackDelay(
+                    previousDelayMs = transcriptFallbackDelayMs,
+                    refreshSucceeded = loaded,
+                )
+                if (loaded) clearReconciliationStatus(currentTab.id)
+                resolveTransportRecovery(currentTab.id, currentRuntime, loaded)
+            }
+        }
+    }
+
+    private fun resolveTransportRecovery(tabId: String, runtime: SessionRuntime, loaded: Boolean) {
+        if (!runtime.recoveryPending || runtimes[tabId] !== runtime) return
+        runtime.recoveryPending = false
+        updateTab(tabId) {
+            it.copy(
+                transportRecovery = if (loaded) {
+                    ChatTransportRecoveryState.Reconciled
+                } else {
+                    ChatTransportRecoveryState.Retry(
+                        "PTY reconnected, but the REST transcript could not be refreshed.",
+                    )
+                },
+            )
+        }
+    }
+
+    private fun markActiveTranscriptDirty(reason: TranscriptDirtyReason) {
+        _ui.value.activeTabId?.let { markTranscriptDirty(it, reason) }
+    }
+
+    private fun markTranscriptDirty(
+        tabId: String,
+        reason: TranscriptDirtyReason,
+        sessionId: String? = null,
+        eventsHealthy: Boolean? = null,
+    ) {
+        val runtime = runtimes[tabId] ?: return
+        runtime.transcriptDirty = true
+        runtime.transcriptDirtySessionId = sessionId ?: runtime.transcriptDirtySessionId
+        eventsHealthy?.let { runtime.eventsHealthy = it }
+        if (chatLifecycleStarted && _ui.value.activeTabId == tabId) {
+            transcriptSignals.tryEmit(tabId)
+        }
+    }
+
+    private fun clearReconciliationStatus(tabId: String) {
+        if (_ui.value.activeTabId == tabId) {
+            _ui.update { it.copy(reconciliationStatus = null) }
+        }
+    }
+
+    private fun setReconciliationDelayed(tabId: String) {
+        if (_ui.value.activeTabId == tabId) {
+            _ui.update { it.copy(reconciliationStatus = LIVE_UPDATES_DELAYED_STATUS) }
+        }
+    }
+
+    private suspend fun refreshReadingNow(tabId: String, sessionId: String): Boolean {
+        val runtime = runtimes[tabId] ?: return false
+        runtime.readingRequestJob?.cancel()
+        val generation = ++runtime.readingGeneration
+        return loadReading(tabId, sessionId, runtime, generation)
     }
 
     /**
@@ -2621,6 +2808,11 @@ class ChatViewModel(
         onComplete: ((loaded: Boolean) -> Unit)? = null,
     ) {
         val rt = runtimes[tabId] ?: return
+        if (!chatLifecycleStarted || _ui.value.activeTabId != tabId) {
+            rt.transcriptDirty = true
+            rt.transcriptDirtySessionId = sessionId
+            return
+        }
         rt.readingRequestJob?.cancel()
         val generation = ++rt.readingGeneration
         rt.readingRequestJob = viewModelScope.launch {
@@ -2648,12 +2840,18 @@ class ChatViewModel(
             if (runtimes[tabId] !== rt || rt.readingGeneration != generation) {
                 return@withLock
             }
-            loadMessagesForProfile(tabId, sessionId).onSuccess { msgs ->
+            loadMessagesForProfile(tabId, sessionId).onSuccess { snapshot ->
                 if (runtimes[tabId] !== rt || rt.readingGeneration != generation) {
                     return@onSuccess
                 }
                 loaded = true
-                val lines = msgs.mapIndexed { idx, m ->
+                val contentChangedForTab = rt.lastTranscriptContentKey != snapshot.fingerprint.contentKey
+                rt.lastTranscriptContentKey = snapshot.fingerprint.contentKey
+                if (!contentChangedForTab) {
+                    clearReconciliationStatus(tabId)
+                    return@onSuccess
+                }
+                val lines = snapshot.messages.mapIndexed { idx, m ->
                     ChatLine(id = "$sessionId-$idx", role = m.role ?: "assistant", text = m.content.orEmpty())
                 }.filter {
                     it.text.isNotBlank() &&
@@ -2673,8 +2871,8 @@ class ChatViewModel(
                     }
                     // Never let a transient/empty server read wipe optimistic messages;
                     // only replace when the server transcript is a superset of what we show.
-                    // Equality guard: the 2.5s poll must not churn a full recomposition
-                    // when nothing actually changed.
+                    // Equality guard: a dirty event can race a local sidecar
+                    // update; do not publish an equal UI transcript.
                     if (lines.isNotEmpty() && lines != tab.readingMessages) {
                         rt.readingSessionId = sessionId
                         // The turn is done once the server transcript ends in an
@@ -2691,6 +2889,11 @@ class ChatViewModel(
                     }
                 }
                 if (shouldDrainQueue) drainQueuedPrompt(tabId)
+                clearReconciliationStatus(tabId)
+            }.onFailure {
+                // A failed read does not touch Room and does not replace the
+                // last-good UI transcript with an empty/partial response.
+                setReconciliationDelayed(tabId)
             }
         }
         return loaded
@@ -2709,19 +2912,10 @@ class ChatViewModel(
         }
     }
 
-    private suspend fun loadMessagesForProfile(tabId: String, sessionId: String): Result<List<SessionMessage>> {
+    private suspend fun loadMessagesForProfile(tabId: String, sessionId: String): Result<TranscriptSnapshot> {
         val tab = _ui.value.tabs.firstOrNull { it.id == tabId }
         val profileName = tab?.profileName ?: profileNameForActiveConnection()
-        if (profileName == profileNameForActiveConnection()) {
-            return hermesRepository.loadMessages(sessionId)
-        }
-        return withContext(Dispatchers.IO) {
-            suspendResult {
-                container.clientFactory.api()
-                    .getSessionMessages(sessionId, profile = profileName)
-                    .messages
-            }
-        }
+        return hermesRepository.loadMessagesSnapshot(sessionId, profileName)
     }
 
     private fun parseSessionsForProfile(raw: kotlinx.serialization.json.JsonElement): List<SessionSummary> {
@@ -2779,6 +2973,18 @@ class ChatViewModel(
 
     private fun handleSideEvent(tabId: String, event: HermesSideEvent) {
         dispatchAgentAlert(tabId, event)
+        if (event !is HermesSideEvent.TransportError && event !is HermesSideEvent.EventGap) {
+            runtimes[tabId]?.eventsHealthy = true
+        }
+        TranscriptSyncPolicy.dirtySignal(event)?.let { signal ->
+            markTranscriptDirty(
+                tabId = tabId,
+                reason = signal.reason,
+                sessionId = signal.sessionId,
+                eventsHealthy = signal.eventsHealthy,
+            )
+            if (signal.refreshSessionRegistry) requestSessionRegistryRefresh()
+        }
         when (event) {
             is HermesSideEvent.MessageStart -> {
                 bindSession(tabId, event.sessionId)
@@ -2813,6 +3019,13 @@ class ChatViewModel(
             }
             is HermesSideEvent.MessageComplete -> completeSidecarMessage(tabId, event)
             is HermesSideEvent.BackgroundComplete -> Unit
+            is HermesSideEvent.SessionsChanged -> Unit
+            is HermesSideEvent.SessionEnded -> {
+                event.sessionId?.let { ProfileRegistry.markDisconnected(profileNameForTab(tabId), it) }
+                updateTab(tabId) { it.copy(working = false, tools = emptyList()) }
+                applyProfileRegistry(ProfileRegistry.state.value)
+            }
+            is HermesSideEvent.EventGap -> Unit
             is HermesSideEvent.Status -> {
                 bindSession(tabId, event.sessionId)
                 event.sessionId?.let { ProfileRegistry.markStreaming(profileNameForTab(tabId), it) }
@@ -2960,7 +3173,11 @@ class ChatViewModel(
         updateTab(tabId) { it.copy(liveSessionId = sessionId) }
         ProfileRegistry.markActive(tab.profileName, sessionId)
         migrateInputHistory(oldHistoryKey, sessionId)
-        runtimes[tabId]?.readingSessionId = sessionId
+        runtimes[tabId]?.let { runtime ->
+            runtime.readingSessionId = sessionId
+            runtime.lastTranscriptContentKey = null
+            runtime.transcriptDirtySessionId = sessionId
+        }
         persistChatState(tab.profileName)
         _ui.value.tabs.firstOrNull { it.id == tabId }?.let {
             AgentTaskNotificationService.updateWatching(TalariaApp.instance, it.toAgentWatch())
@@ -3000,6 +3217,9 @@ class ChatViewModel(
         slashCompletionJob?.cancel()
         scopeLoadJob?.cancel()
         sessionPollJob?.cancel()
+        sessionRefreshJob?.cancel()
+        transcriptSignalJob?.cancel()
+        transcriptFallbackJob?.cancel()
         _ui.value.tabs.forEach { tab ->
             (tab.liveSessionId ?: tab.resumeSessionId)?.let {
                 ProfileRegistry.markDisconnected(tab.profileName, it)
@@ -3025,6 +3245,7 @@ class ChatViewModel(
     }
 
     companion object {
+        private const val LIVE_UPDATES_DELAYED_STATUS = "Live updates delayed; reconciling…"
         private const val SESSION_POLL_INTERVAL_MS = 30_000L
         private const val LOCAL_SESSION_DISCOVERY_TIMEOUT_MS = 60_000L
         private const val SERVER_STT_CAPABILITY_TTL_MS = 5 * 60 * 1000L

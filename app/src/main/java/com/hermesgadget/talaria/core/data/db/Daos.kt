@@ -29,17 +29,37 @@ interface SessionDao {
     @Query("SELECT * FROM cached_sessions WHERE connectionId = :connectionId ORDER BY updatedAt DESC")
     fun observeSessions(connectionId: String): Flow<List<CachedSessionEntity>>
 
+    @Query("SELECT * FROM cached_sessions WHERE connectionId = :connectionId")
+    suspend fun getAll(connectionId: String): List<CachedSessionEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(items: List<CachedSessionEntity>)
 
     @Query("DELETE FROM cached_sessions WHERE connectionId = :connectionId")
     suspend fun clear(connectionId: String)
+
+    @Query("DELETE FROM cached_sessions WHERE connectionId = :connectionId AND id IN (:ids)")
+    suspend fun deleteByIds(connectionId: String, ids: List<String>)
+
+    /** Atomically prune server-deleted sessions and write changed rows. */
+    @Transaction
+    suspend fun reconcile(
+        connectionId: String,
+        deleteIds: List<String>,
+        upserts: List<CachedSessionEntity>,
+    ) {
+        if (deleteIds.isNotEmpty()) deleteByIds(connectionId, deleteIds)
+        if (upserts.isNotEmpty()) upsertAll(upserts)
+    }
 }
 
 @Dao
 interface MessageDao {
     @Query("SELECT * FROM cached_messages WHERE connectionId = :connectionId AND sessionId = :sessionId ORDER BY ordinal ASC")
     fun observeMessages(connectionId: String, sessionId: String): Flow<List<CachedMessageEntity>>
+
+    @Query("SELECT * FROM cached_messages WHERE connectionId = :connectionId AND sessionId = :sessionId ORDER BY ordinal ASC")
+    suspend fun getSessionMessages(connectionId: String, sessionId: String): List<CachedMessageEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(items: List<CachedMessageEntity>)
