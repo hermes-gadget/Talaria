@@ -21,6 +21,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
+import com.hermesgadget.talaria.core.notifications.NotificationScope
 import kotlinx.coroutines.CancellationException
 
 /**
@@ -84,6 +85,10 @@ class HermesSyncWorker(
                             body = body,
                             platform = p.platform,
                             code = p.request_id ?: p.code,
+                            target = NotificationScope(
+                                connectionId = snapshot.connectionId,
+                                managementProfile = snapshot.managementProfile,
+                            ),
                         )
                     }
                     container.hermesRepository.recordActivity("pairing", "Pairing request", body, snapshot)

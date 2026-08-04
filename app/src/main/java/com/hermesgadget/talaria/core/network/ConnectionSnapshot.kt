@@ -140,6 +140,15 @@ internal object SnapshotAuthGuard {
     fun isExactCurrent(saved: ConnectionSnapshot, current: ConnectionSnapshot?): Boolean =
         current != null && current.profile == saved.profile && current.secrets == saved.secrets
 
+    /** A successful OIDC refresh rotates the bearer secret as part of this operation. */
+    fun isCurrentWithBearer(
+        saved: ConnectionSnapshot,
+        current: ConnectionSnapshot?,
+        bearerToken: String,
+    ): Boolean = current != null &&
+        current.sameTransportAs(saved) &&
+        current.bearerToken == bearerToken
+
     @Throws(IOException::class)
     fun requireCurrent(
         saved: ConnectionSnapshot,
@@ -156,6 +165,16 @@ internal object SnapshotAuthGuard {
         message: String = CHANGED_MESSAGE,
     ) {
         if (!isExactCurrent(saved, current)) throw IOException(message)
+    }
+
+    @Throws(IOException::class)
+    fun requireCurrentWithBearer(
+        saved: ConnectionSnapshot,
+        current: ConnectionSnapshot?,
+        bearerToken: String,
+        message: String = CHANGED_MESSAGE,
+    ) {
+        if (!isCurrentWithBearer(saved, current, bearerToken)) throw IOException(message)
     }
 
     fun hasSameOrigin(snapshot: ConnectionSnapshot, url: HttpUrl): Boolean {

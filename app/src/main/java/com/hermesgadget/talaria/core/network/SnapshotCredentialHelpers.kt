@@ -30,20 +30,24 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /** Password login helper whose URL, credentials, and cookie jar are snapshot-bound. */
 class SnapshotPasswordSessionManager(
     private val snapshot: ConnectionSnapshot,
     private val cookieJar: PersistentCookieJar,
+    private val currentSnapshot: () -> ConnectionSnapshot? = { snapshot },
 ) {
     private val lock = Any()
     @Volatile private var rejectedCredentialVersion: String? = null
 
     @Throws(IOException::class)
     fun ensureSession(requestUrl: HttpUrl) {
+        requireCurrent()
         if (cookieJar.hasCookiesFor(requestUrl)) return
         synchronized(lock) {
+            requireCurrent()
             if (cookieJar.hasCookiesFor(requestUrl)) return
             val username = snapshot.username.orEmpty()
             val password = snapshot.password.orEmpty()
@@ -65,6 +69,9 @@ class SnapshotPasswordSessionManager(
                     .url("${snapshot.baseUrl.trimEnd('/')}/auth/password-login")
                     .post(payload.toRequestBody(JSON_MEDIA_TYPE))
                     .build()
+                // The login body is the credential boundary. Recheck after
+                // provider discovery and immediately before transmission.
+                requireCurrent()
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
                         val detail = response.body?.string().orEmpty().take(512)
@@ -89,6 +96,10 @@ class SnapshotPasswordSessionManager(
 
     fun clearFailure() {
         rejectedCredentialVersion = null
+    }
+
+    private fun requireCurrent() {
+        SnapshotAuthGuard.requireCurrent(snapshot, currentSnapshot())
     }
 
     private fun discoverSinglePasswordProvider(client: OkHttpClient): String {
@@ -119,10 +130,13 @@ class SnapshotPasswordSessionManager(
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
+            // A credential POST must never be replayed to a Location target.
+            .followRedirects(false)
+            .followSslRedirects(false)
             .addInterceptor(CleartextPolicyInterceptor(snapshot))
             // Credential bootstrap follows the same per-hop origin and
             // cleartext checks as the main REST client.
-            .addNetworkInterceptor(SnapshotOriginInterceptor(snapshot))
+            .addNetworkInterceptor(SnapshotOriginInterceptor(snapshot, currentSnapshot))
             .addNetworkInterceptor(CleartextPolicyInterceptor(snapshot))
             .addInterceptor(EmulatorLoopbackInterceptor())
         profile.pinSha256?.takeIf { it.isNotBlank() }?.let { pin ->
@@ -143,9 +157,13 @@ class SnapshotOidcTokenRefresher(
     private val store: SecureConnectionStore,
     private val nowSeconds: () -> Long = { System.currentTimeMillis() / 1_000 },
 ) {
-    private val lock = Any()
+    /** A refresh is single-flight only within the exact immutable scope that requested it. */
+    private val singleFlights = ConcurrentHashMap<ConnectionSnapshot, Any>()
 
-    fun accessToken(snapshot: ConnectionSnapshot): String? = synchronized(lock) {
+    fun accessToken(snapshot: ConnectionSnapshot): String? = synchronized(
+        singleFlights.computeIfAbsent(snapshot) { Any() },
+    ) {
+        SnapshotAuthGuard.requireCurrent(snapshot, store.snapshotFor(snapshot.connectionId))
         val current = snapshot.bearerToken?.takeIf { it.isNotBlank() } ?: return@synchronized null
         val expiresAt = snapshot.oidcExpiresAt ?: return@synchronized current
         if (nowSeconds() < expiresAt - REFRESH_SKEW_SECONDS) return@synchronized current
@@ -160,31 +178,53 @@ class SnapshotOidcTokenRefresher(
         val builder = OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
+            // Refresh tokens are credential POST bodies, not browser navigations.
+            .followRedirects(false)
+            .followSslRedirects(false)
             .addInterceptor(CleartextPolicyInterceptor(snapshot))
-            .addNetworkInterceptor(SnapshotOriginInterceptor(snapshot))
+            .addNetworkInterceptor(
+                SnapshotOriginInterceptor(snapshot) {
+                    store.snapshotFor(snapshot.connectionId)
+                },
+            )
             .addNetworkInterceptor(CleartextPolicyInterceptor(snapshot))
             .addInterceptor(EmulatorLoopbackInterceptor())
         snapshot.pinSha256?.takeIf { it.isNotBlank() }?.let {
             builder.certificatePinner(CertificatePinnerFactory.forPin(snapshot.baseUrl, it))
         }
         val request = Request.Builder().url(url).post(body).build()
-        runCatching {
+        try {
+            // Recheck inside the per-snapshot single-flight immediately before
+            // the refresh body is transmitted.
+            SnapshotAuthGuard.requireCurrent(snapshot, store.snapshotFor(snapshot.connectionId))
             builder.build().newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use null
+                if (!response.isSuccessful) return@use current.takeIf { nowSeconds() < expiresAt }
                 val root = JsonConfig.json.parseToJsonElement(response.body?.string().orEmpty()) as? JsonObject
-                    ?: return@use null
+                    ?: return@use current.takeIf { nowSeconds() < expiresAt }
                 val access = root["access_token"]?.jsonPrimitive?.contentOrNull
-                    ?.takeIf { it.isNotBlank() } ?: return@use null
-                store.updateOidcTokensIfSnapshot(
+                    ?.takeIf { it.isNotBlank() }
+                    ?: return@use current.takeIf { nowSeconds() < expiresAt }
+                val committed = store.updateOidcTokensIfSnapshot(
                     snapshot = snapshot,
                     accessToken = access,
                     refreshToken = root["refresh_token"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                     expiresAt = root["expires_at"]?.jsonPrimitive?.longOrNull ?: 0,
                     provider = root["provider"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 )
-                access
+                // Never hand a token to the caller when the exact snapshot CAS
+                // rejected it. The caller must not transmit a stale refresh.
+                if (committed) access else null
             }
-        }.getOrNull() ?: current.takeIf { nowSeconds() < expiresAt }
+        } catch (failure: IOException) {
+            if (failure.message == SnapshotAuthGuard.CHANGED_MESSAGE ||
+                failure.message == SnapshotAuthGuard.OIDC_CHANGED_MESSAGE
+            ) {
+                throw failure
+            }
+            current.takeIf { nowSeconds() < expiresAt }
+        } catch (_: Throwable) {
+            current.takeIf { nowSeconds() < expiresAt }
+        }
     }
 
     private companion object {

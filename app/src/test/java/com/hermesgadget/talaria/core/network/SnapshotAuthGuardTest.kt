@@ -77,6 +77,17 @@ class SnapshotAuthGuardTest {
         }
     }
 
+    @Test
+    fun `refreshed bearer is accepted only for the saved transport`() {
+        val saved = snapshot()
+        val refreshed = saved.copy(secrets = saved.secrets.copy(bearerToken = "token-new"))
+        val moved = refreshed.copy(profile = refreshed.profile.copy(baseUrl = "https://other.test"))
+
+        assertTrue(SnapshotAuthGuard.isCurrentWithBearer(saved, refreshed, "token-new"))
+        assertFalse(SnapshotAuthGuard.isCurrentWithBearer(saved, refreshed, "token-old"))
+        assertFalse(SnapshotAuthGuard.isCurrentWithBearer(saved, moved, "token-new"))
+    }
+
     private fun snapshot(baseUrl: String = "https://example.test"): ConnectionSnapshot =
         ConnectionSnapshot(
             profile = ConnectionProfile(

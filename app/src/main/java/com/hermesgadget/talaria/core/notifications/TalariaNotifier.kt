@@ -32,14 +32,18 @@ import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import com.hermesgadget.talaria.MainActivity
 import com.hermesgadget.talaria.R
-import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
 import com.hermesgadget.talaria.core.data.prefs.SettingsStore
-import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
 
 data class AgentNotificationTarget(
     val watcherId: String,
     val agentName: String,
     val sessionId: String?,
+    val connectionId: String?,
+    val managementProfile: String?,
+)
+
+/** Immutable connection scope captured by the operation that created a notification. */
+data class NotificationScope(
     val connectionId: String?,
     val managementProfile: String?,
 )
@@ -55,7 +59,6 @@ enum class TestNotificationResult {
 class TalariaNotifier(
     private val context: Context,
     private val settings: SettingsStore,
-    private val connections: SecureConnectionStore,
 ) {
     fun canMonitorAgentTasks(): Boolean =
         settings.notificationsEnabled &&
@@ -154,12 +157,16 @@ class TalariaNotifier(
             .build()
     }
 
-    fun notifyReply(title: String, body: String, sessionId: String? = null) {
+    fun notifyReply(
+        title: String,
+        body: String,
+        sessionId: String? = null,
+        target: NotificationScope,
+    ) {
         if (!settings.notificationsEnabled || !settings.notifyReplies) return
-        val scope = connections.activeProfile()
         show(
             channel = NotificationChannels.REPLIES,
-            id = "${scope?.id}|${scope?.managementProfile}|${sessionId ?: title}".hashCode(),
+            id = "${target.connectionId}|${target.managementProfile}|${sessionId ?: title}".hashCode(),
             title = title,
             body = body,
             deepLink = sessionId?.let {
@@ -168,14 +175,15 @@ class TalariaNotifier(
                     .authority("session")
                     .appendPath(it)
                     .apply {
-                        scope?.id?.let { id -> appendQueryParameter("connection", id) }
-                        scope?.effectiveManagementProfile()
+                        target.connectionId?.let { id -> appendQueryParameter("connection", id) }
+                        target.managementProfile
                             ?.let { profile -> appendQueryParameter("profile", profile) }
                     }
                     .build()
                     .toString()
             } ?: "talaria://chat",
             actionableReply = true,
+            scope = target,
         )
     }
 
@@ -194,25 +202,26 @@ class TalariaNotifier(
         body: String,
         platform: String? = null,
         code: String? = null,
+        target: NotificationScope,
     ) {
         if (!settings.notificationsEnabled || !settings.notifyPairing) return
-        val scope = connections.activeProfile()
         val pairingLink = android.net.Uri.Builder()
             .scheme("talaria")
             .authority("pairing")
             .apply {
-                scope?.id?.let { appendQueryParameter("connection", it) }
-                scope?.effectiveManagementProfile()?.let { appendQueryParameter("profile", it) }
+                target.connectionId?.let { appendQueryParameter("connection", it) }
+                target.managementProfile?.let { appendQueryParameter("profile", it) }
             }
             .build()
             .toString()
         show(
             channel = NotificationChannels.PAIRING,
-            id = "${scope?.id}|${scope?.managementProfile}|$body".hashCode(),
+            id = "${target.connectionId}|${target.managementProfile}|$body".hashCode(),
             title = title,
             body = body,
             deepLink = pairingLink,
             approvePairing = if (platform != null && code != null) platform to code else null,
+            scope = target,
         )
     }
 
@@ -265,6 +274,7 @@ class TalariaNotifier(
         actionableReply: Boolean = false,
         approvePairing: Pair<String, String>? = null,
         target: AgentNotificationTarget? = null,
+        scope: NotificationScope? = null,
         autoCancel: Boolean = true,
         priority: Int = NotificationCompat.PRIORITY_DEFAULT,
         category: String? = null,
@@ -272,6 +282,9 @@ class TalariaNotifier(
         onlyAlertOnce: Boolean = false,
     ): Boolean {
         if (!hasPermission()) return false
+        val capturedScope = scope ?: target?.let {
+            NotificationScope(it.connectionId, it.managementProfile)
+        }
         val quietHoursActive = QuietHoursPolicy.isActive(settings.quietHoursSettings())
         val openIntent = Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
@@ -316,11 +329,10 @@ class TalariaNotifier(
                     action = NotificationActionReceiver.ACTION_REPLY
                     putExtra(NotificationActionReceiver.EXTRA_NOTIF_ID, id)
                     putExtra(NotificationActionReceiver.EXTRA_DEEP_LINK, deepLink)
-                    val profile = connections.activeProfile()
-                    putExtra(NotificationActionReceiver.EXTRA_CONNECTION_ID, target?.connectionId ?: profile?.id)
+                    putExtra(NotificationActionReceiver.EXTRA_CONNECTION_ID, capturedScope?.connectionId)
                     putExtra(
                         NotificationActionReceiver.EXTRA_MANAGEMENT_PROFILE,
-                        target?.managementProfile ?: profile?.managementProfile,
+                        capturedScope?.managementProfile,
                     )
                 },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
@@ -341,10 +353,11 @@ class TalariaNotifier(
                     putExtra(NotificationActionReceiver.EXTRA_NOTIF_ID, id)
                     putExtra(NotificationActionReceiver.EXTRA_PAIR_PLATFORM, platform)
                     putExtra(NotificationActionReceiver.EXTRA_PAIR_CODE, code)
-                    connections.activeProfile()?.let { profile ->
-                        putExtra(NotificationActionReceiver.EXTRA_CONNECTION_ID, profile.id)
-                        putExtra(NotificationActionReceiver.EXTRA_MANAGEMENT_PROFILE, profile.managementProfile)
-                    }
+                    putExtra(NotificationActionReceiver.EXTRA_CONNECTION_ID, capturedScope?.connectionId)
+                    putExtra(
+                        NotificationActionReceiver.EXTRA_MANAGEMENT_PROFILE,
+                        capturedScope?.managementProfile,
+                    )
                 },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )

@@ -55,7 +55,6 @@ import com.hermesgadget.talaria.domain.model.ToolsetInfo
 import com.hermesgadget.talaria.domain.model.WebhookRoute
 import com.hermesgadget.talaria.domain.model.WebhooksResponse
 import com.hermesgadget.talaria.domain.model.scopeId
-import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -81,9 +80,30 @@ class HermesRepository(
     private val connectionStore: SecureConnectionStore,
     private val appContext: Context? = null,
 ) {
+    private data class BoundOperation(
+        val snapshot: ConnectionSnapshot,
+        val api: HermesApi,
+    ) {
+        val scopeId: String get() = snapshot.scopeId
+    }
+
     private val json = JsonConfig.json
     private fun connId() = connectionStore.activeProfile()?.scopeId() ?: "none"
-    private fun api(snapshot: ConnectionSnapshot? = clientFactory.snapshot()) = clientFactory.api(snapshot)
+
+    /** Capture the destination, REST facade, and cache scope as one operation boundary. */
+    private fun captureOperation(): BoundOperation {
+        val snapshot = clientFactory.snapshot() ?: ConnectionSnapshot.anonymous()
+        return BoundOperation(snapshot = snapshot, api = clientFactory.api(snapshot))
+    }
+
+    private suspend fun <T> withBoundOperation(
+        block: suspend (BoundOperation) -> T,
+    ): Result<T> {
+        val operation = captureOperation()
+        return withContext(Dispatchers.IO) {
+            suspendResult { block(operation) }
+        }
+    }
 
     // Read-through cache so flipping between Manage menus is instant. Only the
     // "open once, browse" surfaces route through it; live pollers (Status) and
@@ -96,9 +116,8 @@ class HermesRepository(
     /** Drop all cached responses (call on profile / management-scope change). */
     fun clearCache() = cache.clear()
 
-    private fun invalidate(vararg keys: String) {
-        val conn = connId()
-        keys.forEach { cache.invalidate("$conn:$it") }
+    private fun invalidate(snapshot: ConnectionSnapshot, vararg keys: String) {
+        keys.forEach { cache.invalidate("${snapshot.scopeId}:$it") }
     }
 
     private suspend fun <T> cached(
@@ -109,7 +128,7 @@ class HermesRepository(
         val snapshot = clientFactory.snapshot()
         val scope = snapshot?.scopeId ?: "none"
         return cache.readThrough("$scope:$key", ttlMs) {
-            withContext(Dispatchers.IO) { fetch(api(snapshot)) }
+            withContext(Dispatchers.IO) { fetch(clientFactory.api(snapshot)) }
         }
     }
 
@@ -125,7 +144,7 @@ class HermesRepository(
     suspend fun refreshStatus(): Result<StatusResponse> {
         val snapshot = clientFactory.snapshot()
         return withContext(Dispatchers.IO) {
-            suspendResult { api(snapshot).getStatus(profile = snapshot?.managementProfile) }
+            suspendResult { clientFactory.api(snapshot).getStatus(profile = snapshot?.managementProfile) }
         }
     }
 
@@ -133,12 +152,12 @@ class HermesRepository(
         source: String? = null,
         limit: Int = 50,
     ): Result<List<SessionSummary>> {
-        val snapshot = clientFactory.snapshot()
-            ?: return Result.failure(IllegalStateException("No active Hermes connection"))
+        val operation = captureOperation()
+        val snapshot = operation.snapshot
         return withContext(Dispatchers.IO) {
             suspendResult {
             val (list, complete) = fetchSessionsForReconciliation(
-                snapshot = snapshot,
+                operation = operation,
                 source = source,
                 limit = limit,
             )
@@ -177,11 +196,11 @@ class HermesRepository(
     }
 
     private suspend fun fetchSessionsForReconciliation(
-        snapshot: ConnectionSnapshot,
+        operation: BoundOperation,
         source: String?,
         limit: Int,
     ): Pair<List<SessionSummary>, Boolean> {
-        val first = fetchSessionsPage(snapshot, source = source, limit = limit, offset = 0)
+        val first = fetchSessionsPage(operation, source = source, limit = limit, offset = 0)
         // A filtered list is never authoritative for the entire session cache.
         if (source != null) return first.sessions to false
 
@@ -201,7 +220,7 @@ class HermesRepository(
                 minOf(pageLimit, total - offset)
             }
             val page = fetchSessionsPage(
-                snapshot = snapshot,
+                operation = operation,
                 source = source,
                 limit = requestLimit,
                 offset = offset,
@@ -231,24 +250,23 @@ class HermesRepository(
         limit: Int = 50,
         offset: Int = 0,
     ): Result<com.hermesgadget.talaria.domain.model.SessionsPage> {
-        val snapshot = clientFactory.snapshot()
-            ?: return Result.failure(IllegalStateException("No active Hermes connection"))
+        val operation = captureOperation()
         return withContext(Dispatchers.IO) {
-            suspendResult { fetchSessionsPage(snapshot, source = source, limit = limit, offset = offset) }
+            suspendResult { fetchSessionsPage(operation, source = source, limit = limit, offset = offset) }
         }
     }
 
     private suspend fun fetchSessionsPage(
-        snapshot: ConnectionSnapshot,
+        operation: BoundOperation,
         source: String? = null,
         limit: Int = 50,
         offset: Int = 0,
     ): com.hermesgadget.talaria.domain.model.SessionsPage {
-        val element = api(snapshot).getSessions(
+        val element = operation.api.getSessions(
             limit = limit,
             offset = offset,
             source = source,
-            profile = snapshot.managementProfile,
+            profile = operation.snapshot.managementProfile,
         )
         return parseSessionsPage(element)
     }
@@ -279,7 +297,9 @@ class HermesRepository(
     suspend fun getSession(sessionId: String): Result<SessionSummary> {
         val snapshot = clientFactory.snapshot()
         return withContext(Dispatchers.IO) {
-            suspendResult { api(snapshot).getSession(sessionId, profile = snapshot?.managementProfile) }
+            suspendResult {
+                clientFactory.api(snapshot).getSession(sessionId, profile = snapshot?.managementProfile)
+            }
         }
     }
 
@@ -297,12 +317,12 @@ class HermesRepository(
         sessionId: String,
         profileName: String? = null,
     ): Result<TranscriptSnapshot> {
-        val snapshot = clientFactory.snapshot()
-            ?: return Result.failure(IllegalStateException("No active Hermes connection"))
+        val operation = captureOperation()
+        val snapshot = operation.snapshot
         return withContext(Dispatchers.IO) {
             suspendResult {
                 val profile = profileName ?: snapshot.managementProfile
-                val response = api(snapshot)
+                val response = operation.api
                     .getSessionMessages(sessionId, profile = profile)
                 val fingerprint = TranscriptFingerprintFactory.from(response)
                 val key = "${snapshot.connectionId}|$profile|$sessionId"
@@ -345,12 +365,10 @@ class HermesRepository(
 
     suspend fun getConfig(): Result<JsonObject> = cached("config") { api -> api.getConfig() }
 
-    suspend fun putConfig(config: JsonObject): Result<Unit> = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().putConfig(buildJsonObject { put("config", config) })
-            invalidate("config")
-            Unit
-        }
+    suspend fun putConfig(config: JsonObject): Result<Unit> = withBoundOperation { operation ->
+        operation.api.putConfig(buildJsonObject { put("config", config) })
+        invalidate(operation.snapshot, "config")
+        Unit
     }
 
     suspend fun getEnv(): Result<Map<String, EnvVarInfo>> = cached("env") {
@@ -402,23 +420,19 @@ class HermesRepository(
         val advanced: Boolean? = null,
     )
 
-    suspend fun setEnv(key: String, value: String): Result<Unit> = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().putEnv(buildJsonObject {
-                put("key", key)
-                put("value", value)
-            })
-            invalidate("env")
-            Unit
-        }
+    suspend fun setEnv(key: String, value: String): Result<Unit> = withBoundOperation { operation ->
+        operation.api.putEnv(buildJsonObject {
+            put("key", key)
+            put("value", value)
+        })
+        invalidate(operation.snapshot, "env")
+        Unit
     }
 
-    suspend fun deleteEnv(key: String): Result<Unit> = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().deleteEnv(buildJsonObject { put("key", key) })
-            invalidate("env")
-            Unit
-        }
+    suspend fun deleteEnv(key: String): Result<Unit> = withBoundOperation { operation ->
+        operation.api.deleteEnv(buildJsonObject { put("key", key) })
+        invalidate(operation.snapshot, "env")
+        Unit
     }
 
     suspend fun getLogs(
@@ -427,12 +441,10 @@ class HermesRepository(
         level: String? = null,
         component: String? = null,
         search: String? = null,
-    ): Result<List<String>> = withContext(Dispatchers.IO) {
-        suspendResult {
-            val raw = api().getLogs(file = file, lines = lines, level = level, component = component).lines
-            val q = search?.trim().orEmpty()
-            if (q.isEmpty()) raw else raw.filter { it.contains(q, ignoreCase = true) }
-        }
+    ): Result<List<String>> = withBoundOperation { operation ->
+        val raw = operation.api.getLogs(file = file, lines = lines, level = level, component = component).lines
+        val q = search?.trim().orEmpty()
+        if (q.isEmpty()) raw else raw.filter { it.contains(q, ignoreCase = true) }
     }
 
     suspend fun getAnalytics(days: Int): Result<AnalyticsUsage> =
@@ -441,81 +453,81 @@ class HermesRepository(
     suspend fun getCron(): Result<List<CronJob>> = cached("cron") { api -> api.getCronJobs() }
 
     suspend fun createCron(prompt: String, schedule: String, name: String?, deliver: String): Result<CronJob> =
-        withContext(Dispatchers.IO) {
-            suspendResult {
-                api().createCronJob(
-                    buildJsonObject {
-                        put("prompt", prompt)
-                        put("schedule", schedule)
-                        name?.let { put("name", it) }
-                        put("deliver", deliver)
-                    },
-                ).also { invalidate("cron") }
-            }
+        withBoundOperation { operation ->
+            operation.api.createCronJob(
+                buildJsonObject {
+                    put("prompt", prompt)
+                    put("schedule", schedule)
+                    name?.let { put("name", it) }
+                    put("deliver", deliver)
+                },
+            ).also { invalidate(operation.snapshot, "cron") }
         }
 
-    suspend fun pauseCron(id: String) = withContext(Dispatchers.IO) {
-        suspendResult { api().pauseCron(id) }.also { invalidate("cron") }
+    suspend fun pauseCron(id: String) = withBoundOperation { operation ->
+        operation.api.pauseCron(id).also { invalidate(operation.snapshot, "cron") }
     }
-    suspend fun resumeCron(id: String) = withContext(Dispatchers.IO) {
-        suspendResult { api().resumeCron(id) }.also { invalidate("cron") }
+    suspend fun resumeCron(id: String) = withBoundOperation { operation ->
+        operation.api.resumeCron(id).also { invalidate(operation.snapshot, "cron") }
     }
-    suspend fun triggerCron(id: String) = withContext(Dispatchers.IO) {
-        suspendResult { api().triggerCron(id) }.also { invalidate("cron") }
+    suspend fun triggerCron(id: String) = withBoundOperation { operation ->
+        operation.api.triggerCron(id).also { invalidate(operation.snapshot, "cron") }
     }
-    suspend fun deleteCron(id: String) = withContext(Dispatchers.IO) {
-        suspendResult { api().deleteCron(id); Unit }.also { invalidate("cron") }
+    suspend fun deleteCron(id: String) = withBoundOperation { operation ->
+        operation.api.deleteCron(id)
+        invalidate(operation.snapshot, "cron")
+        Unit
     }
 
     suspend fun getSkills(): Result<List<SkillInfo>> = cached("skills") { api -> api.getSkills() }
 
-    suspend fun toggleSkill(name: String, enabled: Boolean) = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().toggleSkill(buildJsonObject {
-                put("name", name)
-                put("enabled", enabled)
-            })
-            invalidate("skills")
-            Unit
-        }
+    suspend fun toggleSkill(name: String, enabled: Boolean) = withBoundOperation { operation ->
+        operation.api.toggleSkill(buildJsonObject {
+            put("name", name)
+            put("enabled", enabled)
+        })
+        invalidate(operation.snapshot, "skills")
+        Unit
     }
 
-    suspend fun searchSkillHub(query: String) = withContext(Dispatchers.IO) {
-        suspendResult { api().searchSkillHub(query.trim()).results }
+    suspend fun searchSkillHub(query: String) = withBoundOperation { operation ->
+        operation.api.searchSkillHub(query.trim()).results
     }
 
-    suspend fun previewHubSkill(identifier: String) = withContext(Dispatchers.IO) {
-        suspendResult { api().previewHubSkill(identifier) }
+    suspend fun previewHubSkill(identifier: String) = withBoundOperation { operation ->
+        operation.api.previewHubSkill(identifier)
     }
 
-    suspend fun scanHubSkill(identifier: String) = withContext(Dispatchers.IO) {
-        suspendResult { api().scanHubSkill(identifier) }
+    suspend fun scanHubSkill(identifier: String) = withBoundOperation { operation ->
+        operation.api.scanHubSkill(identifier)
     }
 
-    suspend fun installHubSkill(identifier: String) = withContext(Dispatchers.IO) {
-        suspendResult {
-            val action = awaitAction(api().installHubSkill(buildJsonObject { put("identifier", identifier) }))
-            invalidate("skills", "learning_graph")
-            action
-        }
+    suspend fun installHubSkill(identifier: String) = withBoundOperation { operation ->
+        val action = awaitAction(
+            operation.api.installHubSkill(buildJsonObject { put("identifier", identifier) }),
+            operation.api,
+        )
+        invalidate(operation.snapshot, "skills", "learning_graph")
+        action
     }
 
-    suspend fun uninstallHubSkill(name: String) = withContext(Dispatchers.IO) {
-        suspendResult {
-            val action = awaitAction(api().uninstallHubSkill(buildJsonObject { put("name", name) }))
-            invalidate("skills", "learning_graph")
-            action
-        }
+    suspend fun uninstallHubSkill(name: String) = withBoundOperation { operation ->
+        val action = awaitAction(
+            operation.api.uninstallHubSkill(buildJsonObject { put("name", name) }),
+            operation.api,
+        )
+        invalidate(operation.snapshot, "skills", "learning_graph")
+        action
     }
 
     suspend fun getMcp(): Result<List<McpServer>> = cached("mcp") { api -> api.getMcpServers().servers }
 
-    suspend fun startMcpOAuth(name: String) = withContext(Dispatchers.IO) {
-        suspendResult { api().startMcpOAuth(name) }
+    suspend fun startMcpOAuth(name: String) = withBoundOperation { operation ->
+        operation.api.startMcpOAuth(name)
     }
 
-    suspend fun getMcpOAuthFlow(id: String) = withContext(Dispatchers.IO) {
-        suspendResult { api().getMcpOAuthFlow(id) }
+    suspend fun getMcpOAuthFlow(id: String) = withBoundOperation { operation ->
+        operation.api.getMcpOAuthFlow(id)
     }
 
     suspend fun getMcpCatalog(): Result<List<McpCatalogEntry>> =
@@ -524,15 +536,14 @@ class HermesRepository(
     suspend fun installMcpCatalogEntry(
         name: String,
         env: Map<String, String>,
-    ): Result<com.hermesgadget.talaria.domain.model.ActionStatus?> = withContext(Dispatchers.IO) {
-        suspendResult {
-            val started = api().installMcpCatalogEntry(buildJsonObject {
+    ): Result<com.hermesgadget.talaria.domain.model.ActionStatus?> = withBoundOperation { operation ->
+            val started = operation.api.installMcpCatalogEntry(buildJsonObject {
                 put("name", name)
                 put("enable", true)
                 put("env", buildJsonObject {
                     env.filterValues(String::isNotBlank).forEach { (key, value) -> put(key, value) }
                 })
-            })
+            }, profile = operation.snapshot.managementProfile)
             val response = started as? JsonObject
             val action = response?.get("action")?.jsonPrimitive?.contentOrNull
             val status = if (action == null) {
@@ -540,7 +551,7 @@ class HermesRepository(
             } else {
                 var completed: com.hermesgadget.talaria.domain.model.ActionStatus? = null
                 for (attempt in 0 until 300) {
-                    val current = api().getActionStatus(action)
+                    val current = operation.api.getActionStatus(action)
                     if (!current.running) {
                         completed = current
                         break
@@ -552,16 +563,15 @@ class HermesRepository(
             check(status?.exit_code in listOf(null, 0)) {
                 status?.lines?.lastOrNull() ?: "Hermes MCP install failed"
             }
-            invalidate("mcp", "mcp_catalog")
+            invalidate(operation.snapshot, "mcp", "mcp_catalog")
             status
-        }
     }
 
     suspend fun getChannels(): Result<List<MessagingPlatform>> =
         cached("channels") { api -> api.getMessagingPlatforms().platforms }
 
-    suspend fun getPairing(): Result<PairingResponse> = withContext(Dispatchers.IO) {
-        suspendResult { api().getPairing() }
+    suspend fun getPairing(): Result<PairingResponse> = withBoundOperation { operation ->
+        operation.api.getPairing(profile = operation.snapshot.managementProfile)
     }
 
     suspend fun approvePairing(
@@ -572,7 +582,7 @@ class HermesRepository(
         val bound = snapshot ?: clientFactory.snapshot()
         return withContext(Dispatchers.IO) {
             suspendResult {
-                api(bound).approvePairing(buildJsonObject {
+                clientFactory.api(bound).approvePairing(buildJsonObject {
                     put("platform", platform)
                     put("request_id", requestId)
                     bound?.managementProfile?.let { put("profile", it) }
@@ -581,151 +591,136 @@ class HermesRepository(
         }
     }
 
-    suspend fun revokePairing(platform: String, userId: String) = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().revokePairing(buildJsonObject {
+    suspend fun revokePairing(platform: String, userId: String) = withBoundOperation { operation ->
+        operation.api.revokePairing(
+            buildJsonObject {
                 put("platform", platform)
                 put("user_id", userId)
-                connectionStore.activeProfile()?.effectiveManagementProfile()?.let { put("profile", it) }
-            })
-            Unit
-        }
+            },
+            profile = operation.snapshot.managementProfile,
+        )
+        Unit
     }
 
     suspend fun getWebhooks(): Result<WebhooksResponse> = cached("webhooks") { api -> api.getWebhooks() }
 
     /** Enables the webhook platform; may trigger a gateway restart on the host. */
-    suspend fun enableWebhooks(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        suspendResult { api().enableWebhooks() }.also { invalidate("webhooks") }
+    suspend fun enableWebhooks(): Result<JsonElement> = withBoundOperation { operation ->
+        operation.api.enableWebhooks().also { invalidate(operation.snapshot, "webhooks") }
     }
 
     suspend fun getProfiles(force: Boolean = false): Result<List<ProfileInfo>> {
         if (!force) return cached("profiles") { api -> api.getProfiles().profiles }
-        val snapshot = clientFactory.snapshot()
-        val scope = snapshot?.scopeId ?: "none"
+        val operation = captureOperation()
+        val scope = operation.scopeId
         return withContext(Dispatchers.IO) {
-            suspendResult { api(snapshot).getProfiles().profiles }.onSuccess {
+            suspendResult { operation.api.getProfiles().profiles }.onSuccess {
                 cache.put("$scope:profiles", it)
             }
         }
     }
 
-    suspend fun getActiveProfileName(): Result<String?> = withContext(Dispatchers.IO) {
-        suspendResult { api().getActiveProfile().active }
+    suspend fun getActiveProfileName(): Result<String?> = withBoundOperation { operation ->
+        operation.api.getActiveProfile().active
     }
 
-    suspend fun setActiveProfileName(name: String): Result<String?> = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().setActiveProfile(buildJsonObject { put("name", name) }).active
-        }.also { clearCache() }
+    suspend fun setActiveProfileName(name: String): Result<String?> = withBoundOperation { operation ->
+        operation.api.setActiveProfile(buildJsonObject { put("name", name) }).active
+            .also { clearCache() }
     }
 
     suspend fun createProfile(name: String, description: String, cloneFrom: String? = null): Result<Unit> =
-        withContext(Dispatchers.IO) {
-            suspendResult {
-                api().createProfile(buildJsonObject {
-                    put("name", name.trim())
-                    description.trim().takeIf(String::isNotEmpty)?.let { put("description", it) }
-                    cloneFrom?.trim()?.takeIf(String::isNotEmpty)?.let { put("clone_from", it) }
-                })
-                Unit
-            }.also { invalidate("profiles") }
-        }
-
-    suspend fun renameProfile(name: String, newName: String): Result<Unit> = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().renameProfile(name, buildJsonObject { put("new_name", newName.trim()) })
-            Unit
-        }.also { invalidate("profiles") }
-    }
-
-    suspend fun deleteProfile(name: String): Result<Unit> = withContext(Dispatchers.IO) {
-        suspendResult { api().deleteProfile(name); Unit }.also { invalidate("profiles") }
-    }
-
-    suspend fun getProfileSoul(name: String): Result<String> = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().getProfileSoul(name).jsonObject["content"]?.jsonPrimitive?.contentOrNull.orEmpty()
-        }
-    }
-
-    suspend fun updateProfileSoul(name: String, content: String): Result<Unit> = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().updateProfileSoul(name, buildJsonObject { put("content", content) })
+        withBoundOperation { operation ->
+            operation.api.createProfile(buildJsonObject {
+                put("name", name.trim())
+                description.trim().takeIf(String::isNotEmpty)?.let { put("description", it) }
+                cloneFrom?.trim()?.takeIf(String::isNotEmpty)?.let { put("clone_from", it) }
+            })
+            invalidate(operation.snapshot, "profiles")
             Unit
         }
+
+    suspend fun renameProfile(name: String, newName: String): Result<Unit> = withBoundOperation { operation ->
+        operation.api.renameProfile(name, buildJsonObject { put("new_name", newName.trim()) })
+        invalidate(operation.snapshot, "profiles")
+        Unit
+    }
+
+    suspend fun deleteProfile(name: String): Result<Unit> = withBoundOperation { operation ->
+        operation.api.deleteProfile(name)
+        invalidate(operation.snapshot, "profiles")
+        Unit
+    }
+
+    suspend fun getProfileSoul(name: String): Result<String> = withBoundOperation { operation ->
+        operation.api.getProfileSoul(name).jsonObject["content"]?.jsonPrimitive?.contentOrNull.orEmpty()
+    }
+
+    suspend fun updateProfileSoul(name: String, content: String): Result<Unit> = withBoundOperation { operation ->
+        operation.api.updateProfileSoul(name, buildJsonObject { put("content", content) })
+        Unit
     }
 
     suspend fun updateProfileDescription(name: String, description: String): Result<Unit> =
-        withContext(Dispatchers.IO) {
-            suspendResult {
-                api().updateProfileDescription(
-                    name,
-                    buildJsonObject { put("description", description.trim()) },
-                )
-                Unit
-            }.also { invalidate("profiles") }
-        }
-
-    suspend fun describeProfileAutomatically(name: String): Result<String> = withContext(Dispatchers.IO) {
-        suspendResult {
-            val root = api().describeProfileAuto(
+        withBoundOperation { operation ->
+            operation.api.updateProfileDescription(
                 name,
-                buildJsonObject { put("overwrite", true) },
-            ).jsonObject
-            check(root["ok"]?.jsonPrimitive?.booleanOrNull == true) {
-                root["reason"]?.jsonPrimitive?.contentOrNull ?: "Hermes could not generate a description"
-            }
-            root["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
-        }.also { invalidate("profiles") }
-    }
-
-    suspend fun renameSession(id: String, title: String) = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().patchSession(id, buildJsonObject { put("title", title) })
+                buildJsonObject { put("description", description.trim()) },
+            )
+            invalidate(operation.snapshot, "profiles")
             Unit
         }
+
+    suspend fun describeProfileAutomatically(name: String): Result<String> = withBoundOperation { operation ->
+        val root = operation.api.describeProfileAuto(
+            name,
+            buildJsonObject { put("overwrite", true) },
+        ).jsonObject
+        check(root["ok"]?.jsonPrimitive?.booleanOrNull == true) {
+            root["reason"]?.jsonPrimitive?.contentOrNull ?: "Hermes could not generate a description"
+        }
+        root["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            .also { invalidate(operation.snapshot, "profiles") }
     }
 
-    suspend fun deleteSession(id: String) = withContext(Dispatchers.IO) {
-        suspendResult { api().deleteSession(id); Unit }
+    suspend fun renameSession(id: String, title: String) = withBoundOperation { operation ->
+        operation.api.patchSession(id, buildJsonObject { put("title", title) })
+        Unit
     }
 
-    suspend fun searchSessions(query: String): Result<List<SessionSummary>> = withContext(Dispatchers.IO) {
-        suspendResult {
-            val el = api().searchSessions(query)
-            parseSessions(el)
+    suspend fun deleteSession(id: String) = withBoundOperation { operation ->
+        operation.api.deleteSession(id)
+        Unit
+    }
+
+    suspend fun searchSessions(query: String): Result<List<SessionSummary>> = withBoundOperation { operation ->
+        parseSessions(operation.api.searchSessions(query))
+    }
+
+    suspend fun pruneSessions(): Result<JsonElement> = withBoundOperation { operation ->
+        operation.api.pruneSessions(buildJsonObject {})
+    }
+
+    suspend fun getModelInfo(): Result<ModelInfo> = withBoundOperation { operation ->
+        val el = operation.api.getModelInfo()
+        runCatching { json.decodeFromJsonElement<ModelInfo>(el) }.getOrElse {
+            ModelInfo(model = el.jsonObject["model"]?.toString()?.trim('"'))
         }
     }
 
-    suspend fun pruneSessions(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        suspendResult { api().pruneSessions(buildJsonObject {}) }
-    }
-
-    suspend fun getModelInfo(): Result<ModelInfo> = withContext(Dispatchers.IO) {
-        suspendResult {
-            val el = api().getModelInfo()
-            suspendResult { json.decodeFromJsonElement<ModelInfo>(el) }.getOrElse {
-                ModelInfo(model = el.jsonObject["model"]?.toString()?.trim('"'))
+    suspend fun getModelOptions(): Result<List<ModelOption>> = withBoundOperation { operation ->
+        val el = operation.api.getModelOptions()
+        when (el) {
+            is JsonArray -> el.mapNotNull {
+                runCatching { json.decodeFromJsonElement<ModelOption>(it) }.getOrNull()
+                    ?: ModelOption(id = it.jsonObject["id"]?.toString()?.trim('"'), name = it.toString())
             }
-        }
-    }
-
-    suspend fun getModelOptions(): Result<List<ModelOption>> = withContext(Dispatchers.IO) {
-        suspendResult {
-            val el = api().getModelOptions()
-            when (el) {
-                is JsonArray -> el.mapNotNull {
-                    suspendResult { json.decodeFromJsonElement<ModelOption>(it) }.getOrNull()
-                        ?: ModelOption(id = it.jsonObject["id"]?.toString()?.trim('"'), name = it.toString())
-                }
-                is JsonObject -> {
-                    val arr = el["options"]?.jsonArray ?: el["models"]?.jsonArray
-                    arr?.mapNotNull { suspendResult { json.decodeFromJsonElement<ModelOption>(it) }.getOrNull() }
-                        ?: emptyList()
-                }
-                else -> emptyList()
+            is JsonObject -> {
+                val arr = el["options"]?.jsonArray ?: el["models"]?.jsonArray
+                arr?.mapNotNull { runCatching { json.decodeFromJsonElement<ModelOption>(it) }.getOrNull() }
+                    ?: emptyList()
             }
+            else -> emptyList()
         }
     }
 
@@ -738,9 +733,8 @@ class HermesRepository(
         provider: String,
         modelId: String,
         confirmExpensive: Boolean = false,
-    ): Result<ModelAssignmentResult> = withContext(Dispatchers.IO) {
-        suspendResult {
-            val response = api().setModel(buildJsonObject {
+    ): Result<ModelAssignmentResult> = withBoundOperation { operation ->
+            val response = operation.api.setModel(buildJsonObject {
                 put("scope", "main")
                 put("provider", provider)
                 put("model", modelId)
@@ -751,9 +745,8 @@ class HermesRepository(
                 confirmRequired = obj?.get("confirm_required")?.jsonPrimitive?.booleanOrNull == true,
                 confirmMessage = obj?.get("confirm_message")?.jsonPrimitive?.contentOrNull,
             )
-            if (!confirmation.confirmRequired) invalidate("model_providers")
+            if (!confirmation.confirmRequired) invalidate(operation.snapshot, "model_providers")
             confirmation
-        }
     }
 
     /** Provider-grouped model catalog for the Models screen (roadmap 15.12). */
@@ -780,12 +773,10 @@ class HermesRepository(
             ?: emptyList()
     }
 
-    suspend fun setToolsetEnabled(name: String, enabled: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().setToolset(name, buildJsonObject { put("enabled", enabled) })
-            invalidate("toolsets")
-            Unit
-        }
+    suspend fun setToolsetEnabled(name: String, enabled: Boolean): Result<Unit> = withBoundOperation { operation ->
+        operation.api.setToolset(name, buildJsonObject { put("enabled", enabled) })
+        invalidate(operation.snapshot, "toolsets")
+        Unit
     }
 
     suspend fun getConfigSchema(): Result<ConfigSchemaResponse> =
@@ -798,38 +789,42 @@ class HermesRepository(
      * Creates a webhook and returns the created route. The dashboard may echo
      * a one-time secret / final url in the response — surface it to the user.
      */
-    suspend fun createWebhook(name: String, prompt: String): Result<WebhookRoute> = withContext(Dispatchers.IO) {
-        suspendResult {
-            val element = api().createWebhook(
-                buildJsonObject {
-                    put("name", name)
-                    put("prompt", prompt)
-                },
-            )
-            val obj = element as? JsonObject ?: return@suspendResult WebhookRoute(name)
-            WebhookRoute(
-                name = obj["name"]?.jsonPrimitive?.contentOrNull ?: name,
-                description = obj["description"]?.jsonPrimitive?.contentOrNull,
-                events = obj["events"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList(),
-                deliver = obj["deliver"]?.jsonPrimitive?.contentOrNull,
-                prompt = obj["prompt"]?.jsonPrimitive?.contentOrNull,
-                url = obj["url"]?.jsonPrimitive?.contentOrNull ?: obj["endpoint"]?.jsonPrimitive?.contentOrNull,
-                enabled = obj["enabled"]?.jsonPrimitive?.booleanOrNull,
-                secret = obj["secret"]?.jsonPrimitive?.contentOrNull,
-            )
-        }.also { invalidate("webhooks") }
-    }
-
-    suspend fun setWebhookEnabled(name: String, enabled: Boolean) = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().setWebhookEnabled(name, buildJsonObject { put("enabled", enabled) })
-            invalidate("webhooks")
-            Unit
+    suspend fun createWebhook(name: String, prompt: String): Result<WebhookRoute> = withBoundOperation { operation ->
+        val element = operation.api.createWebhook(
+            buildJsonObject {
+                put("name", name)
+                put("prompt", prompt)
+            },
+        )
+        val obj = element as? JsonObject
+        if (obj == null) {
+            invalidate(operation.snapshot, "webhooks")
+            return@withBoundOperation WebhookRoute(name)
         }
+        val result = WebhookRoute(
+            name = obj["name"]?.jsonPrimitive?.contentOrNull ?: name,
+            description = obj["description"]?.jsonPrimitive?.contentOrNull,
+            events = obj["events"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList(),
+            deliver = obj["deliver"]?.jsonPrimitive?.contentOrNull,
+            prompt = obj["prompt"]?.jsonPrimitive?.contentOrNull,
+            url = obj["url"]?.jsonPrimitive?.contentOrNull ?: obj["endpoint"]?.jsonPrimitive?.contentOrNull,
+            enabled = obj["enabled"]?.jsonPrimitive?.booleanOrNull,
+            secret = obj["secret"]?.jsonPrimitive?.contentOrNull,
+        )
+        invalidate(operation.snapshot, "webhooks")
+        result
     }
 
-    suspend fun deleteWebhook(name: String) = withContext(Dispatchers.IO) {
-        suspendResult { api().deleteWebhook(name); Unit }.also { invalidate("webhooks") }
+    suspend fun setWebhookEnabled(name: String, enabled: Boolean) = withBoundOperation { operation ->
+        operation.api.setWebhookEnabled(name, buildJsonObject { put("enabled", enabled) })
+        invalidate(operation.snapshot, "webhooks")
+        Unit
+    }
+
+    suspend fun deleteWebhook(name: String) = withBoundOperation { operation ->
+        operation.api.deleteWebhook(name)
+        invalidate(operation.snapshot, "webhooks")
+        Unit
     }
 
     suspend fun addMcpServer(
@@ -840,9 +835,8 @@ class HermesRepository(
         env: Map<String, String> = emptyMap(),
         auth: String = "none",
         bearerToken: String = "",
-    ): Result<Unit> = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().addMcpServer(buildJsonObject {
+    ): Result<Unit> = withBoundOperation { operation ->
+            operation.api.addMcpServer(buildJsonObject {
                 put("name", name)
                 command.takeIf { it.isNotBlank() }?.let { put("command", it) }
                 url.takeIf { it.isNotBlank() }?.let { put("url", it) }
@@ -851,25 +845,24 @@ class HermesRepository(
                 if (auth != "none") put("auth", auth)
                 bearerToken.takeIf { it.isNotBlank() }?.let { put("bearer_token", it) }
             })
-            invalidate("mcp")
+            invalidate(operation.snapshot, "mcp")
             Unit
-        }
     }
 
-    suspend fun setMcpEnabled(name: String, enabled: Boolean) = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().setMcpEnabled(name, buildJsonObject { put("enabled", enabled) })
-            invalidate("mcp")
-            Unit
-        }
+    suspend fun setMcpEnabled(name: String, enabled: Boolean) = withBoundOperation { operation ->
+        operation.api.setMcpEnabled(name, buildJsonObject { put("enabled", enabled) })
+        invalidate(operation.snapshot, "mcp")
+        Unit
     }
 
-    suspend fun deleteMcpServer(name: String) = withContext(Dispatchers.IO) {
-        suspendResult { api().deleteMcpServer(name); Unit }.also { invalidate("mcp") }
+    suspend fun deleteMcpServer(name: String) = withBoundOperation { operation ->
+        operation.api.deleteMcpServer(name)
+        invalidate(operation.snapshot, "mcp")
+        Unit
     }
 
-    suspend fun testMcp(name: String): Result<JsonElement> = withContext(Dispatchers.IO) {
-        suspendResult { api().testMcp(name) }
+    suspend fun testMcp(name: String): Result<JsonElement> = withBoundOperation { operation ->
+        operation.api.testMcp(name)
     }
 
     suspend fun updateChannel(
@@ -877,10 +870,8 @@ class HermesRepository(
         enabled: Boolean?,
         env: JsonObject?,
         clearEnv: List<String> = emptyList(),
-    ): Result<Unit> =
-        withContext(Dispatchers.IO) {
-            suspendResult {
-                api().updateMessagingPlatform(
+    ): Result<Unit> = withBoundOperation { operation ->
+                operation.api.updateMessagingPlatform(
                     id,
                     buildJsonObject {
                         if (enabled != null) put("enabled", enabled)
@@ -890,22 +881,21 @@ class HermesRepository(
                         }
                     },
                 )
-                invalidate("channels")
+                invalidate(operation.snapshot, "channels")
                 Unit
-            }
-        }
-
-    suspend fun testChannel(id: String): Result<JsonElement> = withContext(Dispatchers.IO) {
-        suspendResult { api().testMessagingPlatform(id) }
     }
 
-    suspend fun clearPendingPairing() = withContext(Dispatchers.IO) {
-        suspendResult { api().clearPendingPairing(); Unit }
+    suspend fun testChannel(id: String): Result<JsonElement> = withBoundOperation { operation ->
+        operation.api.testMessagingPlatform(id)
     }
 
-    suspend fun updateCron(id: String, prompt: String, schedule: String) = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().updateCronJob(
+    suspend fun clearPendingPairing() = withBoundOperation { operation ->
+        operation.api.clearPendingPairing()
+        Unit
+    }
+
+    suspend fun updateCron(id: String, prompt: String, schedule: String) = withBoundOperation { operation ->
+            operation.api.updateCronJob(
                 id,
                 buildJsonObject {
                     put("updates", buildJsonObject {
@@ -914,37 +904,36 @@ class HermesRepository(
                     })
                 },
             )
-            invalidate("cron")
+            invalidate(operation.snapshot, "cron")
             Unit
-        }
     }
 
-    suspend fun runDoctor(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        suspendResult { api().runDoctor() }
+    suspend fun runDoctor(): Result<JsonElement> = withBoundOperation { operation ->
+        operation.api.runDoctor()
     }
 
-    suspend fun runDoctorToCompletion() = withContext(Dispatchers.IO) {
-        suspendResult { awaitAction(api().runDoctor()) }
+    suspend fun runDoctorToCompletion() = withBoundOperation { operation ->
+        awaitAction(operation.api.runDoctor(), operation.api)
     }
 
-    suspend fun runSecurityAudit(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        suspendResult { api().runSecurityAudit() }
+    suspend fun runSecurityAudit(): Result<JsonElement> = withBoundOperation { operation ->
+        operation.api.runSecurityAudit()
     }
 
-    suspend fun runSecurityAuditToCompletion() = withContext(Dispatchers.IO) {
-        suspendResult { awaitAction(api().runSecurityAudit()) }
+    suspend fun runSecurityAuditToCompletion() = withBoundOperation { operation ->
+        awaitAction(operation.api.runSecurityAudit(), operation.api)
     }
 
-    suspend fun runBackup(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        suspendResult { api().runBackup() }
+    suspend fun runBackup(): Result<JsonElement> = withBoundOperation { operation ->
+        operation.api.runBackup()
     }
 
-    suspend fun runBackupToCompletion() = withContext(Dispatchers.IO) {
-        suspendResult { awaitAction(api().runBackup()) }
+    suspend fun runBackupToCompletion() = withBoundOperation { operation ->
+        awaitAction(operation.api.runBackup(), operation.api)
     }
 
-    suspend fun checkUpdate(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        suspendResult { api().checkUpdate() }
+    suspend fun checkUpdate(): Result<JsonElement> = withBoundOperation { operation ->
+        operation.api.checkUpdate()
     }
 
     suspend fun getPortal(): Result<JsonElement> = cached("portal") { api -> api.getPortal() }
@@ -957,44 +946,40 @@ class HermesRepository(
         api -> JsonConfig.json.decodeFromJsonElement(MemoryState.serializer(), api.getMemory())
     }
 
-    suspend fun setMemoryProvider(name: String): Result<MemoryState> = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().setMemoryProvider(buildJsonObject { put("provider", name) })
-            invalidate("memory", "memory_state")
-            JsonConfig.json.decodeFromJsonElement(MemoryState.serializer(), api().getMemory())
-        }
+    suspend fun setMemoryProvider(name: String): Result<MemoryState> = withBoundOperation { operation ->
+        operation.api.setMemoryProvider(buildJsonObject { put("provider", name) })
+        invalidate(operation.snapshot, "memory", "memory_state")
+        JsonConfig.json.decodeFromJsonElement(MemoryState.serializer(), operation.api.getMemory())
     }
 
-    suspend fun resetMemory(target: String): Result<MemoryState> = withContext(Dispatchers.IO) {
-        suspendResult {
-            require(target in setOf("all", "memory", "user")) { "Invalid memory reset target" }
-            api().resetMemory(buildJsonObject { put("target", target) })
-            invalidate("memory", "memory_state")
-            JsonConfig.json.decodeFromJsonElement(MemoryState.serializer(), api().getMemory())
-        }
+    suspend fun resetMemory(target: String): Result<MemoryState> = withBoundOperation { operation ->
+        require(target in setOf("all", "memory", "user")) { "Invalid memory reset target" }
+        operation.api.resetMemory(buildJsonObject { put("target", target) })
+        invalidate(operation.snapshot, "memory", "memory_state")
+        JsonConfig.json.decodeFromJsonElement(MemoryState.serializer(), operation.api.getMemory())
     }
 
     suspend fun getCuratorState(): Result<CuratorState> = cached("curator_state") {
         api -> JsonConfig.json.decodeFromJsonElement(CuratorState.serializer(), api.getCurator())
     }
 
-    suspend fun setCuratorPaused(paused: Boolean): Result<CuratorState> = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().setCuratorPaused(buildJsonObject { put("paused", paused) })
-            invalidate("curator", "curator_state")
-            JsonConfig.json.decodeFromJsonElement(CuratorState.serializer(), api().getCurator())
-        }
+    suspend fun setCuratorPaused(paused: Boolean): Result<CuratorState> = withBoundOperation { operation ->
+        operation.api.setCuratorPaused(buildJsonObject { put("paused", paused) })
+        invalidate(operation.snapshot, "curator", "curator_state")
+        JsonConfig.json.decodeFromJsonElement(CuratorState.serializer(), operation.api.getCurator())
     }
 
     suspend fun runCuratorNow(): Result<com.hermesgadget.talaria.domain.model.ActionStatus> =
-        withContext(Dispatchers.IO) {
-            suspendResult { awaitAction(api().runCurator()) }
+        withBoundOperation { operation ->
+            awaitAction(operation.api.runCurator(), operation.api)
         }
 
     /** Export session messages as markdown for share sheet. */
-    suspend fun exportSessionMarkdown(sessionId: String): Result<String> = withContext(Dispatchers.IO) {
-        suspendResult {
-            val msgs = api().getSessionMessages(sessionId).messages
+    suspend fun exportSessionMarkdown(sessionId: String): Result<String> = withBoundOperation { operation ->
+            val msgs = operation.api.getSessionMessages(
+                sessionId,
+                profile = operation.snapshot.managementProfile,
+            ).messages
             buildString {
                 appendLine("# Session $sessionId")
                 appendLine()
@@ -1010,7 +995,6 @@ class HermesRepository(
                     appendLine()
                 }
             }
-        }
     }
 
     suspend fun getSystemStats(): Result<SystemStats> = cached("system") { api -> api.getSystemStats() }
@@ -1029,77 +1013,80 @@ class HermesRepository(
         )
     }
 
-    suspend fun fsReadText(path: String): Result<FsTextFile> = withContext(Dispatchers.IO) {
-        suspendResult { api().fsReadText(path) }
+    suspend fun fsReadText(path: String): Result<FsTextFile> = withBoundOperation { operation ->
+        operation.api.fsReadText(path, profile = operation.snapshot.managementProfile)
     }
 
     /** Re-read before saving so a remote edit does not silently overwrite a newer file. */
     suspend fun fsWriteText(path: String, content: String, expectedOriginal: String): Result<FsTextFile> =
-        withContext(Dispatchers.IO) {
-            suspendResult {
-                val current = api().fsReadText(path)
+        withBoundOperation { operation ->
+                val current = operation.api.fsReadText(
+                    path,
+                    profile = operation.snapshot.managementProfile,
+                )
                 check(!current.binary && !current.truncated) { "This file cannot be safely edited as text" }
                 check(current.text == expectedOriginal) {
                     "The file changed on the Hermes host. Reopen it before saving."
                 }
-                api().fsWriteText(buildJsonObject {
+                operation.api.fsWriteText(buildJsonObject {
                     put("path", path)
                     put("content", content)
-                })
-                invalidate("fs_list:${path.substringBeforeLast('/', "/")}")
-                api().fsReadText(path)
-            }
+                }, profile = operation.snapshot.managementProfile)
+                invalidate(operation.snapshot, "fs_list:${path.substringBeforeLast('/', "/")}")
+                operation.api.fsReadText(path, profile = operation.snapshot.managementProfile)
         }
 
     // --- Learning graph / Starmap (Desktop parity 15.4) ---
 
     suspend fun getLearningGraph(): Result<LearningGraph> = cached("learning_graph") { api -> api.getLearningGraph() }
 
-    suspend fun getLearningNode(id: String) = withContext(Dispatchers.IO) {
-        suspendResult { api().getLearningNode(id) }
+    suspend fun getLearningNode(id: String) = withBoundOperation { operation ->
+        operation.api.getLearningNode(id, profile = operation.snapshot.managementProfile)
     }
 
-    suspend fun updateLearningNode(id: String, content: String): Result<LearningGraph> = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().updateLearningNode(buildJsonObject {
+    suspend fun updateLearningNode(id: String, content: String): Result<LearningGraph> =
+        withBoundOperation { operation ->
+            operation.api.updateLearningNode(buildJsonObject {
                 put("id", id)
                 put("content", content)
-            })
-            invalidate("learning_graph", "skills")
-            api().getLearningGraph()
+            }, profile = operation.snapshot.managementProfile)
+            invalidate(operation.snapshot, "learning_graph", "skills")
+            operation.api.getLearningGraph(profile = operation.snapshot.managementProfile)
         }
-    }
 
-    suspend fun deleteLearningNode(id: String): Result<LearningGraph> = withContext(Dispatchers.IO) {
-        suspendResult {
-            api().deleteLearningNode(buildJsonObject { put("id", id) })
-            invalidate("learning_graph", "skills")
-            api().getLearningGraph()
+    suspend fun deleteLearningNode(id: String): Result<LearningGraph> =
+        withBoundOperation { operation ->
+            operation.api.deleteLearningNode(
+                buildJsonObject { put("id", id) },
+                profile = operation.snapshot.managementProfile,
+            )
+            invalidate(operation.snapshot, "learning_graph", "skills")
+            operation.api.getLearningGraph(profile = operation.snapshot.managementProfile)
         }
-    }
 
     private suspend fun awaitAction(
         started: JsonElement,
+        api: HermesApi,
     ): com.hermesgadget.talaria.domain.model.ActionStatus {
         val name = (started as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull
             ?: error("Hermes did not return an action name")
         repeat(120) {
-            val status = api().getActionStatus(name)
+            val status = api.getActionStatus(name)
             if (!status.running) return status
             kotlinx.coroutines.delay(1_000)
         }
         error("Hermes action '$name' did not finish within two minutes")
     }
 
-    suspend fun gateway(action: String) = withContext(Dispatchers.IO) {
-        suspendResult {
-            val started = when (action) {
-                "start" -> api().gatewayStart()
-                "stop" -> api().gatewayStop()
-                else -> api().gatewayRestart()
-            }
-            awaitAction(started)
-        }.also { invalidate("system", "portal") }
+    suspend fun gateway(action: String) = withBoundOperation { operation ->
+        val started = when (action) {
+            "start" -> operation.api.gatewayStart()
+            "stop" -> operation.api.gatewayStop()
+            else -> operation.api.gatewayRestart()
+        }
+        awaitAction(started, operation.api).also {
+            invalidate(operation.snapshot, "system", "portal")
+        }
     }
 
     suspend fun recordActivity(
@@ -1124,7 +1111,7 @@ class HermesRepository(
         val bound = snapshot ?: clientFactory.snapshot()
             ?: throw IllegalStateException("No active Hermes connection")
         return withContext(Dispatchers.IO) {
-            val boundApi = api(bound)
+            val boundApi = clientFactory.api(bound)
             val status = boundApi.getStatus(profile = bound.managementProfile)
             val pairing = try {
                 boundApi.getPairing(profile = bound.managementProfile)

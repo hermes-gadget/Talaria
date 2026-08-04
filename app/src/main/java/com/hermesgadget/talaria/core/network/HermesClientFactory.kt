@@ -105,7 +105,11 @@ class HermesClientFactory(
 
     private fun buildBundle(snapshot: ConnectionSnapshot): ClientBundle {
         val cookieJar = PersistentCookieJar()
-        val passwordSessionManager = SnapshotPasswordSessionManager(snapshot, cookieJar)
+        val passwordSessionManager = SnapshotPasswordSessionManager(
+            snapshot = snapshot,
+            cookieJar = cookieJar,
+            currentSnapshot = { connectionStore.snapshotFor(snapshot.connectionId) },
+        )
         val auth = AuthInterceptor(
             snapshot = snapshot,
             connectionStore = connectionStore,
@@ -125,7 +129,11 @@ class HermesClientFactory(
             .addInterceptor(CleartextPolicyInterceptor(snapshot))
             // Redirects/retries do not re-enter application interceptors. Check
             // their final origin before a credential-bearing request hits the wire.
-            .addNetworkInterceptor(SnapshotOriginInterceptor(snapshot))
+            .addNetworkInterceptor(
+                SnapshotOriginInterceptor(snapshot) {
+                    connectionStore.snapshotFor(snapshot.connectionId)
+                },
+            )
             // Network interceptor: runs again per redirect/retry, so an https->http
             // 30x cannot bypass the cleartext gate after the first hop.
             .addNetworkInterceptor(CleartextPolicyInterceptor(snapshot))
