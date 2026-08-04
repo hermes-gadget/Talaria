@@ -24,6 +24,27 @@ import com.hermesgadget.talaria.domain.model.scopeId
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.IOException
+import java.util.Locale
+
+/** Normalized transport origin used as the cleartext-consent binding key. */
+object ConnectionOrigin {
+    fun normalize(baseUrl: String): String? = baseUrl.toHttpUrlOrNull()?.let(::normalize)
+
+    fun normalize(url: HttpUrl): String {
+        val scheme = when (url.scheme.lowercase(Locale.US)) {
+            "ws" -> "http"
+            "wss" -> "https"
+            else -> url.scheme.lowercase(Locale.US)
+        }
+        val host = url.host.lowercase(Locale.US)
+        val renderedHost = if (host.contains(':')) "[$host]" else host
+        return "$scheme://$renderedHost:${url.port}"
+    }
+
+    fun isCleartext(url: HttpUrl): Boolean = url.scheme == "http" || url.scheme == "ws"
+
+    fun isSecure(url: HttpUrl): Boolean = url.scheme == "https" || url.scheme == "wss"
+}
 
 /**
  * Immutable transport identity for one saved connection and management profile.
@@ -52,7 +73,17 @@ data class ConnectionSnapshot(
     val oidcProvider: String? get() = secrets.oidcProvider
     val pinSha256: String? get() = profile.pinSha256
     val allowCleartext: Boolean get() = profile.allowCleartext
+    val cleartextConsentRecorded: Boolean get() = profile.cleartextConsentRecorded == true
+    val cleartextConsentOrigin: String? get() = profile.cleartextConsentOrigin
     val scopeId: String get() = profile.scopeId()
+
+    fun hasCleartextConsentFor(url: HttpUrl): Boolean {
+        val savedOrigin = baseUrl.toHttpUrlOrNull()?.let(ConnectionOrigin::normalize) ?: return false
+        val requestedOrigin = ConnectionOrigin.normalize(url)
+        return cleartextConsentRecorded &&
+            cleartextConsentOrigin == savedOrigin &&
+            requestedOrigin == savedOrigin
+    }
 
     /** Compare the parts that make a request unsafe to reuse after an edit. */
     fun sameTransportAs(other: ConnectionSnapshot): Boolean =
@@ -63,7 +94,9 @@ data class ConnectionSnapshot(
             username == other.username &&
             authProvider == other.authProvider &&
             pinSha256 == other.pinSha256 &&
-            allowCleartext == other.allowCleartext
+            allowCleartext == other.allowCleartext &&
+            cleartextConsentRecorded == other.cleartextConsentRecorded &&
+            cleartextConsentOrigin == other.cleartextConsentOrigin
 
     fun withHttpLogging(enabled: Boolean): ConnectionSnapshot = copy(httpLoggingEnabled = enabled)
 
@@ -86,7 +119,6 @@ data class ConnectionSnapshot(
                     name = "Default Hermes",
                     baseUrl = "http://10.0.2.2:9119",
                     authMode = AuthMode.NONE,
-                    allowCleartext = true,
                     createdAt = 0L,
                 ),
                 secrets = ConnectionSecrets(),
@@ -128,7 +160,7 @@ internal object SnapshotAuthGuard {
 
     fun hasSameOrigin(snapshot: ConnectionSnapshot, url: HttpUrl): Boolean {
         val saved = snapshot.baseUrl.toHttpUrlOrNull() ?: return false
-        return saved.scheme == url.scheme && saved.host == url.host && saved.port == url.port
+        return ConnectionOrigin.normalize(saved) == ConnectionOrigin.normalize(url)
     }
 
     @Throws(IOException::class)
@@ -144,10 +176,46 @@ internal object SnapshotAuthGuard {
     fun suppressCredentials(path: String): Boolean = path.startsWith("/auth/native/")
 }
 
+data class CleartextConsentDecision(
+    val recorded: Boolean,
+    val origin: String?,
+)
+
+/** Pure origin-binding rules shared by persistence and transport tests. */
+object CleartextConsentPolicy {
+    fun resolve(
+        baseUrl: HttpUrl,
+        requestedRecorded: Boolean?,
+        requestedOrigin: String?,
+        previous: ConnectionProfile?,
+    ): CleartextConsentDecision {
+        if (baseUrl.isHttps) return CleartextConsentDecision(false, null)
+        val origin = ConnectionOrigin.normalize(baseUrl)
+        if (requestedRecorded == false) return CleartextConsentDecision(false, null)
+        if (requestedRecorded == true) {
+            // A missing key is bound to the current origin by this save call;
+            // an explicitly supplied malformed/mismatched key fails closed.
+            val requestedMatches = requestedOrigin == null || requestedOrigin == origin
+            return if (requestedMatches) {
+                CleartextConsentDecision(true, origin)
+            } else {
+                CleartextConsentDecision(false, null)
+            }
+        }
+        val previousMatches = previous?.cleartextConsentRecorded == true &&
+            previous.cleartextConsentOrigin == origin
+        return if (previousMatches) {
+            CleartextConsentDecision(true, origin)
+        } else {
+            CleartextConsentDecision(false, null)
+        }
+    }
+}
+
 /** Cleartext is only a supported transport for explicitly verified local hosts. */
 object CleartextPolicy {
     fun isVerifiedDestination(host: String): Boolean {
-        val normalized = host.trim().lowercase().removeSuffix(".")
+        val normalized = host.trim().lowercase(Locale.US).removeSuffix(".")
         if (isAutoApprovedLocalHost(normalized)) {
             return true
         }
@@ -169,7 +237,10 @@ object CleartextPolicy {
         }
         val octets = normalized.split('.')
             .takeIf { it.size == 4 }
-            ?.map { it.toIntOrNull() }
+            ?.map { part ->
+                part.takeIf { it.isNotEmpty() && (it == "0" || !it.startsWith('0')) && it.all(Char::isDigit) }
+                    ?.toIntOrNull()
+            }
             ?: return false
         if (octets.any { it == null }) return false
         val numbers = octets.filterNotNull()
@@ -184,9 +255,9 @@ object CleartextPolicy {
             (a == 100 && b in 64..127) // CGNAT 100.64.0.0/10 — Tailscale.
     }
 
-    /** Hosts safe to allow for a new profile without an explicit confirmation. */
+    /** Hosts recognized as local, but still requiring persisted explicit consent. */
     fun isAutoApprovedLocalHost(host: String): Boolean {
-        val normalized = host.trim().lowercase().removeSuffix(".")
+        val normalized = host.trim().lowercase(Locale.US).removeSuffix(".")
         return normalized == "localhost" ||
             normalized == "ip6-localhost" ||
             normalized == "::1" ||
@@ -195,8 +266,17 @@ object CleartextPolicy {
     }
 
     fun check(snapshot: ConnectionSnapshot, url: HttpUrl) {
-        if (url.isHttps) return
-        if (url.scheme != "http" || !snapshot.allowCleartext || !isVerifiedDestination(url.host)) {
+        if (ConnectionOrigin.isSecure(url)) return
+        val policyUrl = if (url.scheme == "ws") {
+            url.newBuilder().scheme("http").build()
+        } else {
+            url
+        }
+        if (!ConnectionOrigin.isCleartext(url) ||
+            policyUrl.scheme != "http" ||
+            !isVerifiedDestination(policyUrl.host) ||
+            !snapshot.hasCleartextConsentFor(policyUrl)
+        ) {
             throw IOException(
                 "Cleartext Hermes connections require an explicit local-network confirmation",
             )

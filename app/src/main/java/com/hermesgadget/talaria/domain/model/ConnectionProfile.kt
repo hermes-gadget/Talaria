@@ -43,9 +43,16 @@ data class ConnectionProfile(
     val hasBearerToken: Boolean = false,
     val managementProfile: String = "",
     val pinSha256: String? = null,
-    val allowCleartext: Boolean = true,
-    /** Explicit user consent for cleartext to this host (null = pre-consent era, treated as legacy-approved). */
-    val cleartextConsentRecorded: Boolean? = null,
+    /**
+     * Compatibility mirror for older profile readers. Cleartext transport is
+     * authorized only by [cleartextConsentRecorded] plus
+     * [cleartextConsentOrigin].
+     */
+    val allowCleartext: Boolean = false,
+    /** False/null means undecided or revoked; true is meaningful only with an origin key. */
+    val cleartextConsentRecorded: Boolean? = false,
+    /** Normalized scheme://host:effective-port for the exact approved origin. */
+    val cleartextConsentOrigin: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val lastConnectedAt: Long? = null,
 )

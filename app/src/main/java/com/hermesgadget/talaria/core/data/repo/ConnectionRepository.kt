@@ -19,6 +19,8 @@ package com.hermesgadget.talaria.core.data.repo
 
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
 import com.hermesgadget.talaria.core.network.CleartextPolicy
+import com.hermesgadget.talaria.core.network.CleartextConsentPolicy
+import com.hermesgadget.talaria.core.network.ConnectionOrigin
 import com.hermesgadget.talaria.core.network.HermesClientFactory
 import com.hermesgadget.talaria.core.network.WsAuthHelper
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
@@ -48,6 +50,7 @@ class ConnectionRepository(
 
     fun active(): ConnectionProfile? = store.activeProfile()
 
+    @Suppress("UNUSED_PARAMETER")
     suspend fun save(
         name: String,
         baseUrl: String,
@@ -62,6 +65,7 @@ class ConnectionRepository(
         existingId: String? = null,
         allowCleartext: Boolean? = null,
         cleartextConsentRecorded: Boolean? = null,
+        cleartextConsentOrigin: String? = null,
         keepSessionToken: Boolean = true,
         keepPassword: Boolean = true,
         keepBearerToken: Boolean = true,
@@ -98,24 +102,18 @@ class ConnectionRepository(
         } else {
             ConnectionSecrets()
         }
-        val cleartextAllowed = if (parsedBase.isHttps) {
-            false
-        } else {
-            allowCleartext
-                ?: previousProfile?.takeIf { sameBase }?.allowCleartext
-                ?: CleartextPolicy.isAutoApprovedLocalHost(parsedBase.host)
+        // The old allowCleartext argument is intentionally ignored. It is only
+        // retained for source compatibility; an approval must carry this exact
+        // normalized origin and is resolved below.
+        require(parsedBase.isHttps || CleartextPolicy.isVerifiedDestination(parsedBase.host)) {
+            "Cleartext is restricted to a verified local/private Hermes destination"
         }
-        // HTTPS never needs consent. Legacy records (null consent) keep their
-        // implicit approval; a URL change drops consent (sameBase=false -> null -> false).
-        val consentRecorded = when {
-            parsedBase.isHttps -> true
-            cleartextConsentRecorded != null -> cleartextConsentRecorded
-            previousProfile?.takeIf { sameBase } != null -> previousProfile.cleartextConsentRecorded ?: true
-            else -> false
-        }
-        require(parsedBase.isHttps || (cleartextAllowed && CleartextPolicy.isVerifiedDestination(parsedBase.host))) {
-            "Cleartext is restricted to an explicitly confirmed local/private Hermes destination"
-        }
+        val consent = CleartextConsentPolicy.resolve(
+            baseUrl = parsedBase,
+            requestedRecorded = cleartextConsentRecorded,
+            requestedOrigin = cleartextConsentOrigin?.let { ConnectionOrigin.normalize(it) ?: "" },
+            previous = previousProfile,
+        )
         val secrets = when (authMode) {
             AuthMode.NONE -> ConnectionSecrets()
             AuthMode.SESSION_TOKEN -> ConnectionSecrets(
@@ -150,8 +148,9 @@ class ConnectionRepository(
             hasBearerToken = !secrets.bearerToken.isNullOrBlank(),
             managementProfile = normalizeManagementProfile(managementProfile),
             pinSha256 = normalizedPin,
-            allowCleartext = cleartextAllowed,
-            cleartextConsentRecorded = consentRecorded,
+            allowCleartext = consent.recorded,
+            cleartextConsentRecorded = consent.recorded,
+            cleartextConsentOrigin = consent.origin,
             createdAt = previousProfile?.createdAt ?: System.currentTimeMillis(),
             lastConnectedAt = previousProfile?.lastConnectedAt,
         )
@@ -169,6 +168,15 @@ class ConnectionRepository(
     fun delete(id: String) {
         store.delete(id)
         clientFactory.invalidate()
+    }
+
+    suspend fun revokeCleartextConsent(id: String): Boolean = withContext(Dispatchers.IO) {
+        val revoked = store.revokeCleartextConsent(id)
+        if (revoked) {
+            wsAuthHelper.invalidate()
+            clientFactory.invalidate()
+        }
+        revoked
     }
 
     suspend fun testConnection(
