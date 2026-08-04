@@ -29,6 +29,7 @@ import com.hermesgadget.talaria.domain.model.SessionMessage
 import com.hermesgadget.talaria.domain.model.SessionsPage
 import com.hermesgadget.talaria.feature.manage.files.MAX_SHARE_FILE_BYTES
 import com.hermesgadget.talaria.feature.manage.files.ShareFileManager
+import com.hermesgadget.talaria.core.util.suspendResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -138,7 +139,7 @@ class ArtifactsViewModel(
     }
 
     init {
-        runCatching { (shareFileManager ?: defaultShareFileManager).cleanupStaleFiles() }
+        suspendResult { (shareFileManager ?: defaultShareFileManager).cleanupStaleFiles() }
         refresh()
     }
 

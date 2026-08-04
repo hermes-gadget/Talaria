@@ -39,6 +39,7 @@ import com.hermesgadget.talaria.domain.model.OpsHooksResponse
 import com.hermesgadget.talaria.domain.model.OpsRawConfigResponse
 import com.hermesgadget.talaria.domain.model.OpsRawConfigUpdate
 import com.hermesgadget.talaria.domain.model.SystemStats
+import com.hermesgadget.talaria.core.util.suspendResult
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -302,7 +303,7 @@ class SystemViewModel(
     fun applyHermesUpdate() {
         viewModelScope.launch {
             _ui.update { it.copy(updateBusy = true) }
-            runCatching { gateway.applyHermesUpdate() }.fold(
+            suspendResult { gateway.applyHermesUpdate() }.fold(
                 onSuccess = { result ->
                     _ui.update { it.copy(updateAction = prettySystemJson(result), updateBusy = false) }
                 },
@@ -316,7 +317,7 @@ class SystemViewModel(
     fun drainGateway() {
         viewModelScope.launch {
             _ui.update { it.copy(updateBusy = true) }
-            runCatching { gateway.drainGateway() }.fold(
+            suspendResult { gateway.drainGateway() }.fold(
                 onSuccess = { result ->
                     _ui.update { it.copy(gatewayDrain = prettySystemJson(result), updateBusy = false) }
                 },
@@ -330,7 +331,7 @@ class SystemViewModel(
     fun getOpsCheckpoints() {
         viewModelScope.launch {
             _ui.update { it.copy(opsCheckpointsLoading = true, opsError = null) }
-            runCatching { gateway.getOpsCheckpoints() }.fold(
+            suspendResult { gateway.getOpsCheckpoints() }.fold(
                 onSuccess = { result ->
                     _ui.update {
                         it.copy(
@@ -370,7 +371,7 @@ class SystemViewModel(
     ) {
         viewModelScope.launch {
             _ui.update { it.copy(opsBusy = true, opsError = null) }
-            runCatching { action() }.fold(
+            suspendResult { action() }.fold(
                 onSuccess = { result ->
                     _ui.update { it.copy(opsResult = prettySystemJson(result), opsBusy = false) }
                     if (refreshCheckpoints) getOpsCheckpoints()
@@ -385,7 +386,7 @@ class SystemViewModel(
     fun refreshHooks() {
         _ui.update { it.copy(hooks = HooksUiState.Loading, hooksMessage = null) }
         viewModelScope.launch {
-            runCatching { gateway.getOpsHooks() }.fold(
+            suspendResult { gateway.getOpsHooks() }.fold(
                 onSuccess = { response -> _ui.update { it.copy(hooks = HooksUiState.Ready(response)) } },
                 onFailure = { error -> _ui.update { it.copy(hooks = HooksUiState.Failed(error.message ?: "Could not load hooks")) } },
             )
@@ -405,7 +406,7 @@ class SystemViewModel(
 
         viewModelScope.launch {
             _ui.update { it.copy(hooksBusy = true, hooksMessage = null) }
-            runCatching {
+            suspendResult {
                 requireOpsMutationSuccess(gateway.createOpsHook(request), "Could not save hook")
                 gateway.getOpsHooks()
             }.fold(
@@ -436,7 +437,7 @@ class SystemViewModel(
 
         viewModelScope.launch {
             _ui.update { it.copy(hooksBusy = true, hooksMessage = null) }
-            runCatching {
+            suspendResult {
                 requireOpsMutationSuccess(
                     gateway.deleteOpsHook(OpsHookDeleteRequest(entry.event, command)),
                     "Could not delete hook",
@@ -547,7 +548,7 @@ class SystemViewModel(
     fun downloadAndShareBackup() {
         _ui.update { it.copy(backupDownload = BackupDownloadUiState.Running, shareRequest = null) }
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 withContext(Dispatchers.IO) {
                     val response = gateway.createOpsBackup(OpsBackupRequest())
                     val archive = response.archive?.takeIf { it.isNotBlank() }
@@ -605,7 +606,7 @@ class SystemViewModel(
     fun createDebugShare() {
         _ui.update { it.copy(debugShare = DebugShareUiState.Running, shareRequest = null) }
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 withContext(Dispatchers.IO) {
                     val response = gateway.createOpsDebugShare(OpsDebugShareRequest())
                     val text = buildString {
@@ -648,7 +649,7 @@ class SystemViewModel(
     fun refreshRawConfig() {
         _ui.update { it.copy(rawConfig = RawConfigUiState.Loading) }
         viewModelScope.launch {
-            runCatching { gateway.getOpsRawConfig() }.fold(
+            suspendResult { gateway.getOpsRawConfig() }.fold(
                 onSuccess = { response ->
                     _ui.update { it.copy(rawConfig = RawConfigUiState.Ready(response.yaml, response.path)) }
                 },
@@ -687,7 +688,7 @@ class SystemViewModel(
         val submittedGeneration = current.generation
         _ui.update { it.copy(rawConfig = current.copy(saving = true, message = null)) }
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 requireOpsMutationSuccess(
                     gateway.putOpsRawConfig(OpsRawConfigUpdate(submittedYaml)),
                     "Could not save raw config",

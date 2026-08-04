@@ -58,6 +58,7 @@ import com.hermesgadget.talaria.domain.model.ToolCallUi
 import com.hermesgadget.talaria.domain.model.scopeId
 import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
 import com.hermesgadget.talaria.feature.manage.sessions.SessionFilters
+import com.hermesgadget.talaria.core.util.suspendResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -1040,7 +1041,7 @@ class ChatViewModel(
      * empty map and the rail remains a normal flat session list.
      */
     private suspend fun refreshSessionBranchOrigins() {
-        val raw = runCatching {
+        val raw = suspendResult {
             withContext(Dispatchers.IO) {
                 container.clientFactory.api().getSessions(limit = 50, offset = 0)
             }
@@ -1792,7 +1793,7 @@ class ChatViewModel(
     fun attachImage(uri: Uri) {
         val tabId = _ui.value.active?.id ?: return
         viewModelScope.launch {
-            val selected = runCatching {
+            val selected = suspendResult {
                 withContext(Dispatchers.IO) {
                     val resolver = TalariaApp.instance.contentResolver
                     val displayName = resolver.query(
@@ -2189,7 +2190,7 @@ class ChatViewModel(
         serverSttChecked = true
         val probeGeneration = ++serverSttProbeGeneration
         viewModelScope.launch {
-            val capabilities = runCatching {
+            val capabilities = suspendResult {
                 val root = container.clientFactory.api().getOpenApi()
                 VoiceCapabilities.fromOpenApiPaths(root["paths"]?.jsonObject?.keys.orEmpty())
             }.getOrNull()
@@ -2504,7 +2505,7 @@ class ChatViewModel(
             return hermesRepository.refreshSessions().getOrNull().orEmpty()
         }
         return withContext(Dispatchers.IO) {
-            runCatching {
+            suspendResult {
                 parseSessionsForProfile(
                     container.clientFactory.api().getSessionsForProfile(profile = profileName),
                 )
@@ -2519,7 +2520,7 @@ class ChatViewModel(
             return hermesRepository.loadMessages(sessionId)
         }
         return withContext(Dispatchers.IO) {
-            runCatching {
+            suspendResult {
                 container.clientFactory.api()
                     .getSessionMessages(sessionId, profile = profileName)
                     .messages
@@ -2536,7 +2537,7 @@ class ChatViewModel(
             else -> null
         }
         return array.orEmpty().mapNotNull {
-            runCatching { com.hermesgadget.talaria.core.network.JsonConfig.json.decodeFromJsonElement<SessionSummary>(it) }
+            suspendResult { com.hermesgadget.talaria.core.network.JsonConfig.json.decodeFromJsonElement<SessionSummary>(it) }
                 .getOrNull()
         }
     }

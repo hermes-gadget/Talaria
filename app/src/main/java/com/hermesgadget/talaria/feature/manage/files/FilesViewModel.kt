@@ -25,6 +25,7 @@ import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.network.HermesApi
 import com.hermesgadget.talaria.domain.model.ManagedFileEntry
+import com.hermesgadget.talaria.core.util.suspendResult
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -238,7 +239,7 @@ class FilesViewModel(
         }
 
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 if (initialType == FilePreviewType.IMAGE) {
                     val response = api.getMediaDataUrl(entry.path)
                     val parsed = parseManagedPreviewDataUrl(response.dataUrl)
@@ -385,7 +386,7 @@ class FilesViewModel(
         if (state.previewLoading || state.shareLoading) return
         _ui.update { it.copy(shareLoading = true, sharePayload = null, shareError = null) }
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 val bytes = when (type) {
                     FilePreviewType.TEXT -> file.text.toByteArray(Charsets.UTF_8)
                     FilePreviewType.IMAGE,
@@ -445,7 +446,7 @@ class FilesViewModel(
     fun prepareUpload(uri: Uri, resolver: ContentResolver) {
         val displayName = contentDisplayName(resolver, uri)
             .ifBlank { appString(R.string.files_upload_default_name) }
-        val targetPath = runCatching { joinManagedPath(_ui.value.path, displayName) }
+        val targetPath = suspendResult { joinManagedPath(_ui.value.path, displayName) }
             .getOrDefault(displayName)
         uploadResolver = resolver
         _ui.update {
@@ -484,7 +485,7 @@ class FilesViewModel(
         }
         uploadResolver = null
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 withContext(Dispatchers.IO) {
                     uploadCandidate(candidate, resolver, overwrite, totalBytes)
                 }
@@ -696,14 +697,14 @@ class FilesViewModel(
     }
 
     fun createDirectory(name: String) {
-        val target = runCatching { joinManagedPath(_ui.value.path, name) }.getOrElse {
+        val target = suspendResult { joinManagedPath(_ui.value.path, name) }.getOrElse {
             _ui.update { state -> state.copy(actionError = appString(R.string.files_error_create_folder)) }
             return
         }
         if (_ui.value.actionLoading) return
         _ui.update { it.copy(actionLoading = true, actionError = null) }
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 api.createManagedDir(buildJsonObject { put("path", target) })
             }.fold(
                 onSuccess = {
@@ -727,7 +728,7 @@ class FilesViewModel(
         if (_ui.value.actionLoading) return
         _ui.update { it.copy(actionLoading = true, actionError = null) }
         viewModelScope.launch {
-            runCatching { api.deleteManagedFile(entry.path) }.fold(
+            suspendResult { api.deleteManagedFile(entry.path) }.fold(
                 onSuccess = {
                     _ui.update { state ->
                         state.copy(

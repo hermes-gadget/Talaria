@@ -21,6 +21,7 @@ import com.hermesgadget.talaria.domain.model.CronDeliveryTarget
 import com.hermesgadget.talaria.domain.model.CronRun
 import com.hermesgadget.talaria.domain.model.ManageCronJob
 import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
+import com.hermesgadget.talaria.core.util.suspendResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -171,7 +172,7 @@ class CronViewModel(
     fun refresh() {
         _ui.value = CronUiState.Loading
         viewModelScope.launch {
-            runCatching { gateway.load() }
+            suspendResult { gateway.load() }
                 .onSuccess { snapshot ->
                     _ui.value = CronUiState.Content(
                         jobs = snapshot.jobs,
@@ -195,7 +196,7 @@ class CronViewModel(
         }
         _ui.value = state.copy(expandedJobs = state.expandedJobs + jobId, busyJobId = jobId, message = null)
         viewModelScope.launch {
-            runCatching { gateway.loadRuns(jobId) }
+            suspendResult { gateway.loadRuns(jobId) }
                 .onSuccess { runs ->
                     _ui.update { current ->
                         val content = current as? CronUiState.Content ?: return@update current
@@ -260,9 +261,9 @@ class CronViewModel(
         if (state.busy) return // re-entry guard: no overlapping mutations
         _ui.value = state.copy(busy = true, message = null)
         viewModelScope.launch {
-            runCatching { action() }
+            suspendResult { action() }
                 .onSuccess {
-                    runCatching { gateway.load() }
+                    suspendResult { gateway.load() }
                         .onSuccess { snapshot ->
                             _ui.value = CronUiState.Content(
                                 jobs = snapshot.jobs,

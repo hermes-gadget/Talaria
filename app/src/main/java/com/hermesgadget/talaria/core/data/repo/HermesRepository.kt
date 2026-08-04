@@ -23,6 +23,7 @@ import com.hermesgadget.talaria.core.data.db.CachedMessageEntity
 import com.hermesgadget.talaria.core.data.db.CachedSessionEntity
 import com.hermesgadget.talaria.core.data.db.TalariaDatabase
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
+import com.hermesgadget.talaria.core.util.suspendResult
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.HermesApi
 import com.hermesgadget.talaria.core.network.HermesClientFactory
@@ -121,7 +122,7 @@ class HermesRepository(
     suspend fun refreshStatus(): Result<StatusResponse> {
         val snapshot = clientFactory.snapshot()
         return withContext(Dispatchers.IO) {
-            runCatching { api(snapshot).getStatus(profile = snapshot?.managementProfile) }
+            suspendResult { api(snapshot).getStatus(profile = snapshot?.managementProfile) }
         }
     }
 
@@ -132,7 +133,7 @@ class HermesRepository(
         val snapshot = clientFactory.snapshot()
             ?: return Result.failure(IllegalStateException("No active Hermes connection"))
         return withContext(Dispatchers.IO) {
-            runCatching {
+            suspendResult {
             val page = fetchSessionsPage(snapshot, source = source, limit = limit)
             val list = page.sessions
             val cid = snapshot.scopeId
@@ -164,7 +165,7 @@ class HermesRepository(
         val snapshot = clientFactory.snapshot()
             ?: return Result.failure(IllegalStateException("No active Hermes connection"))
         return withContext(Dispatchers.IO) {
-            runCatching { fetchSessionsPage(snapshot, source = source, limit = limit, offset = offset) }
+            suspendResult { fetchSessionsPage(snapshot, source = source, limit = limit, offset = offset) }
         }
     }
 
@@ -195,10 +196,10 @@ class HermesRepository(
             is JsonObject -> {
                 val arr = element["sessions"]?.jsonArray ?: element["results"]?.jsonArray
                 val sessions = arr?.mapNotNull {
-                    runCatching { json.decodeFromJsonElement<SessionSummary>(it) }.getOrNull()
+                    suspendResult { json.decodeFromJsonElement<SessionSummary>(it) }.getOrNull()
                 } ?: emptyList()
                 val total = element["total"]?.let {
-                    runCatching { it.toString().trim('"').toInt() }.getOrNull()
+                    suspendResult { it.toString().trim('"').toInt() }.getOrNull()
                 } ?: sessions.size
                 com.hermesgadget.talaria.domain.model.SessionsPage(sessions = sessions, total = total)
             }
@@ -209,7 +210,7 @@ class HermesRepository(
     suspend fun getSession(sessionId: String): Result<SessionSummary> {
         val snapshot = clientFactory.snapshot()
         return withContext(Dispatchers.IO) {
-            runCatching { api(snapshot).getSession(sessionId, profile = snapshot?.managementProfile) }
+            suspendResult { api(snapshot).getSession(sessionId, profile = snapshot?.managementProfile) }
         }
     }
 
@@ -217,7 +218,7 @@ class HermesRepository(
         val snapshot = clientFactory.snapshot()
             ?: return Result.failure(IllegalStateException("No active Hermes connection"))
         return withContext(Dispatchers.IO) {
-            runCatching {
+            suspendResult {
             val msgs = api(snapshot).getSessionMessages(sessionId, profile = snapshot.managementProfile).messages
             val cid = snapshot.scopeId
             db.messages().replaceSessionMessages(
@@ -243,7 +244,7 @@ class HermesRepository(
     suspend fun getConfig(): Result<JsonObject> = cached("config") { api -> api.getConfig() }
 
     suspend fun putConfig(config: JsonObject): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().putConfig(buildJsonObject { put("config", config) })
             invalidate("config")
             Unit
@@ -257,7 +258,7 @@ class HermesRepository(
     /** Merge bundled `env_catalog.json` metadata with live `/api/env` set/redacted state. */
     private fun mergeEnvCatalog(live: Map<String, EnvVarInfo>): Map<String, EnvVarInfo> {
         val ctx = appContext ?: return live
-        val catalog = runCatching {
+        val catalog = suspendResult {
             ctx.assets.open("env_catalog.json").bufferedReader().use { it.readText() }
                 .let { json.decodeFromString<EnvCatalogFile>(it) }
         }.getOrNull() ?: return live
@@ -300,7 +301,7 @@ class HermesRepository(
     )
 
     suspend fun setEnv(key: String, value: String): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().putEnv(buildJsonObject {
                 put("key", key)
                 put("value", value)
@@ -311,7 +312,7 @@ class HermesRepository(
     }
 
     suspend fun deleteEnv(key: String): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().deleteEnv(buildJsonObject { put("key", key) })
             invalidate("env")
             Unit
@@ -325,7 +326,7 @@ class HermesRepository(
         component: String? = null,
         search: String? = null,
     ): Result<List<String>> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             val raw = api().getLogs(file = file, lines = lines, level = level, component = component).lines
             val q = search?.trim().orEmpty()
             if (q.isEmpty()) raw else raw.filter { it.contains(q, ignoreCase = true) }
@@ -339,7 +340,7 @@ class HermesRepository(
 
     suspend fun createCron(prompt: String, schedule: String, name: String?, deliver: String): Result<CronJob> =
         withContext(Dispatchers.IO) {
-            runCatching {
+            suspendResult {
                 api().createCronJob(
                     buildJsonObject {
                         put("prompt", prompt)
@@ -352,22 +353,22 @@ class HermesRepository(
         }
 
     suspend fun pauseCron(id: String) = withContext(Dispatchers.IO) {
-        runCatching { api().pauseCron(id) }.also { invalidate("cron") }
+        suspendResult { api().pauseCron(id) }.also { invalidate("cron") }
     }
     suspend fun resumeCron(id: String) = withContext(Dispatchers.IO) {
-        runCatching { api().resumeCron(id) }.also { invalidate("cron") }
+        suspendResult { api().resumeCron(id) }.also { invalidate("cron") }
     }
     suspend fun triggerCron(id: String) = withContext(Dispatchers.IO) {
-        runCatching { api().triggerCron(id) }.also { invalidate("cron") }
+        suspendResult { api().triggerCron(id) }.also { invalidate("cron") }
     }
     suspend fun deleteCron(id: String) = withContext(Dispatchers.IO) {
-        runCatching { api().deleteCron(id); Unit }.also { invalidate("cron") }
+        suspendResult { api().deleteCron(id); Unit }.also { invalidate("cron") }
     }
 
     suspend fun getSkills(): Result<List<SkillInfo>> = cached("skills") { api -> api.getSkills() }
 
     suspend fun toggleSkill(name: String, enabled: Boolean) = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().toggleSkill(buildJsonObject {
                 put("name", name)
                 put("enabled", enabled)
@@ -378,19 +379,19 @@ class HermesRepository(
     }
 
     suspend fun searchSkillHub(query: String) = withContext(Dispatchers.IO) {
-        runCatching { api().searchSkillHub(query.trim()).results }
+        suspendResult { api().searchSkillHub(query.trim()).results }
     }
 
     suspend fun previewHubSkill(identifier: String) = withContext(Dispatchers.IO) {
-        runCatching { api().previewHubSkill(identifier) }
+        suspendResult { api().previewHubSkill(identifier) }
     }
 
     suspend fun scanHubSkill(identifier: String) = withContext(Dispatchers.IO) {
-        runCatching { api().scanHubSkill(identifier) }
+        suspendResult { api().scanHubSkill(identifier) }
     }
 
     suspend fun installHubSkill(identifier: String) = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             val action = awaitAction(api().installHubSkill(buildJsonObject { put("identifier", identifier) }))
             invalidate("skills", "learning_graph")
             action
@@ -398,7 +399,7 @@ class HermesRepository(
     }
 
     suspend fun uninstallHubSkill(name: String) = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             val action = awaitAction(api().uninstallHubSkill(buildJsonObject { put("name", name) }))
             invalidate("skills", "learning_graph")
             action
@@ -408,11 +409,11 @@ class HermesRepository(
     suspend fun getMcp(): Result<List<McpServer>> = cached("mcp") { api -> api.getMcpServers().servers }
 
     suspend fun startMcpOAuth(name: String) = withContext(Dispatchers.IO) {
-        runCatching { api().startMcpOAuth(name) }
+        suspendResult { api().startMcpOAuth(name) }
     }
 
     suspend fun getMcpOAuthFlow(id: String) = withContext(Dispatchers.IO) {
-        runCatching { api().getMcpOAuthFlow(id) }
+        suspendResult { api().getMcpOAuthFlow(id) }
     }
 
     suspend fun getMcpCatalog(): Result<List<McpCatalogEntry>> =
@@ -422,7 +423,7 @@ class HermesRepository(
         name: String,
         env: Map<String, String>,
     ): Result<com.hermesgadget.talaria.domain.model.ActionStatus?> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             val started = api().installMcpCatalogEntry(buildJsonObject {
                 put("name", name)
                 put("enable", true)
@@ -458,7 +459,7 @@ class HermesRepository(
         cached("channels") { api -> api.getMessagingPlatforms().platforms }
 
     suspend fun getPairing(): Result<PairingResponse> = withContext(Dispatchers.IO) {
-        runCatching { api().getPairing() }
+        suspendResult { api().getPairing() }
     }
 
     suspend fun approvePairing(
@@ -468,7 +469,7 @@ class HermesRepository(
     ): Result<JsonElement> {
         val bound = snapshot ?: clientFactory.snapshot()
         return withContext(Dispatchers.IO) {
-            runCatching {
+            suspendResult {
                 api(bound).approvePairing(buildJsonObject {
                     put("platform", platform)
                     put("request_id", requestId)
@@ -479,7 +480,7 @@ class HermesRepository(
     }
 
     suspend fun revokePairing(platform: String, userId: String) = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().revokePairing(buildJsonObject {
                 put("platform", platform)
                 put("user_id", userId)
@@ -493,7 +494,7 @@ class HermesRepository(
 
     /** Enables the webhook platform; may trigger a gateway restart on the host. */
     suspend fun enableWebhooks(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        runCatching { api().enableWebhooks() }.also { invalidate("webhooks") }
+        suspendResult { api().enableWebhooks() }.also { invalidate("webhooks") }
     }
 
     suspend fun getProfiles(force: Boolean = false): Result<List<ProfileInfo>> {
@@ -501,25 +502,25 @@ class HermesRepository(
         val snapshot = clientFactory.snapshot()
         val scope = snapshot?.scopeId ?: "none"
         return withContext(Dispatchers.IO) {
-            runCatching { api(snapshot).getProfiles().profiles }.onSuccess {
+            suspendResult { api(snapshot).getProfiles().profiles }.onSuccess {
                 cache.put("$scope:profiles", it)
             }
         }
     }
 
     suspend fun getActiveProfileName(): Result<String?> = withContext(Dispatchers.IO) {
-        runCatching { api().getActiveProfile().active }
+        suspendResult { api().getActiveProfile().active }
     }
 
     suspend fun setActiveProfileName(name: String): Result<String?> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().setActiveProfile(buildJsonObject { put("name", name) }).active
         }.also { clearCache() }
     }
 
     suspend fun createProfile(name: String, description: String, cloneFrom: String? = null): Result<Unit> =
         withContext(Dispatchers.IO) {
-            runCatching {
+            suspendResult {
                 api().createProfile(buildJsonObject {
                     put("name", name.trim())
                     description.trim().takeIf(String::isNotEmpty)?.let { put("description", it) }
@@ -530,24 +531,24 @@ class HermesRepository(
         }
 
     suspend fun renameProfile(name: String, newName: String): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().renameProfile(name, buildJsonObject { put("new_name", newName.trim()) })
             Unit
         }.also { invalidate("profiles") }
     }
 
     suspend fun deleteProfile(name: String): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching { api().deleteProfile(name); Unit }.also { invalidate("profiles") }
+        suspendResult { api().deleteProfile(name); Unit }.also { invalidate("profiles") }
     }
 
     suspend fun getProfileSoul(name: String): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().getProfileSoul(name).jsonObject["content"]?.jsonPrimitive?.contentOrNull.orEmpty()
         }
     }
 
     suspend fun updateProfileSoul(name: String, content: String): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().updateProfileSoul(name, buildJsonObject { put("content", content) })
             Unit
         }
@@ -555,7 +556,7 @@ class HermesRepository(
 
     suspend fun updateProfileDescription(name: String, description: String): Result<Unit> =
         withContext(Dispatchers.IO) {
-            runCatching {
+            suspendResult {
                 api().updateProfileDescription(
                     name,
                     buildJsonObject { put("description", description.trim()) },
@@ -565,7 +566,7 @@ class HermesRepository(
         }
 
     suspend fun describeProfileAutomatically(name: String): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             val root = api().describeProfileAuto(
                 name,
                 buildJsonObject { put("overwrite", true) },
@@ -578,47 +579,47 @@ class HermesRepository(
     }
 
     suspend fun renameSession(id: String, title: String) = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().patchSession(id, buildJsonObject { put("title", title) })
             Unit
         }
     }
 
     suspend fun deleteSession(id: String) = withContext(Dispatchers.IO) {
-        runCatching { api().deleteSession(id); Unit }
+        suspendResult { api().deleteSession(id); Unit }
     }
 
     suspend fun searchSessions(query: String): Result<List<SessionSummary>> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             val el = api().searchSessions(query)
             parseSessions(el)
         }
     }
 
     suspend fun pruneSessions(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        runCatching { api().pruneSessions(buildJsonObject {}) }
+        suspendResult { api().pruneSessions(buildJsonObject {}) }
     }
 
     suspend fun getModelInfo(): Result<ModelInfo> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             val el = api().getModelInfo()
-            runCatching { json.decodeFromJsonElement<ModelInfo>(el) }.getOrElse {
+            suspendResult { json.decodeFromJsonElement<ModelInfo>(el) }.getOrElse {
                 ModelInfo(model = el.jsonObject["model"]?.toString()?.trim('"'))
             }
         }
     }
 
     suspend fun getModelOptions(): Result<List<ModelOption>> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             val el = api().getModelOptions()
             when (el) {
                 is JsonArray -> el.mapNotNull {
-                    runCatching { json.decodeFromJsonElement<ModelOption>(it) }.getOrNull()
+                    suspendResult { json.decodeFromJsonElement<ModelOption>(it) }.getOrNull()
                         ?: ModelOption(id = it.jsonObject["id"]?.toString()?.trim('"'), name = it.toString())
                 }
                 is JsonObject -> {
                     val arr = el["options"]?.jsonArray ?: el["models"]?.jsonArray
-                    arr?.mapNotNull { runCatching { json.decodeFromJsonElement<ModelOption>(it) }.getOrNull() }
+                    arr?.mapNotNull { suspendResult { json.decodeFromJsonElement<ModelOption>(it) }.getOrNull() }
                         ?: emptyList()
                 }
                 else -> emptyList()
@@ -636,7 +637,7 @@ class HermesRepository(
         modelId: String,
         confirmExpensive: Boolean = false,
     ): Result<ModelAssignmentResult> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             val response = api().setModel(buildJsonObject {
                 put("scope", "main")
                 put("provider", provider)
@@ -659,7 +660,7 @@ class HermesRepository(
         val el = api.getModelOptions()
         when (el) {
             is JsonObject -> el["providers"]?.jsonArray
-                ?.mapNotNull { runCatching { json.decodeFromJsonElement<ModelProvider>(it) }.getOrNull() }
+                ?.mapNotNull { suspendResult { json.decodeFromJsonElement<ModelProvider>(it) }.getOrNull() }
                 ?: emptyList()
             else -> emptyList()
         }
@@ -673,12 +674,12 @@ class HermesRepository(
             is JsonObject -> el["toolsets"]?.jsonArray ?: el["items"]?.jsonArray
             else -> null
         }
-        arr?.mapNotNull { runCatching { json.decodeFromJsonElement<ToolsetInfo>(it) }.getOrNull() }
+        arr?.mapNotNull { suspendResult { json.decodeFromJsonElement<ToolsetInfo>(it) }.getOrNull() }
             ?: emptyList()
     }
 
     suspend fun setToolsetEnabled(name: String, enabled: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().setToolset(name, buildJsonObject { put("enabled", enabled) })
             invalidate("toolsets")
             Unit
@@ -696,14 +697,14 @@ class HermesRepository(
      * a one-time secret / final url in the response — surface it to the user.
      */
     suspend fun createWebhook(name: String, prompt: String): Result<WebhookRoute> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             val element = api().createWebhook(
                 buildJsonObject {
                     put("name", name)
                     put("prompt", prompt)
                 },
             )
-            val obj = element as? JsonObject ?: return@runCatching WebhookRoute(name)
+            val obj = element as? JsonObject ?: return@suspendResult WebhookRoute(name)
             WebhookRoute(
                 name = obj["name"]?.jsonPrimitive?.contentOrNull ?: name,
                 description = obj["description"]?.jsonPrimitive?.contentOrNull,
@@ -718,7 +719,7 @@ class HermesRepository(
     }
 
     suspend fun setWebhookEnabled(name: String, enabled: Boolean) = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().setWebhookEnabled(name, buildJsonObject { put("enabled", enabled) })
             invalidate("webhooks")
             Unit
@@ -726,7 +727,7 @@ class HermesRepository(
     }
 
     suspend fun deleteWebhook(name: String) = withContext(Dispatchers.IO) {
-        runCatching { api().deleteWebhook(name); Unit }.also { invalidate("webhooks") }
+        suspendResult { api().deleteWebhook(name); Unit }.also { invalidate("webhooks") }
     }
 
     suspend fun addMcpServer(
@@ -738,7 +739,7 @@ class HermesRepository(
         auth: String = "none",
         bearerToken: String = "",
     ): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().addMcpServer(buildJsonObject {
                 put("name", name)
                 command.takeIf { it.isNotBlank() }?.let { put("command", it) }
@@ -754,7 +755,7 @@ class HermesRepository(
     }
 
     suspend fun setMcpEnabled(name: String, enabled: Boolean) = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().setMcpEnabled(name, buildJsonObject { put("enabled", enabled) })
             invalidate("mcp")
             Unit
@@ -762,11 +763,11 @@ class HermesRepository(
     }
 
     suspend fun deleteMcpServer(name: String) = withContext(Dispatchers.IO) {
-        runCatching { api().deleteMcpServer(name); Unit }.also { invalidate("mcp") }
+        suspendResult { api().deleteMcpServer(name); Unit }.also { invalidate("mcp") }
     }
 
     suspend fun testMcp(name: String): Result<JsonElement> = withContext(Dispatchers.IO) {
-        runCatching { api().testMcp(name) }
+        suspendResult { api().testMcp(name) }
     }
 
     suspend fun updateChannel(
@@ -776,7 +777,7 @@ class HermesRepository(
         clearEnv: List<String> = emptyList(),
     ): Result<Unit> =
         withContext(Dispatchers.IO) {
-            runCatching {
+            suspendResult {
                 api().updateMessagingPlatform(
                     id,
                     buildJsonObject {
@@ -793,15 +794,15 @@ class HermesRepository(
         }
 
     suspend fun testChannel(id: String): Result<JsonElement> = withContext(Dispatchers.IO) {
-        runCatching { api().testMessagingPlatform(id) }
+        suspendResult { api().testMessagingPlatform(id) }
     }
 
     suspend fun clearPendingPairing() = withContext(Dispatchers.IO) {
-        runCatching { api().clearPendingPairing(); Unit }
+        suspendResult { api().clearPendingPairing(); Unit }
     }
 
     suspend fun updateCron(id: String, prompt: String, schedule: String) = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().updateCronJob(
                 id,
                 buildJsonObject {
@@ -817,31 +818,31 @@ class HermesRepository(
     }
 
     suspend fun runDoctor(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        runCatching { api().runDoctor() }
+        suspendResult { api().runDoctor() }
     }
 
     suspend fun runDoctorToCompletion() = withContext(Dispatchers.IO) {
-        runCatching { awaitAction(api().runDoctor()) }
+        suspendResult { awaitAction(api().runDoctor()) }
     }
 
     suspend fun runSecurityAudit(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        runCatching { api().runSecurityAudit() }
+        suspendResult { api().runSecurityAudit() }
     }
 
     suspend fun runSecurityAuditToCompletion() = withContext(Dispatchers.IO) {
-        runCatching { awaitAction(api().runSecurityAudit()) }
+        suspendResult { awaitAction(api().runSecurityAudit()) }
     }
 
     suspend fun runBackup(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        runCatching { api().runBackup() }
+        suspendResult { api().runBackup() }
     }
 
     suspend fun runBackupToCompletion() = withContext(Dispatchers.IO) {
-        runCatching { awaitAction(api().runBackup()) }
+        suspendResult { awaitAction(api().runBackup()) }
     }
 
     suspend fun checkUpdate(): Result<JsonElement> = withContext(Dispatchers.IO) {
-        runCatching { api().checkUpdate() }
+        suspendResult { api().checkUpdate() }
     }
 
     suspend fun getPortal(): Result<JsonElement> = cached("portal") { api -> api.getPortal() }
@@ -855,7 +856,7 @@ class HermesRepository(
     }
 
     suspend fun setMemoryProvider(name: String): Result<MemoryState> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().setMemoryProvider(buildJsonObject { put("provider", name) })
             invalidate("memory", "memory_state")
             JsonConfig.json.decodeFromJsonElement(MemoryState.serializer(), api().getMemory())
@@ -863,7 +864,7 @@ class HermesRepository(
     }
 
     suspend fun resetMemory(target: String): Result<MemoryState> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             require(target in setOf("all", "memory", "user")) { "Invalid memory reset target" }
             api().resetMemory(buildJsonObject { put("target", target) })
             invalidate("memory", "memory_state")
@@ -876,7 +877,7 @@ class HermesRepository(
     }
 
     suspend fun setCuratorPaused(paused: Boolean): Result<CuratorState> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().setCuratorPaused(buildJsonObject { put("paused", paused) })
             invalidate("curator", "curator_state")
             JsonConfig.json.decodeFromJsonElement(CuratorState.serializer(), api().getCurator())
@@ -885,12 +886,12 @@ class HermesRepository(
 
     suspend fun runCuratorNow(): Result<com.hermesgadget.talaria.domain.model.ActionStatus> =
         withContext(Dispatchers.IO) {
-            runCatching { awaitAction(api().runCurator()) }
+            suspendResult { awaitAction(api().runCurator()) }
         }
 
     /** Export session messages as markdown for share sheet. */
     suspend fun exportSessionMarkdown(sessionId: String): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             val msgs = api().getSessionMessages(sessionId).messages
             buildString {
                 appendLine("# Session $sessionId")
@@ -927,13 +928,13 @@ class HermesRepository(
     }
 
     suspend fun fsReadText(path: String): Result<FsTextFile> = withContext(Dispatchers.IO) {
-        runCatching { api().fsReadText(path) }
+        suspendResult { api().fsReadText(path) }
     }
 
     /** Re-read before saving so a remote edit does not silently overwrite a newer file. */
     suspend fun fsWriteText(path: String, content: String, expectedOriginal: String): Result<FsTextFile> =
         withContext(Dispatchers.IO) {
-            runCatching {
+            suspendResult {
                 val current = api().fsReadText(path)
                 check(!current.binary && !current.truncated) { "This file cannot be safely edited as text" }
                 check(current.text == expectedOriginal) {
@@ -953,11 +954,11 @@ class HermesRepository(
     suspend fun getLearningGraph(): Result<LearningGraph> = cached("learning_graph") { api -> api.getLearningGraph() }
 
     suspend fun getLearningNode(id: String) = withContext(Dispatchers.IO) {
-        runCatching { api().getLearningNode(id) }
+        suspendResult { api().getLearningNode(id) }
     }
 
     suspend fun updateLearningNode(id: String, content: String): Result<LearningGraph> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().updateLearningNode(buildJsonObject {
                 put("id", id)
                 put("content", content)
@@ -968,7 +969,7 @@ class HermesRepository(
     }
 
     suspend fun deleteLearningNode(id: String): Result<LearningGraph> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             api().deleteLearningNode(buildJsonObject { put("id", id) })
             invalidate("learning_graph", "skills")
             api().getLearningGraph()
@@ -989,7 +990,7 @@ class HermesRepository(
     }
 
     suspend fun gateway(action: String) = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             val started = when (action) {
                 "start" -> api().gatewayStart()
                 "stop" -> api().gatewayStop()
