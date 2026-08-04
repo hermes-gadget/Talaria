@@ -39,30 +39,67 @@ internal object TerminalOutputSanitizer {
 /** Bounded PTY output so a long-lived terminal cannot grow the Compose state forever. */
 internal class TerminalOutputBuffer(
     private val maxChars: Int = MAX_CHARS,
+    private val diagnosticTailChars: Int = DIAGNOSTIC_TAIL_CHARS,
 ) {
     private val buffer = StringBuilder()
+    private val diagnosticTail = StringBuilder()
+    private var truncated = false
+    private var droppedCharCount = 0L
 
     init {
         require(maxChars > 0) { "maxChars must be positive" }
+        require(diagnosticTailChars > 0) { "diagnosticTailChars must be positive" }
     }
 
     val text: String
         get() = buffer.toString()
 
+    /** UI projection that makes omitted earlier output explicit. */
+    val displayText: String
+        get() = if (!truncated) text else "$TRUNCATION_MARKER\n$text"
+
+    /** Payload is retained only locally for diagnostics; counters never include it. */
+    val diagnosticTailText: String
+        get() = diagnosticTail.toString()
+
+    val isTruncated: Boolean
+        get() = truncated
+
+    val droppedChars: Long
+        get() = droppedCharCount
+
     fun append(raw: String): String {
-        buffer.append(TerminalOutputSanitizer.strip(raw))
+        val sanitized = TerminalOutputSanitizer.strip(raw)
+        buffer.append(sanitized)
         if (buffer.length > maxChars) {
-            buffer.delete(0, buffer.length - maxChars)
+            val removed = buffer.length - maxChars
+            retainTail(buffer.substring(0, removed))
+            buffer.delete(0, removed)
+            droppedCharCount += removed.toLong()
+            truncated = true
         }
         return text
     }
 
     fun clear(): String {
         buffer.setLength(0)
+        diagnosticTail.setLength(0)
+        truncated = false
+        droppedCharCount = 0L
         return ""
+    }
+
+    private fun retainTail(removed: String) {
+        if (removed.isEmpty()) return
+        diagnosticTail.append(removed.takeLast(diagnosticTailChars))
+        if (diagnosticTail.length > diagnosticTailChars) {
+            diagnosticTail.delete(0, diagnosticTail.length - diagnosticTailChars)
+        }
     }
 
     companion object {
         const val MAX_CHARS = 120_000
+        const val DIAGNOSTIC_TAIL_CHARS = 256
+        const val TRUNCATION_MARKER = "Earlier terminal output omitted; full history remains on server"
     }
 }

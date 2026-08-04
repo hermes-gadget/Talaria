@@ -32,6 +32,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import com.hermesgadget.talaria.domain.model.AuthMode
 import com.hermesgadget.talaria.domain.model.CredentialPoolEntry
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
+import com.hermesgadget.talaria.core.util.suspendResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -131,22 +133,24 @@ class ConnectViewModel(
                 providerBusy = ProviderBusyAction.LOAD,
                 providerNotice = null,
             )
-            runCatching { loadProviderData() }
-                .onSuccess { content ->
-                    _ui.value = _ui.value.copy(
-                        providerSection = ProviderSectionState.Content(content),
-                        providerBusy = null,
-                    )
-                }
-                .onFailure { failure ->
-                    _ui.value = _ui.value.copy(
-                        providerSection = ProviderSectionState.Failure(
-                            failure.message ?: "Could not load provider settings",
-                            previous,
-                        ),
-                        providerBusy = null,
-                    )
-                }
+            suspendResult { loadProviderData() }
+                .fold(
+                    onSuccess = { content ->
+                        _ui.value = _ui.value.copy(
+                            providerSection = ProviderSectionState.Content(content),
+                            providerBusy = null,
+                        )
+                    },
+                    onFailure = { failure ->
+                        _ui.value = _ui.value.copy(
+                            providerSection = ProviderSectionState.Failure(
+                                failure.message ?: "Could not load provider settings",
+                                previous,
+                            ),
+                            providerBusy = null,
+                        )
+                    },
+                )
         }
     }
 
@@ -171,6 +175,8 @@ class ConnectViewModel(
                     providerBusy = null,
                     statusLine = "Saved · provider settings ready",
                 )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (t: Throwable) {
                 _ui.value = _ui.value.copy(
                     providerSection = ProviderSectionState.Failure(
@@ -217,6 +223,8 @@ class ConnectViewModel(
                     providerBusy = null,
                     providerValidation = ProviderValidationUi(result.ok, result.reachable, validationMessage(result)),
                 )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (t: Throwable) {
                 _ui.value = _ui.value.copy(
                     providerBusy = null,
@@ -251,6 +259,8 @@ class ConnectViewModel(
                     providerBusy = null,
                     customEndpointValidation = ProviderValidationUi(result.ok, result.reachable, validationMessage(result)),
                 )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (t: Throwable) {
                 _ui.value = _ui.value.copy(
                     providerBusy = null,
@@ -279,6 +289,8 @@ class ConnectViewModel(
                 providerApi().upsertCustomEndpoint(customEndpointBody(draft))
                 refreshProviderContent("Custom endpoint saved")
                 clearEndpointDraft()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (t: Throwable) {
                 providerFailure(t)
             }
@@ -308,6 +320,8 @@ class ConnectViewModel(
             try {
                 providerApi().activateCustomEndpoint(endpointId)
                 refreshProviderContent("Custom endpoint activated")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (t: Throwable) {
                 providerFailure(t)
             }
@@ -386,6 +400,8 @@ class ConnectViewModel(
                         refreshProviderContent("Custom endpoint removed")
                     }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (t: Throwable) {
                 providerFailure(t)
             }
@@ -424,6 +440,8 @@ class ConnectViewModel(
                         oauthCode = "",
                     ),
                 )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (t: Throwable) {
                 _ui.value = _ui.value.copy(
                     providerBusy = null,
@@ -463,6 +481,8 @@ class ConnectViewModel(
                     providerNotice = response.message ?: response.detail,
                 )
                 if (oauthCompleted(response.status, response.loggedIn)) refreshProviderContent("Provider OAuth connected")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (t: Throwable) {
                 _ui.value = _ui.value.copy(
                     providerBusy = null,
@@ -488,6 +508,8 @@ class ConnectViewModel(
                     providerNotice = response.message ?: response.detail,
                 )
                 if (oauthCompleted(response.status, response.loggedIn)) refreshProviderContent("Provider OAuth connected")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (t: Throwable) {
                 _ui.value = _ui.value.copy(
                     providerBusy = null,
@@ -576,7 +598,7 @@ class ConnectViewModel(
     private suspend fun loadProviderData(): ProviderOnboardingContent {
         val api = providerApi()
         val notices = mutableListOf<String>()
-        val directCatalog = runCatching { api.getProviders() }
+        val directCatalog = suspendResult { api.getProviders() }
         val catalog = if (directCatalog.isSuccess) {
             val parsed = parseProviderCatalog(directCatalog.getOrThrow())
             if (parsed.providers.isNotEmpty()) {
@@ -587,7 +609,7 @@ class ConnectViewModel(
             }
         } else {
             notices += "This Hermes version does not expose /api/providers; showing /api/model/options."
-            runCatching { parseProviderCatalog(api.getModelOptions()) }.getOrElse { fallbackFailure ->
+            suspendResult { parseProviderCatalog(api.getModelOptions()) }.getOrElse { fallbackFailure ->
                 throw IllegalStateException(
                     "Provider catalog unavailable: ${fallbackFailure.message ?: directCatalog.exceptionOrNull()?.message}",
                     fallbackFailure,
@@ -595,17 +617,17 @@ class ConnectViewModel(
             }
         }
 
-        val endpoints = runCatching { parseCustomEndpoints(api.getCustomEndpoints()) }
+        val endpoints = suspendResult { parseCustomEndpoints(api.getCustomEndpoints()) }
             .getOrElse {
                 notices += "Custom endpoints are unavailable on this Hermes version."
                 CustomEndpointSnapshot()
             }
-        val credentials = runCatching { parseCredentialPool(api.getCredentialPool()) }
+        val credentials = suspendResult { parseCredentialPool(api.getCredentialPool()) }
             .getOrElse {
                 notices += "Credential pools are unavailable on this Hermes version."
                 CredentialPoolSnapshot()
             }
-        val oauth = runCatching { parseOAuthProviders(api.getProviderOAuth()) }
+        val oauth = suspendResult { parseOAuthProviders(api.getProviderOAuth()) }
             .getOrElse {
                 notices += "Provider OAuth is unavailable; use an API key instead."
                 emptyList()
@@ -744,6 +766,8 @@ class ConnectViewModel(
                         _ui.value = _ui.value.copy(testing = false, error = it.message ?: "Connection failed")
                     },
                 )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (t: Throwable) {
                 _ui.value = _ui.value.copy(testing = false, error = t.message)
             }
@@ -803,6 +827,8 @@ class ConnectViewModel(
                 repo.setActive(profile.id)
                 _ui.value = _ui.value.copy(testing = false, statusLine = "Saved · ${profile.baseUrl}")
                 onSuccess()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (t: Throwable) {
                 _ui.value = _ui.value.copy(testing = false, error = t.message)
             }
@@ -873,35 +899,36 @@ class ConnectViewModel(
                 )
                 var ptyResult = "timeout (3s) — check Host guards / pty extra"
                 try {
-                    kotlinx.coroutines.withTimeout(3_000) {
-                        flow.collect { event ->
-                            when (event) {
-                                is com.hermesgadget.talaria.core.network.PtyEvent.Connected -> {
-                                    ptyResult = "Connected (channel=${event.channel})"
-                                    pty.close()
-                                    throw kotlinx.coroutines.CancellationException("probe-ok")
+                    kotlinx.coroutines.withTimeoutOrNull(3_000) {
+                        try {
+                            flow.collect { event ->
+                                when (event) {
+                                    is com.hermesgadget.talaria.core.network.PtyEvent.Connected -> {
+                                        ptyResult = "Connected (channel=${event.channel})"
+                                        throw DoctorProbeFinished()
+                                    }
+                                    is com.hermesgadget.talaria.core.network.PtyEvent.Failure -> {
+                                        ptyResult = "FAIL · ${event.message}"
+                                        throw DoctorProbeFinished()
+                                    }
+                                    is com.hermesgadget.talaria.core.network.PtyEvent.Closed -> {
+                                        ptyResult = "Closed before Connected"
+                                        throw DoctorProbeFinished()
+                                    }
+                                    else -> Unit
                                 }
-                                is com.hermesgadget.talaria.core.network.PtyEvent.Failure -> {
-                                    ptyResult = "FAIL · ${event.message}"
-                                    throw kotlinx.coroutines.CancellationException("probe-fail")
-                                }
-                                is com.hermesgadget.talaria.core.network.PtyEvent.Closed -> {
-                                    ptyResult = "Closed before Connected"
-                                    throw kotlinx.coroutines.CancellationException("probe-closed")
-                                }
-                                else -> Unit
                             }
+                            false
+                        } catch (_: DoctorProbeFinished) {
+                            true
                         }
                     }
-                } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
-                    pty.close()
-                } catch (_: kotlinx.coroutines.CancellationException) {
-                    // expected early exit from probe
-                } catch (t: Throwable) {
-                    ptyResult = "FAIL · ${t.message}"
+                } finally {
                     pty.close()
                 }
                 lines += "PTY probe · $ptyResult"
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (t: Throwable) {
                 lines += "Doctor error: ${t.message}"
             }
@@ -953,6 +980,8 @@ class ConnectViewModel(
                     statusLine = "Signed in · Hermes ${status.version ?: "unknown"}",
                 )
                 onSuccess()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (t: Throwable) {
                 _ui.value = _ui.value.copy(
                     oidcSigningIn = false,
@@ -969,3 +998,5 @@ class ConnectViewModel(
         }
     }
 }
+
+private class DoctorProbeFinished : Exception()

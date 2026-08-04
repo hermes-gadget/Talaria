@@ -31,8 +31,11 @@ import com.hermesgadget.talaria.domain.model.VoiceHistoryKind
 import com.hermesgadget.talaria.domain.model.VoiceSpeakRequest
 import com.hermesgadget.talaria.domain.model.VoiceTranscriptionRequest
 import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
+import com.hermesgadget.talaria.core.util.suspendResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -79,32 +82,35 @@ class VoiceViewModel(
 
         _ui.update { it.copy(checkingCapabilities = true, error = null) }
         viewModelScope.launch {
-            try {
-                val capabilities = VoiceCapabilities.fromOpenApiPaths(openApiPaths(api.getOpenApi()))
-                _ui.update { state ->
-                    state.copy(
-                        phase = VoiceStateMachine.reduce(
-                            state.phase,
-                            if (capabilities.serverStt || capabilities.serverTts) VoiceEvent.ServerAvailable
-                            else VoiceEvent.ServerUnavailable,
-                        ),
-                        capabilityChecked = true,
-                        checkingCapabilities = false,
-                        capabilities = capabilities,
-                        error = null,
-                    )
-                }
-            } catch (error: Throwable) {
-                _ui.update { state ->
-                    state.copy(
-                        phase = VoiceStateMachine.reduce(state.phase, VoiceEvent.ServerUnavailable),
-                        capabilityChecked = true,
-                        checkingCapabilities = false,
-                        capabilities = VoiceCapabilities(),
-                        error = "Could not inspect Hermes voice capabilities: ${messageFor(error)}",
-                    )
-                }
-            }
+            suspendResult { VoiceCapabilities.fromOpenApiPaths(openApiPaths(api.getOpenApi())) }
+                .fold(
+                    onSuccess = { capabilities ->
+                        _ui.update { state ->
+                            state.copy(
+                                phase = VoiceStateMachine.reduce(
+                                    state.phase,
+                                    if (capabilities.serverStt || capabilities.serverTts) VoiceEvent.ServerAvailable
+                                    else VoiceEvent.ServerUnavailable,
+                                ),
+                                capabilityChecked = true,
+                                checkingCapabilities = false,
+                                capabilities = capabilities,
+                                error = null,
+                            )
+                        }
+                    },
+                    onFailure = { error ->
+                        _ui.update { state ->
+                            state.copy(
+                                phase = VoiceStateMachine.reduce(state.phase, VoiceEvent.ServerUnavailable),
+                                capabilityChecked = true,
+                                checkingCapabilities = false,
+                                capabilities = VoiceCapabilities(),
+                                error = "Could not inspect Hermes voice capabilities: ${messageFor(error)}",
+                            )
+                        }
+                    },
+                )
         }
     }
 
@@ -112,25 +118,27 @@ class VoiceViewModel(
         if (_ui.value.elevenLabsLoading) return
         _ui.update { it.copy(elevenLabsLoading = true, elevenLabsError = null) }
         viewModelScope.launch {
-            runCatching { parseElevenLabsVoices(api.getElevenLabsVoices()) }
-                .onSuccess { payload ->
-                    _ui.update {
-                        it.copy(
-                            elevenLabsAvailable = payload.available,
-                            elevenLabsVoices = payload.voices,
-                            elevenLabsError = payload.error,
-                        )
-                    }
-                }
-                .onFailure { error ->
-                    _ui.update {
-                        it.copy(
-                            elevenLabsAvailable = false,
-                            elevenLabsVoices = emptyList(),
-                            elevenLabsError = messageFor(error),
-                        )
-                    }
-                }
+            suspendResult { parseElevenLabsVoices(api.getElevenLabsVoices()) }
+                .fold(
+                    onSuccess = { payload ->
+                        _ui.update {
+                            it.copy(
+                                elevenLabsAvailable = payload.available,
+                                elevenLabsVoices = payload.voices,
+                                elevenLabsError = payload.error,
+                            )
+                        }
+                    },
+                    onFailure = { error ->
+                        _ui.update {
+                            it.copy(
+                                elevenLabsAvailable = false,
+                                elevenLabsVoices = emptyList(),
+                                elevenLabsError = messageFor(error),
+                            )
+                        }
+                    },
+                )
             _ui.update { it.copy(elevenLabsLoading = false) }
         }
     }
@@ -205,7 +213,7 @@ class VoiceViewModel(
             return
         }
         viewModelScope.launch {
-            try {
+            suspendResult {
                 val dataUrl = withContext(Dispatchers.IO) {
                     try {
                         encodeRecordedVoiceDataUrl(audio.file, audio.mimeType)
@@ -221,26 +229,31 @@ class VoiceViewModel(
                 if (!response.ok || transcript.isBlank()) {
                     throw IllegalStateException(response.error ?: "Hermes returned no transcript")
                 }
-                _ui.update { state ->
-                    state.copy(
-                        text = transcript,
-                        partialText = "",
-                        history = addHistory(state.history, transcript, VoiceHistoryKind.SERVER_TRANSCRIPTION),
-                    )
-                }
-                _ui.update { it.copy(
-                    phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.TranscriptionFinished),
-                    error = null,
-                ) }
-            } catch (error: Throwable) {
-                _ui.update { it.copy(
-                    phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.TranscriptionFinished),
-                    error = messageFor(error, "Server transcription failed"),
-                ) }
-                if (error is HttpException && error.code() == 404) {
-                    markCapabilityMissing(VoiceCapability.SERVER_STT, "Hermes no longer exposes server STT")
-                }
-            }
+                transcript
+            }.fold(
+                onSuccess = { transcript ->
+                    _ui.update { state ->
+                        state.copy(
+                            text = transcript,
+                            partialText = "",
+                            history = addHistory(state.history, transcript, VoiceHistoryKind.SERVER_TRANSCRIPTION),
+                        )
+                    }
+                    _ui.update { it.copy(
+                        phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.TranscriptionFinished),
+                        error = null,
+                    ) }
+                },
+                onFailure = { error ->
+                    _ui.update { it.copy(
+                        phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.TranscriptionFinished),
+                        error = messageFor(error, "Server transcription failed"),
+                    ) }
+                    if (error is HttpException && error.code() == 404) {
+                        markCapabilityMissing(VoiceCapability.SERVER_STT, "Hermes no longer exposes server STT")
+                    }
+                },
+            )
         }
     }
 
@@ -297,6 +310,7 @@ class VoiceViewModel(
                     }
                 }
             } finally {
+                if (!currentCoroutineContext().isActive) return@launch
                 _ui.update { state ->
                     state.copy(
                         phase = if (state.phase == VoicePhase.RECORDING) {
@@ -349,7 +363,7 @@ class VoiceViewModel(
             error = null,
         ) }
         viewModelScope.launch {
-            try {
+            suspendResult {
                 val response = api.speakText(
                     VoiceSpeakRequest(text),
                     profile = profileProvider(),
@@ -357,20 +371,25 @@ class VoiceViewModel(
                 if (!response.ok || response.dataUrl.isBlank()) {
                     throw IllegalStateException(response.error ?: "Hermes returned no audio")
                 }
-                _ui.update { current ->
-                    current.copy(history = addHistory(current.history, text, VoiceHistoryKind.SERVER_SPEECH))
-                }
-                audioPlayer.play(
-                    response.dataUrl,
-                    onCompleted = { finishPlayback() },
-                    onError = { error -> finishPlayback(error) },
-                )
-            } catch (error: Throwable) {
-                finishPlayback(messageFor(error, "Server speech synthesis failed"))
-                if (error is HttpException && error.code() == 404) {
-                    markCapabilityMissing(VoiceCapability.SERVER_TTS, "Hermes no longer exposes server TTS")
-                }
-            }
+                response.dataUrl
+            }.fold(
+                onSuccess = { dataUrl ->
+                    _ui.update { current ->
+                        current.copy(history = addHistory(current.history, text, VoiceHistoryKind.SERVER_SPEECH))
+                    }
+                    audioPlayer.play(
+                        dataUrl,
+                        onCompleted = { finishPlayback() },
+                        onError = { error -> finishPlayback(error) },
+                    )
+                },
+                onFailure = { error ->
+                    finishPlayback(messageFor(error, "Server speech synthesis failed"))
+                    if (error is HttpException && error.code() == 404) {
+                        markCapabilityMissing(VoiceCapability.SERVER_TTS, "Hermes no longer exposes server TTS")
+                    }
+                },
+            )
         }
     }
 

@@ -10,6 +10,7 @@ package com.hermesgadget.talaria.network
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.PtyEvent
 import com.hermesgadget.talaria.core.network.PtyWebSocketSession
+import com.hermesgadget.talaria.core.network.WebSocketFrameBudget
 import com.hermesgadget.talaria.core.network.WsAuthHelper
 import com.hermesgadget.talaria.domain.model.AuthMode
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
@@ -31,6 +32,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okio.ByteString
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -99,7 +101,7 @@ class PtyDeliveryBehaviorTest {
 
         val events = Channel<PtyEvent>(Channel.UNLIMITED)
         val session = PtyWebSocketSession(OkHttpClient(), wsAuth, snapshot)
-        val collector = launch(Dispatchers.Default) {
+        val collector = kotlinx.coroutines.CoroutineScope(Dispatchers.Default).launch {
             session.connect(
                 resumeSessionId = "session-1",
                 channelId = "channel-1",
@@ -131,6 +133,73 @@ class PtyDeliveryBehaviorTest {
         // Wait for the close handshake to complete server-side before the
         // mock server shuts down, otherwise its queue never drains.
         withTimeout(5_000) { serverClosed.await() }
+        collector.cancelAndJoin()
+    }
+
+    @Test
+    fun `oversized text PTY frame is rejected before output conversion and closes with 1009`() = runBlocking {
+        assertOversizedFrame(binary = false)
+    }
+
+    @Test
+    fun `oversized binary PTY frame is rejected before UTF-8 conversion and closes with 1009`() = runBlocking {
+        assertOversizedFrame(binary = true)
+    }
+
+    private suspend fun assertOversizedFrame(binary: Boolean) {
+        val serverSocket = CompletableDeferred<WebSocket>()
+        val closeCode = CompletableDeferred<Int>()
+        server.enqueue(
+            MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    serverSocket.complete(webSocket)
+                }
+
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    closeCode.complete(code)
+                    webSocket.close(code, reason)
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    closeCode.complete(code)
+                }
+            }),
+        )
+
+        val events = Channel<PtyEvent>(Channel.UNLIMITED)
+        val session = PtyWebSocketSession(OkHttpClient(), wsAuth, snapshot)
+        val collector = kotlinx.coroutines.CoroutineScope(Dispatchers.Default).launch {
+            session.connect(
+                resumeSessionId = "session-oversized",
+                channelId = "channel-oversized",
+                attachToken = "attach-oversized",
+            ).collect { events.send(it) }
+        }
+
+        assertTrue(withTimeout(5_000) { events.receive() } is PtyEvent.Connected)
+        if (binary) {
+            serverSocket.await().send(
+                ByteString.of(*ByteArray(WebSocketFrameBudget.MAX_FRAME_BYTES + 1)),
+            )
+        } else {
+            serverSocket.await().send("x".repeat(WebSocketFrameBudget.MAX_FRAME_BYTES + 1))
+        }
+        val failure = withTimeout(5_000) {
+            var receivedFailure: PtyEvent.Failure? = null
+            while (receivedFailure == null) {
+                when (val event = events.receive()) {
+                    is PtyEvent.Failure -> receivedFailure = event
+                    else -> Unit
+                }
+            }
+            checkNotNull(receivedFailure)
+        }
+
+        assertEquals(WebSocketFrameBudget.MESSAGE_TOO_BIG_CLOSE_CODE, failure.code)
+        assertEquals(
+            WebSocketFrameBudget.MESSAGE_TOO_BIG_CLOSE_CODE,
+            withTimeout(5_000) { closeCode.await() },
+        )
         collector.cancelAndJoin()
     }
 }

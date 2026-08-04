@@ -21,7 +21,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -52,12 +51,16 @@ import okhttp3.OkHttpClient
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.ByteString
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlin.coroutines.resume
+import com.hermesgadget.talaria.core.util.IngressOffer
+import com.hermesgadget.talaria.core.util.IngressRetention
+import com.hermesgadget.talaria.core.util.LossAwareIngress
+import com.hermesgadget.talaria.core.util.LossAwareIngressMetrics
 
 /** Immutable identity captured by one event-client start. */
 data class HermesEventScope(
@@ -80,6 +83,13 @@ data class HermesEventEnvelope(
     val socketIdentity: String,
     val generation: Long,
     val scope: HermesEventScope,
+)
+
+/** Payload-free transport diagnostics for bounded ingress and frame rejection. */
+data class HermesEventClientDiagnostics(
+    val ingress: LossAwareIngressMetrics,
+    val oversizedTextFrames: Long,
+    val oversizedBinaryFrames: Long,
 )
 
 private val DEFAULT_EVENT_RECONNECT_BACKOFF = longArrayOf(
@@ -112,11 +122,19 @@ class HermesEventClient(
     private val json = JsonConfig.json
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val rpcId = AtomicLong(1)
-    // Bounded and non-blocking: if a collector falls behind, emit an explicit
-    // gap marker instead of silently losing the dirty signal that should cause
-    // a transcript reconciliation.
-    private val eventQueue = Channel<HermesEventEnvelope>(256)
-    private val eventQueueOverflowed = AtomicBoolean(false)
+    /**
+     * Critical events occupy measured FIFO capacity and are never evicted.
+     * Replaceable status/progress/delta events are coalesced by [eventKey].
+     */
+    private val eventIngress = LossAwareIngress<HermesEventEnvelope>(
+        capacity = EVENT_INGRESS_CAPACITY,
+        retention = { eventRetention(it.event) },
+        coalesceKey = { eventKey(it.event) },
+    )
+    /** A wake-up channel carries no event payload and is safe to conflate. */
+    private val eventWake = Channel<Unit>(Channel.CONFLATED)
+    private val oversizedTextFrames = AtomicLong(0)
+    private val oversizedBinaryFrames = AtomicLong(0)
     private val lifecycleLock = Any()
     private var lastEventSequence: Long? = null
 
@@ -155,15 +173,9 @@ class HermesEventClient(
 
     private val currentSockets = ConcurrentHashMap<String, SocketRegistration>()
 
-    /**
-     * Replay the startup burst for collectors that subscribe after [start].
-     * The channel makes cross-socket callbacks pass through one FIFO emitter,
-     * while the replay window covers the normal startup/catalog burst.
-     */
+    /** Replay the bounded startup burst for collectors that subscribe after [start]. */
     private val _events = MutableSharedFlow<HermesEventEnvelope>(
-        replay = 64,
-        extraBufferCapacity = 256,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        replay = EVENT_REPLAY_CAPACITY,
     )
     /** Metadata-preserving stream for lifecycle-aware owners and diagnostics. */
     val scopedEvents: Flow<HermesEventEnvelope> = _events.filter(::isCurrentEnvelope)
@@ -174,8 +186,17 @@ class HermesEventClient(
     private val _eventsConnected = MutableStateFlow(false)
     val eventsConnected: StateFlow<Boolean> = _eventsConnected.asStateFlow()
 
-    private val eventDispatcher = scope.launch {
-        for (event in eventQueue) dispatch(event)
+    private var eventDispatcher: Job? = scope.launch {
+        dispatchLoop()
+    }
+
+    private suspend fun dispatchLoop() {
+        for (ignored in eventWake) {
+            while (true) {
+                val event = eventIngress.poll() ?: break
+                dispatch(event)
+            }
+        }
     }
 
     private data class PendingRpc(
@@ -187,6 +208,12 @@ class HermesEventClient(
     private val pendingRpc = ConcurrentHashMap<Long, PendingRpc>()
 
     fun currentChannel(): String? = channelId
+
+    fun diagnostics(): HermesEventClientDiagnostics = HermesEventClientDiagnostics(
+        ingress = eventIngress.metrics(),
+        oversizedTextFrames = oversizedTextFrames.get(),
+        oversizedBinaryFrames = oversizedBinaryFrames.get(),
+    )
 
     /** Wait until the `/api/events` socket is open, without making it required. */
     suspend fun awaitEventsConnected(timeoutMs: Long = EVENTS_CONNECT_TIMEOUT_MS): Boolean =
@@ -219,7 +246,6 @@ class HermesEventClient(
             )
             transportSnapshot = startingSnapshot
             lastEventSequence = null
-            eventQueueOverflowed.set(false)
             stopped = false
             next
         }
@@ -280,14 +306,17 @@ class HermesEventClient(
             stabilityJobs.clear()
             job?.cancel()
             job = null
+            eventDispatcher?.cancel()
+            eventDispatcher = null
+            while (eventWake.tryReceive().isSuccess) {
+                // Drop wake-up tokens for the invalidated lifecycle; they carry
+                // no event payload and must not restart old dispatch work.
+            }
             channelId = null
             transportSnapshot = null
             eventScope = null
             lastEventSequence = null
-            eventQueueOverflowed.set(false)
-            while (eventQueue.tryReceive().isSuccess) {
-                // Drain ingress from the invalidated lifecycle before a new start.
-            }
+            eventIngress.clear()
             _events.resetReplayCache()
             _eventsConnected.value = false
             callbacks = pendingRpc.values.map { pending ->
@@ -503,7 +532,20 @@ class HermesEventClient(
                 // The events socket speaks the same JSON-RPC `event` envelope as
                 // /api/ws, so unwrap via parseRpc (which also handles flat frames).
                 override fun onMessage(webSocket: WebSocket, text: String) {
-                    if (isCurrentSocket(registration, webSocket)) parseRpc(text, registration)
+                    if (!isCurrentSocket(registration, webSocket)) return
+                    if (!WebSocketFrameBudget.textWithinLimit(text)) {
+                        rejectOversizedFrame(registration, webSocket, binary = false)
+                        return
+                    }
+                    parseRpc(text, registration)
+                }
+                override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                    if (!isCurrentSocket(registration, webSocket)) return
+                    if (!WebSocketFrameBudget.binaryWithinLimit(bytes)) {
+                        rejectOversizedFrame(registration, webSocket, binary = true)
+                        return
+                    }
+                    parseRpc(bytes.utf8(), registration)
                 }
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     if (!isCurrentSocket(registration, webSocket)) return
@@ -584,7 +626,20 @@ class HermesEventClient(
                     }
                 }
                 override fun onMessage(webSocket: WebSocket, text: String) {
-                    if (isCurrentSocket(registration, webSocket)) parseRpc(text, registration)
+                    if (!isCurrentSocket(registration, webSocket)) return
+                    if (!WebSocketFrameBudget.textWithinLimit(text)) {
+                        rejectOversizedFrame(registration, webSocket, binary = false)
+                        return
+                    }
+                    parseRpc(text, registration)
+                }
+                override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                    if (!isCurrentSocket(registration, webSocket)) return
+                    if (!WebSocketFrameBudget.binaryWithinLimit(bytes)) {
+                        rejectOversizedFrame(registration, webSocket, binary = true)
+                        return
+                    }
+                    parseRpc(bytes.utf8(), registration)
                 }
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     if (!isCurrentSocket(registration, webSocket)) return
@@ -694,6 +749,7 @@ class HermesEventClient(
     }
 
     private fun publish(event: HermesSideEvent, registration: SocketRegistration) {
+        var closeForIngressOverflow: WebSocket? = null
         synchronized(lifecycleLock) {
             // A terminal reconnect-budget error is published after the failed
             // registration is marked closed. Keep that diagnostic, but reject
@@ -709,25 +765,58 @@ class HermesEventClient(
                 generation = registration.generation,
                 scope = scope,
             )
-            if (eventQueueOverflowed.get()) {
-                val gap = HermesEventEnvelope(
-                    event = HermesSideEvent.EventGap("sidecar event buffer overflow", null),
-                    socketName = registration.name,
-                    socketIdentity = registration.identity,
-                    generation = registration.generation,
-                    scope = scope,
-                )
-                if (eventQueue.trySend(gap).isSuccess) eventQueueOverflowed.set(false)
+            when (eventIngress.offer(envelope)) {
+                IngressOffer.REJECTED_LOSSLESS -> {
+                    // A critical burst exceeded the documented bound. Closing
+                    // the socket applies backpressure and forces authoritative
+                    // reconciliation after reconnect; the critical item was
+                    // not silently evicted from the bounded FIFO.
+                    closeForIngressOverflow = registration.socket
+                }
+                else -> {
+                    ensureEventDispatcherLocked()
+                    eventWake.trySend(Unit)
+                }
             }
-            if (!eventQueue.trySend(envelope).isSuccess) eventQueueOverflowed.set(true)
+        }
+        closeForIngressOverflow?.close(1013, "critical ingress bound exceeded")
+    }
+
+    private suspend fun dispatch(envelope: HermesEventEnvelope) {
+        if (!isCurrentEnvelope(envelope)) return
+        // No DROP_OLDEST buffer is allowed here: a slow subscriber backpressures
+        // the measured ingress, while replaceable events are coalesced before
+        // reaching this multicast boundary.
+        _events.emit(envelope)
+    }
+
+    /** Caller holds [lifecycleLock]. */
+    private fun ensureEventDispatcherLocked() {
+        if (eventDispatcher?.isActive != true) {
+            eventDispatcher = scope.launch { dispatchLoop() }
         }
     }
 
-    private fun dispatch(envelope: HermesEventEnvelope) {
-        synchronized(lifecycleLock) {
-            if (!isCurrentEnvelopeLocked(envelope)) return
-            _events.tryEmit(envelope)
-        }
+    private fun rejectOversizedFrame(
+        registration: SocketRegistration,
+        webSocket: WebSocket,
+        binary: Boolean,
+    ) {
+        if (!isCurrentSocket(registration, webSocket)) return
+        if (binary) oversizedBinaryFrames.incrementAndGet() else oversizedTextFrames.incrementAndGet()
+        // Close first so an ingress-overflow diagnostic cannot replace the
+        // protocol-mandated 1009 close with a secondary backpressure close.
+        webSocket.close(
+            WebSocketFrameBudget.MESSAGE_TOO_BIG_CLOSE_CODE,
+            "message too large",
+        )
+        publish(
+            HermesSideEvent.TransportError(
+                registration.name,
+                "WebSocket ${if (binary) "binary" else "text"} frame exceeds ${WebSocketFrameBudget.MAX_FRAME_BYTES} bytes",
+            ),
+            registration,
+        )
     }
 
     private fun markSocketOpen(registration: SocketRegistration) {
@@ -832,13 +921,16 @@ class HermesEventClient(
 
     private fun isCurrentEnvelopeLocked(envelope: HermesEventEnvelope): Boolean {
         val registration = currentSockets[envelope.socketName] ?: return false
+        // `registration.closed` is deliberately not checked here: callbacks
+        // accepted before close must drain in order. New callbacks are already
+        // rejected by [isCurrentRegistrationLocked], and a replacement socket
+        // or lifecycle stop invalidates the identity/scope below.
         return !stopped &&
             registration.lifecycleGeneration == lifecycleGeneration &&
             registration.identity == envelope.socketIdentity &&
             registration.generation == envelope.generation &&
             registration.scope == envelope.scope &&
-            eventScope == envelope.scope &&
-            (!registration.closed || envelope.event is HermesSideEvent.TransportError)
+            eventScope == envelope.scope
     }
 
     private fun isTerminalCloseCode(code: Int): Boolean = code in TERMINAL_CLOSE_CODES
@@ -846,12 +938,54 @@ class HermesEventClient(
     private fun closeMessage(code: Int, reason: String): String =
         "WebSocket closed permanently ($code)${reason.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()}"
 
+    private fun eventRetention(event: HermesSideEvent): IngressRetention = when (event) {
+        // These are boundaries or actions. Losing one cannot be repaired by a
+        // later status/delta, so they occupy lossless FIFO capacity.
+        is HermesSideEvent.Prompt,
+        is HermesSideEvent.PromptExpired,
+        is HermesSideEvent.MessageStart,
+        is HermesSideEvent.MessageComplete,
+        is HermesSideEvent.BackgroundComplete,
+        is HermesSideEvent.SessionsChanged,
+        is HermesSideEvent.SessionEnded,
+        is HermesSideEvent.EventGap,
+        is HermesSideEvent.TransportError,
+        is HermesSideEvent.SessionInfo,
+        -> IngressRetention.LOSSLESS
+
+        // These are snapshots/progress/deltas. The latest value for their
+        // scope is sufficient and avoids retaining a burst of stale payloads.
+        else -> IngressRetention.REPLACEABLE
+    }
+
+    private fun eventKey(event: HermesSideEvent): Any? = when (event) {
+        is HermesSideEvent.Status -> "status:${event.sessionId}:${event.kind}"
+        is HermesSideEvent.CommandCatalog -> "catalog"
+        is HermesSideEvent.MessageDelta -> "delta:${event.sessionId}"
+        is HermesSideEvent.MessageInterim -> "interim:${event.sessionId}"
+        is HermesSideEvent.Tool -> "tool:${event.id}"
+        is HermesSideEvent.Model -> "model"
+        is HermesSideEvent.Usage -> "usage"
+        is HermesSideEvent.Raw -> "raw:${event.type}"
+        else -> null
+    }
+
     companion object {
         const val MAX_RECONNECT_ATTEMPTS = 6
         const val RPC_TIMEOUT_MS = 15_000L
         const val EVENTS_CONNECT_TIMEOUT_MS = 2_000L
         const val SOCKET_STABILITY_MS = 5_000L
-        private val TERMINAL_CLOSE_CODES = setOf(4401, 4403, 4404, 4408)
+        /** Maximum callback ingress before a critical burst applies backpressure. */
+        const val EVENT_INGRESS_CAPACITY = 256
+        /** Replay matches ingress capacity so an accepted critical burst is not truncated. */
+        const val EVENT_REPLAY_CAPACITY = EVENT_INGRESS_CAPACITY
+        private val TERMINAL_CLOSE_CODES = setOf(
+            4401,
+            4403,
+            4404,
+            4408,
+            WebSocketFrameBudget.MESSAGE_TOO_BIG_CLOSE_CODE,
+        )
     }
 
     private fun parseCommandCatalog(result: JsonElement?): List<SidecarSlashCommand> {
