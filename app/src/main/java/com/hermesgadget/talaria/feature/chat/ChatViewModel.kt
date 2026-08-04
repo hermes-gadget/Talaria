@@ -18,6 +18,9 @@ package com.hermesgadget.talaria.feature.chat
 
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -290,6 +293,39 @@ class ChatViewModel(
     private var transcriptSignalJob: Job? = null
     private var transcriptFallbackJob: Job? = null
     private var chatLifecycleStarted = false
+    /**
+     * Battery: the watch FGS (one extra WebSocket per tab) is only needed while
+     * the app is backgrounded — that is when sockets cannot be assumed to stay
+     * alive and process-death survival (START_STICKY + restorePersistedWatches)
+     * matters. While the app is foreground, every tab's own runtime eventClient
+     * already dispatches the same agent alerts (handleSideEvent ->
+     * dispatchAgentAlert), so the watch sockets + foreground service are pure
+     * duplication and the dominant background battery cost.
+     */
+    private var appInBackground = false
+    private val appLifecycleObserver = object : DefaultLifecycleObserver {
+        override fun onStart(owner: LifecycleOwner) {
+            appInBackground = false
+            AgentTaskNotificationService.stopAll(TalariaApp.instance)
+        }
+        override fun onStop(owner: LifecycleOwner) {
+            appInBackground = true
+            // Re-arm one watch socket per live tab so background alerts keep
+            // flowing and survive process death.
+            _ui.value.tabs.forEach { tab ->
+                if ((tab.liveSessionId ?: tab.resumeSessionId) != null) {
+                    AgentTaskNotificationService.startWatching(
+                        TalariaApp.instance,
+                        tab.toAgentWatch(),
+                    )
+                }
+            }
+        }
+    }
+
+    init {
+        ProcessLifecycleOwner.get().lifecycle.addObserver(appLifecycleObserver)
+    }
     private var transcriptFallbackDelayMs = TranscriptSyncPolicy.IMMEDIATE_FALLBACK_DELAY_MS
     private val transcriptSignals = MutableSharedFlow<String>(
         extraBufferCapacity = 1,
@@ -1022,18 +1058,21 @@ class ChatViewModel(
 
                 // Register for background notifications so the user gets alerts
                 // for activity on every auto-opened session, not just the one
-                // they're actively looking at.
-                AgentTaskNotificationService.startWatching(
-                    TalariaApp.instance,
-                    PersistedAgentWatch(
-                        watcherId = id,
-                        agentName = title,
-                        channelId = channel,
-                        sessionId = s.id,
-                        connectionId = boundConnectionId,
-                        managementProfile = profileName,
-                    ),
-                )
+                // they're actively looking at. Only while backgrounded — the
+                // tab's own runtime socket covers foreground alerts.
+                if (appInBackground) {
+                    AgentTaskNotificationService.startWatching(
+                        TalariaApp.instance,
+                        PersistedAgentWatch(
+                            watcherId = id,
+                            agentName = title,
+                            channelId = channel,
+                            sessionId = s.id,
+                            connectionId = boundConnectionId,
+                            managementProfile = profileName,
+                        ),
+                    )
+                }
             }
         }
 
@@ -2230,7 +2269,11 @@ class ChatViewModel(
         pendingImages.remove(tabId)
         runtime.assistantBuffer = StringBuilder()
         _ui.value.tabs.firstOrNull { it.id == tabId }?.let { current ->
-            AgentTaskNotificationService.startWatching(TalariaApp.instance, current.toAgentWatch())
+            // Foreground sends are covered by the tab's own runtime socket;
+            // only arm the background watch while actually backgrounded.
+            if (appInBackground) {
+                AgentTaskNotificationService.startWatching(TalariaApp.instance, current.toAgentWatch())
+            }
         }
         if (_ui.value.activeTabId == tabId && _ui.value.active?.draft.isNullOrEmpty()) {
             viewModelScope.launch { chatRepository.saveDraft("") }
@@ -3195,7 +3238,11 @@ class ChatViewModel(
         }
         persistChatState(tab.profileName)
         _ui.value.tabs.firstOrNull { it.id == tabId }?.let {
-            AgentTaskNotificationService.updateWatching(TalariaApp.instance, it.toAgentWatch())
+            // Only refresh the background watch while backgrounded; in the
+            // foreground the tab's own runtime socket delivers the alerts.
+            if (appInBackground) {
+                AgentTaskNotificationService.updateWatching(TalariaApp.instance, it.toAgentWatch())
+            }
         }
     }
 
@@ -3227,6 +3274,7 @@ class ChatViewModel(
     }
 
     override fun onCleared() {
+        ProcessLifecycleOwner.get().lifecycle.removeObserver(appLifecycleObserver)
         cancelVoiceInput()
         voiceRecorder.cancel()
         slashCompletionJob?.cancel()
