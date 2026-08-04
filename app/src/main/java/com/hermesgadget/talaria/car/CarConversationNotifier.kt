@@ -1,13 +1,18 @@
 /* Copyright 2026 Talaria contributors; Licensed under the Apache License, Version 2.0. */
 package com.hermesgadget.talaria.car
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
 import androidx.core.app.RemoteInput
+import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import com.hermesgadget.talaria.MainActivity
 import com.hermesgadget.talaria.R
@@ -68,6 +73,10 @@ object CarConversationNotifier {
         }
     }
 
+    // Runtime-guarded via hasNotificationPermission() immediately before the
+    // notify below; lint can't see across the helper call, so suppress at the
+    // same granularity TalariaNotifier.show does.
+    @SuppressLint("MissingPermission")
     private fun postConversation(
         context: Context,
         manager: NotificationManagerCompat,
@@ -135,8 +144,18 @@ object CarConversationNotifier {
             )
             .build()
 
+        if (!hasNotificationPermission(context)) return null
         manager.notify(id, notification)
         return id
+    }
+
+    /** POST_NOTIFICATIONS is runtime-granted; gate on it (lint requires the
+     * check or an explicit security consideration — see TalariaNotifier.show). */
+    @SuppressLint("MissingPermission")
+    private fun hasNotificationPermission(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < 33) return true
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
     }
 
     /** Stable per-connection/session notification id (32-bit, namespaced). */

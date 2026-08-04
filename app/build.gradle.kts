@@ -115,6 +115,13 @@ android {
     testOptions {
         unitTests.isIncludeAndroidResources = true
     }
+    lint {
+        // Full lint (lintDebug/lintRelease) is fail-closed for NEW issues only.
+        // Pre-existing findings (mostly MissingTranslation for the four partial
+        // locale folders) are pinned in the baseline so the gate can be strict
+        // now and the debt cleared incrementally (see ROADMAP).
+        baseline = file("lint-baseline.xml")
+    }
 }
 
 dependencies {
