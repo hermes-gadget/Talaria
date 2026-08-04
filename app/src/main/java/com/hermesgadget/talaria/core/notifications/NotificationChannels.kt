@@ -39,6 +39,8 @@ object NotificationChannels {
     const val AGENT_PERMISSIONS = "agent_permissions_v2"
     const val AGENT_TASKS = "agent_tasks_v2"
     const val AGENT_MONITOR = "agent_monitor_v2"
+    /** Car message-center conversations (Android Auto messaging-app surface). */
+    const val CONVERSATIONS = "conversations"
 
     private val agentChannels = listOf(
         AgentNotificationChannel("agent_slot_1_v1", "Agent 1"),
@@ -68,6 +70,11 @@ object NotificationChannels {
             NotificationChannel(ERRORS, context.getString(R.string.notif_channel_errors), NotificationManager.IMPORTANCE_HIGH),
             NotificationChannel(TASKS, context.getString(R.string.notif_channel_tasks), NotificationManager.IMPORTANCE_LOW),
             NotificationChannel(SYNC, context.getString(R.string.notif_channel_sync), NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel(
+                CONVERSATIONS,
+                context.getString(R.string.notif_channel_conversations),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ),
             NotificationChannel(
                 AGENT_PERMISSIONS,
                 context.getString(R.string.notif_channel_agent_permissions),

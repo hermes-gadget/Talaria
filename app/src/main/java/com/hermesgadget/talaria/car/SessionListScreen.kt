@@ -117,6 +117,8 @@ class SessionListScreen(
             override fun onDestroy(owner: LifecycleOwner) {
                 destroyed = true
                 authorizer.removeTrustListener(trustListener)
+                // Drop the message-center notifications this screen posted.
+                CarConversationNotifier.clear(carContext)
                 executor.shutdownNow()
             }
         })
@@ -351,7 +353,15 @@ class SessionListScreen(
             postToMain {
                 loading = false
                 result.fold(
-                    onSuccess = { conversations = it },
+                    onSuccess = {
+                        conversations = it
+                        // Android Auto message-center bridge: the projection
+                        // host shows MESSAGING apps through phone notifications,
+                        // so mirror the active conversations as notifications.
+                        snapshot?.let { snap ->
+                            CarConversationNotifier.update(carContext, snap, it)
+                        }
+                    },
                     onFailure = { error = it.message ?: "Failed to load sessions" },
                 )
                 invalidate()
