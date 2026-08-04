@@ -25,6 +25,7 @@ import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.prefs.PersistedAgentWatch
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.HermesEventClient
+import com.hermesgadget.talaria.core.network.HermesEventScope
 import com.hermesgadget.talaria.core.network.HermesSideEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -143,6 +144,13 @@ class AgentTaskNotificationService : Service() {
             container.clientFactory,
             container.wsAuthHelper,
             fixedSnapshot = snapshot,
+            fixedEventScope = HermesEventScope(
+                connectionId = snapshot.connectionId,
+                managementProfile = snapshot.managementProfile,
+                channelId = record.channelId,
+                tabId = record.watcherId,
+                sessionId = record.sessionId,
+            ),
         )
         // Monitoring only needs channel events. Avoid a second RPC socket and
         // its model/catalog probes for every active turn.

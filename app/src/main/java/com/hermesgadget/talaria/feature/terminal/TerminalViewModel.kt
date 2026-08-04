@@ -22,6 +22,7 @@ import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.repo.ChatRepository
 import com.hermesgadget.talaria.core.network.HermesEventClient
+import com.hermesgadget.talaria.core.network.HermesEventScope
 import com.hermesgadget.talaria.core.network.HermesSideEvent
 import com.hermesgadget.talaria.core.network.PtyEvent
 import com.hermesgadget.talaria.core.network.PtyWebSocketSession
@@ -240,6 +241,12 @@ class TerminalViewModel(
             container.clientFactory,
             container.wsAuthHelper,
             fixedSnapshot = snapshot,
+            fixedEventScope = HermesEventScope(
+                connectionId = snapshot.connectionId,
+                managementProfile = snapshot.managementProfile,
+                channelId = channel,
+                tabId = "terminal",
+            ),
         )
         val (session, flow) = chatRepository.openPty(snapshot, channelId = channel)
         pty = session

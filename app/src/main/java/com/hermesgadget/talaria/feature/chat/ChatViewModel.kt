@@ -33,6 +33,7 @@ import com.hermesgadget.talaria.core.data.repo.ChatRepository
 import com.hermesgadget.talaria.core.data.repo.HermesRepository
 import com.hermesgadget.talaria.core.data.repo.TranscriptSnapshot
 import com.hermesgadget.talaria.core.network.HermesEventClient
+import com.hermesgadget.talaria.core.network.HermesEventScope
 import com.hermesgadget.talaria.core.network.HermesSideEvent
 import com.hermesgadget.talaria.core.network.ProfileRegistry
 import com.hermesgadget.talaria.core.network.PromptKind
@@ -733,6 +734,13 @@ class ChatViewModel(
             container.clientFactory,
             container.wsAuthHelper,
             fixedSnapshot = snapshot,
+            fixedEventScope = HermesEventScope(
+                connectionId = snapshot.connectionId,
+                managementProfile = tab.profileName,
+                channelId = channel,
+                tabId = tabId,
+                sessionId = resume,
+            ),
         )
         val baselineBeforeOpen = ProfileRegistry.state.value
             .sessionsByProfile[tab.profileName]
@@ -807,6 +815,13 @@ class ChatViewModel(
             container.clientFactory,
             container.wsAuthHelper,
             fixedSnapshot = snapshot,
+            fixedEventScope = HermesEventScope(
+                connectionId = snapshot.connectionId,
+                managementProfile = snapshot.managementProfile,
+                channelId = channel,
+                tabId = id,
+                sessionId = resume,
+            ),
         )
         val profileName = snapshot.managementProfile
         val baselineBeforeOpen = ProfileRegistry.state.value
@@ -1021,6 +1036,13 @@ class ChatViewModel(
                     container.clientFactory,
                     container.wsAuthHelper,
                     fixedSnapshot = snapshot,
+                    fixedEventScope = HermesEventScope(
+                        connectionId = snapshot.connectionId,
+                        managementProfile = profileName,
+                        channelId = channel,
+                        tabId = id,
+                        sessionId = s.id,
+                    ),
                 )
                 val rt = SessionRuntime(
                     transport = createPtyTransport(snapshot, s.id, channel, id),
