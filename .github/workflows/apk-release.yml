@@ -157,6 +157,7 @@ jobs:
           -Ptalaria.versionCode=${{ steps.ver.outputs.code }}
 
       - name: Rename APK with version
+        id: rename
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
           SRC=$(ls app/build/outputs/apk/release/*.apk | head -1)
