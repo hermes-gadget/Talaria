@@ -18,6 +18,7 @@ package com.hermesgadget.talaria.car
 
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.network.HermesEventClient
+import com.hermesgadget.talaria.core.network.HermesEventScope
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.JsonConfig
 import com.hermesgadget.talaria.core.network.PtyPromptDelivery
@@ -183,7 +184,6 @@ object CarSessionsRepository {
     ): String {
         val socketClient = container.clientFactory.webSocketClient(snapshot)
         val ptyAuth = container.wsAuthHelper.authQueryParam(snapshot)
-        val eventAuth = container.wsAuthHelper.authQueryParam(snapshot)
         val channel = "car:$deliveryId"
         val attachToken = "talaria-car:$deliveryId"
         val session = PtyWebSocketSession(
@@ -196,7 +196,13 @@ object CarSessionsRepository {
             clientFactory = container.clientFactory,
             wsAuth = container.wsAuthHelper,
             fixedSnapshot = snapshot,
-            fixedAuthQuery = eventAuth,
+            fixedEventScope = HermesEventScope(
+                connectionId = snapshot.connectionId,
+                managementProfile = snapshot.managementProfile,
+                channelId = channel,
+                tabId = "car:$deliveryId",
+                sessionId = resumeSessionId,
+            ),
             fixedWebSocketClient = socketClient,
         )
         try {

@@ -18,20 +18,21 @@ package com.hermesgadget.talaria.core.network
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -55,22 +56,58 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlin.coroutines.resume
+
+/** Immutable identity captured by one event-client start. */
+data class HermesEventScope(
+    val connectionId: String,
+    val managementProfile: String,
+    val channelId: String,
+    val tabId: String? = null,
+    val sessionId: String? = null,
+)
+
+/**
+ * Sidecar ingress metadata retained through parsing, queueing, and replay.
+ * Consumers can use [HermesEventClient.scopedEvents] when they need to audit
+ * the transport owner; [HermesEventClient.events] exposes the compatible event
+ * projection after the same generation checks have run.
+ */
+data class HermesEventEnvelope(
+    val event: HermesSideEvent,
+    val socketName: String,
+    val socketIdentity: String,
+    val generation: Long,
+    val scope: HermesEventScope,
+)
+
+private val DEFAULT_EVENT_RECONNECT_BACKOFF = longArrayOf(
+    1_000L,
+    2_000L,
+    4_000L,
+    8_000L,
+    15_000L,
+    30_000L,
+)
 
 /**
  * Sidecar sockets used by the web Chat tab:
  * - `/api/ws` — JSON-RPC (model picker, prompts, state)
  * - `/api/events?channel=` — tool progress fan-out from the PTY child
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class HermesEventClient(
     private val clientFactory: HermesClientFactory,
     private val wsAuth: WsAuthHelper,
     /** Optional immutable connection snapshot for background runtimes. */
     private val fixedSnapshot: ConnectionSnapshot? = null,
-    /** Auth query captured for this socket's connection snapshot. */
-    private val fixedAuthQuery: String? = null,
+    /** Optional immutable tab/session scope captured with [fixedSnapshot]. */
+    private val fixedEventScope: HermesEventScope? = null,
     /** Optional client built from [fixedSnapshot]. */
     private val fixedWebSocketClient: OkHttpClient? = null,
+    /** Test seam for deterministic reconnect timing; auth is never captured here. */
+    private val reconnectBackoff: LongArray = DEFAULT_EVENT_RECONNECT_BACKOFF,
 ) {
     private val json = JsonConfig.json
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -78,18 +115,21 @@ class HermesEventClient(
     // Bounded and non-blocking: if a collector falls behind, emit an explicit
     // gap marker instead of silently losing the dirty signal that should cause
     // a transcript reconciliation.
-    private val eventQueue = Channel<HermesSideEvent>(256)
+    private val eventQueue = Channel<HermesEventEnvelope>(256)
     private val eventQueueOverflowed = AtomicBoolean(false)
-    private val eventSequenceLock = Any()
+    private val lifecycleLock = Any()
     private var lastEventSequence: Long? = null
 
     private var channelId: String? = null
-    private var eventsSocket: WebSocket? = null
-    private var rpcSocket: WebSocket? = null
     private var job: Job? = null
     /** Snapshot the full transport at start so reconnects never follow a foreground switch. */
     @Volatile
     private var transportSnapshot: ConnectionSnapshot? = null
+
+    /** The lifecycle generation invalidates every old socket and replay item. */
+    private val lifecycleCounter = AtomicLong(0)
+    private var lifecycleGeneration = 0L
+    private var eventScope: HermesEventScope? = null
 
     /** Set false by [start] and true by [stop] so late close callbacks never reconnect. */
     @Volatile
@@ -99,30 +139,49 @@ class HermesEventClient(
     private val reconnectAttempts = ConcurrentHashMap<String, Int>()
     private val reconnectJobs = ConcurrentHashMap<String, Job>()
     private val stabilityJobs = ConcurrentHashMap<String, Job>()
-    private val reconnectBackoff = longArrayOf(1_000L, 2_000L, 4_000L, 8_000L, 15_000L, 30_000L)
+    private val socketCounters = ConcurrentHashMap<String, AtomicLong>()
+
+    private class SocketRegistration(
+        val name: String,
+        val identity: String,
+        val lifecycleGeneration: Long,
+        val generation: Long,
+        val scope: HermesEventScope,
+    ) {
+        @Volatile var socket: WebSocket? = null
+        @Volatile var opened = false
+        @Volatile var closed = false
+    }
+
+    private val currentSockets = ConcurrentHashMap<String, SocketRegistration>()
 
     /**
      * Replay the startup burst for collectors that subscribe after [start].
      * The channel makes cross-socket callbacks pass through one FIFO emitter,
      * while the replay window covers the normal startup/catalog burst.
      */
-    private val _events = MutableSharedFlow<HermesSideEvent>(
+    private val _events = MutableSharedFlow<HermesEventEnvelope>(
         replay = 64,
         extraBufferCapacity = 256,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
-    val events: SharedFlow<HermesSideEvent> = _events.asSharedFlow()
+    /** Metadata-preserving stream for lifecycle-aware owners and diagnostics. */
+    val scopedEvents: Flow<HermesEventEnvelope> = _events.filter(::isCurrentEnvelope)
+
+    /** Compatibility projection; stale generations are filtered before mapping. */
+    val events: Flow<HermesSideEvent> = scopedEvents.map { it.event }
 
     private val _eventsConnected = MutableStateFlow(false)
     val eventsConnected: StateFlow<Boolean> = _eventsConnected.asStateFlow()
 
     private val eventDispatcher = scope.launch {
-        for (event in eventQueue) _events.emit(event)
+        for (event in eventQueue) dispatch(event)
     }
 
     private data class PendingRpc(
         val callback: (JsonElement?) -> Unit,
         val timeout: Job,
+        val registration: SocketRegistration,
     )
 
     private val pendingRpc = ConcurrentHashMap<Long, PendingRpc>()
@@ -138,55 +197,107 @@ class HermesEventClient(
 
     fun start(channel: String = UUID.randomUUID().toString(), includeRpc: Boolean = true) {
         stop()
-        channelId = channel
-        stopped = false
-        synchronized(eventSequenceLock) { lastEventSequence = null }
-        _eventsConnected.value = false
         val startingSnapshot = fixedSnapshot ?: clientFactory.snapshot()
         if (startingSnapshot == null) {
-            stopped = true
-            publish(HermesSideEvent.TransportError("auth", "No active connection profile"))
+            publishLifecycleError(channel)
             return
         }
-        transportSnapshot = startingSnapshot
+
+        val generation = synchronized(lifecycleLock) {
+            val next = lifecycleCounter.incrementAndGet()
+            lifecycleGeneration = next
+            channelId = channel
+            eventScope = (fixedEventScope
+                ?: HermesEventScope(
+                    connectionId = startingSnapshot.connectionId,
+                    managementProfile = startingSnapshot.managementProfile,
+                    channelId = channel,
+                )).copy(
+                connectionId = startingSnapshot.connectionId,
+                managementProfile = startingSnapshot.managementProfile,
+                channelId = channel,
+            )
+            transportSnapshot = startingSnapshot
+            lastEventSequence = null
+            eventQueueOverflowed.set(false)
+            stopped = false
+            next
+        }
+        _eventsConnected.value = false
         job = scope.launch {
-            val auth = runCatching {
-                fixedAuthQuery ?: wsAuth.authQueryParam(startingSnapshot)
-            }.getOrElse {
-                publish(HermesSideEvent.TransportError("auth", it.message ?: "authentication failed"))
-                return@launch
-            }
-            // stop() may have run while authQueryParam() was suspended; without this
-            // check two WebSockets would be opened that nothing will ever close.
-            if (stopped) return@launch
-            openEvents(channel, auth)
-            if (includeRpc) openRpc(auth)
+            openEvents(channel, generation)
+            if (includeRpc) openRpc(generation)
         }
     }
 
-    fun stop() {
-        // Guard first: close callbacks must not schedule reconnects.
-        stopped = true
-        reconnectAttempts.clear()
-        reconnectJobs.values.forEach(Job::cancel)
-        reconnectJobs.clear()
-        stabilityJobs.values.forEach(Job::cancel)
-        stabilityJobs.clear()
-        job?.cancel()
-        job = null
-        eventsSocket?.close(1000, "stop")
-        rpcSocket?.close(1000, "stop")
-        eventsSocket = null
-        rpcSocket = null
-        channelId = null
-        transportSnapshot = null
-        synchronized(eventSequenceLock) { lastEventSequence = null }
-        _eventsConnected.value = false
-        pendingRpc.values.forEach {
-            it.timeout.cancel()
-            it.callback(null)
+    private fun publishLifecycleError(channel: String) {
+        val registration = synchronized(lifecycleLock) {
+            val generation = lifecycleCounter.incrementAndGet()
+            lifecycleGeneration = generation
+            stopped = false
+            channelId = channel
+            transportSnapshot = null
+            val scope = HermesEventScope(
+                connectionId = "",
+                managementProfile = "",
+                channelId = channel,
+            )
+            eventScope = scope
+            val socketGeneration = socketCounters
+                .computeIfAbsent("auth") { AtomicLong(0) }
+                .incrementAndGet()
+            val authRegistration = SocketRegistration(
+                name = "auth",
+                identity = "auth-${UUID.randomUUID()}",
+                lifecycleGeneration = generation,
+                generation = socketGeneration,
+                scope = scope,
+            )
+            currentSockets["auth"] = authRegistration
+            authRegistration
         }
-        pendingRpc.clear()
+        publish(
+            HermesSideEvent.TransportError("auth", "No active connection profile"),
+            registration,
+        )
+    }
+
+    fun stop() {
+        val sockets: List<WebSocket>
+        val callbacks: List<(JsonElement?) -> Unit>
+        synchronized(lifecycleLock) {
+            // Invalidate before closing: OkHttp may deliver close/message callbacks
+            // synchronously while the close handshake is being initiated.
+            stopped = true
+            lifecycleGeneration = lifecycleCounter.incrementAndGet()
+            currentSockets.values.forEach { it.closed = true }
+            sockets = currentSockets.values.mapNotNull { it.socket }
+            currentSockets.clear()
+            reconnectAttempts.clear()
+            reconnectJobs.values.forEach(Job::cancel)
+            reconnectJobs.clear()
+            stabilityJobs.values.forEach(Job::cancel)
+            stabilityJobs.clear()
+            job?.cancel()
+            job = null
+            channelId = null
+            transportSnapshot = null
+            eventScope = null
+            lastEventSequence = null
+            eventQueueOverflowed.set(false)
+            while (eventQueue.tryReceive().isSuccess) {
+                // Drain ingress from the invalidated lifecycle before a new start.
+            }
+            _events.resetReplayCache()
+            _eventsConnected.value = false
+            callbacks = pendingRpc.values.map { pending ->
+                pending.timeout.cancel()
+                pending.callback
+            }
+            pendingRpc.clear()
+        }
+        sockets.forEach { it.close(1000, "stop") }
+        callbacks.forEach { it(null) }
     }
 
     fun dispose() {
@@ -195,19 +306,39 @@ class HermesEventClient(
     }
 
     fun sendRpc(method: String, params: JsonObject = JsonObject(emptyMap()), onResult: ((JsonElement?) -> Unit)? = null) {
+        val registration = currentSockets["rpc"]
+        if (registration == null || !isCurrentRegistration(registration)) {
+            onResult?.invoke(null)
+            return
+        }
+        sendRpc(registration, method, params, onResult)
+    }
+
+    private fun sendRpc(
+        registration: SocketRegistration,
+        method: String,
+        params: JsonObject = JsonObject(emptyMap()),
+        onResult: ((JsonElement?) -> Unit)? = null,
+    ) {
+        if (!isCurrentRegistration(registration)) {
+            onResult?.invoke(null)
+            return
+        }
         val id = rpcId.getAndIncrement()
         if (onResult != null) {
             val timeout = scope.launch {
                 delay(RPC_TIMEOUT_MS)
-                pendingRpc.remove(id)?.callback?.invoke(null)
+                pendingRpc.remove(id)?.takeIf {
+                    it.registration === registration && isCurrentRegistration(registration)
+                }?.callback?.invoke(null)
             }
-            pendingRpc[id] = PendingRpc(onResult, timeout)
+            pendingRpc[id] = PendingRpc(onResult, timeout, registration)
         }
         // Quote the method name — unquoted `method:model.info` is rejected by Hermes
         // (`Expecting value` parse errors on every connect; see gui.log).
         val safeMethod = method.replace("\\", "\\\\").replace("\"", "\\\"")
         val body = """{"jsonrpc":"2.0","id":$id,"method":"$safeMethod","params":$params}"""
-        if (rpcSocket?.send(body) != true) {
+        if (!isCurrentRegistration(registration) || registration.socket?.send(body) != true) {
             pendingRpc.remove(id)?.let {
                 it.timeout.cancel()
                 it.callback(null)
@@ -304,20 +435,18 @@ class HermesEventClient(
      * re-mints auth (single-use WS tickets may have expired), and gives up
      * after [MAX_RECONNECT_ATTEMPTS] consecutive failures.
      */
-    private fun scheduleReconnect(name: String, failedSocket: WebSocket) {
-        if (stopped) return
-        val isCurrent = when (name) {
-            "events" -> eventsSocket === failedSocket
-            "rpc" -> rpcSocket === failedSocket
-            else -> false
-        }
-        if (!isCurrent || reconnectJobs.containsKey(name)) return
+    private fun scheduleReconnect(name: String, failedSocket: SocketRegistration) {
+        if (!isCurrentOwner(failedSocket) || reconnectJobs.containsKey(name)) return
         stabilityJobs.remove(name)?.cancel()
         val attempt = reconnectAttempts.merge(name, 1, Int::plus) ?: 1
         if (attempt > MAX_RECONNECT_ATTEMPTS) {
             reconnectAttempts.remove(name)
             publish(
-                HermesSideEvent.TransportError(name, "reconnect failed after $MAX_RECONNECT_ATTEMPTS attempts"),
+                HermesSideEvent.TransportError(
+                    name,
+                    "reconnect failed after $MAX_RECONNECT_ATTEMPTS attempts",
+                ),
+                failedSocket,
             )
             return
         }
@@ -325,71 +454,100 @@ class HermesEventClient(
         val reconnectJob = scope.launch {
             delay(delayMs)
             reconnectJobs.remove(name)
-            if (stopped) return@launch
-            val snapshot = transportSnapshot ?: return@launch
-            val auth = runCatching { fixedAuthQuery ?: wsAuth.authQueryParam(snapshot) }.getOrElse {
-                publish(HermesSideEvent.TransportError(name, it.message ?: "authentication failed"))
-                scheduleReconnect(name, failedSocket)
-                return@launch
-            }
+            if (!isCurrentOwner(failedSocket)) return@launch
+            val generation = failedSocket.lifecycleGeneration
             when (name) {
                 "events" -> {
                     val ch = channelId ?: return@launch
-                    openEvents(ch, auth)
+                    openEvents(ch, generation, retryOnAuthFailure = true)
                 }
-                "rpc" -> openRpc(auth)
+                "rpc" -> openRpc(generation, retryOnAuthFailure = true)
             }
         }
         reconnectJobs[name] = reconnectJob
     }
 
-    private fun openEvents(channel: String, auth: String) {
+    private suspend fun openEvents(
+        channel: String,
+        lifecycleGeneration: Long,
+        retryOnAuthFailure: Boolean = false,
+    ) {
+        val registration = beginSocket("events", lifecycleGeneration) ?: return
+        val auth = authFor(registration, retryOnAuthFailure) ?: return
         val snapshot = transportSnapshot ?: return
-        _eventsConnected.value = false
+        if (!isCurrentRegistration(registration)) return
         val url = HermesWebSocketUrlBuilder.build(
             baseUrl = snapshot.baseUrl,
             endpoint = "api/events",
             authQuery = auth,
             query = listOf("channel" to channel, "profile" to snapshot.managementProfile),
         ) ?: run {
-            publish(HermesSideEvent.TransportError("events", "Invalid dashboard URL"))
+            publish(
+                HermesSideEvent.TransportError("events", "Invalid dashboard URL"),
+                registration,
+            )
             return
         }
         val req = Request.Builder().url(url).build()
-        eventsSocket = (fixedWebSocketClient ?: clientFactory.webSocketClient(snapshot)).newWebSocket(
+        val webSocket = (fixedWebSocketClient ?: clientFactory.webSocketClient(snapshot)).newWebSocket(
             req,
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
-                    if (eventsSocket === webSocket) {
+                    if (isCurrentSocket(registration, webSocket)) {
+                        registration.socket = webSocket
+                        registration.opened = true
                         _eventsConnected.value = true
-                        markSocketOpen("events", webSocket)
+                        markSocketOpen(registration)
                     }
                 }
                 // The events socket speaks the same JSON-RPC `event` envelope as
                 // /api/ws, so unwrap via parseRpc (which also handles flat frames).
-                override fun onMessage(webSocket: WebSocket, text: String) = parseRpc(text)
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    if (isCurrentSocket(registration, webSocket)) parseRpc(text, registration)
+                }
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    if (!isCurrentSocket("events", webSocket)) return
-                    markSocketClosed("events", webSocket)
-                    publish(HermesSideEvent.TransportError("events", t.message ?: "events WS failed"))
-                    scheduleReconnect("events", webSocket)
+                    if (!isCurrentSocket(registration, webSocket)) return
+                    publish(
+                        HermesSideEvent.TransportError("events", t.message ?: "events WS failed"),
+                        registration,
+                    )
+                    markSocketClosed(registration)
+                    scheduleReconnect("events", registration)
+                }
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    if (isCurrentSocket(registration, webSocket)) {
+                        webSocket.close(code, reason)
+                    } else {
+                        webSocket.close(1000, "stale generation")
+                    }
                 }
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    if (!isCurrentSocket("events", webSocket)) return
-                    markSocketClosed("events", webSocket)
+                    if (!isCurrentSocket(registration, webSocket)) return
                     if (isTerminalCloseCode(code)) {
+                        publish(
+                            HermesSideEvent.TransportError("events", closeMessage(code, reason)),
+                            registration,
+                        )
+                        markSocketClosed(registration)
                         cancelReconnect("events")
-                        publish(HermesSideEvent.TransportError("events", closeMessage(code, reason)))
-                    } else if (!stopped) {
-                        scheduleReconnect("events", webSocket)
+                    } else {
+                        markSocketClosed(registration)
+                        scheduleReconnect("events", registration)
                     }
                 }
             },
         )
+        attachSocket(registration, webSocket)
     }
 
-    private fun openRpc(auth: String) {
+    private suspend fun openRpc(
+        lifecycleGeneration: Long,
+        retryOnAuthFailure: Boolean = false,
+    ) {
+        val registration = beginSocket("rpc", lifecycleGeneration) ?: return
+        val auth = authFor(registration, retryOnAuthFailure) ?: return
         val snapshot = transportSnapshot ?: return
+        if (!isCurrentRegistration(registration)) return
         val url = HermesWebSocketUrlBuilder.build(
             baseUrl = snapshot.baseUrl,
             endpoint = "api/ws",
@@ -397,121 +555,206 @@ class HermesEventClient(
             query = listOf("profile" to snapshot.managementProfile),
         ) ?: return
         val req = Request.Builder().url(url).build()
-        rpcSocket = (fixedWebSocketClient ?: clientFactory.webSocketClient(snapshot)).newWebSocket(
+        val webSocket = (fixedWebSocketClient ?: clientFactory.webSocketClient(snapshot)).newWebSocket(
             req,
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
-                    if (!isCurrentSocket("rpc", webSocket)) return
-                    markSocketOpen("rpc", webSocket)
+                    if (!isCurrentSocket(registration, webSocket)) return
+                    registration.socket = webSocket
+                    registration.opened = true
+                    markSocketOpen(registration)
                     // Proactive model-state probe: some dashboards only push
                     // model notifies on change, so ask once on connect.
-                    sendRpc("model.info") { result ->
+                    sendRpc(registration, "model.info") { result ->
                         val obj = (result as? JsonObject) ?: return@sendRpc
                         val name = obj["model"]?.jsonPrimitive?.contentOrNull
                             ?: obj["name"]?.jsonPrimitive?.contentOrNull
                             ?: return@sendRpc
                         publish(
                             HermesSideEvent.Model(name, obj["connected"]?.jsonPrimitive?.booleanOrNull),
+                            registration,
                         )
                     }
                     // This is the authoritative command surface for the active
                     // Hermes instance: built-ins, quick commands, and skills.
-                    sendRpc("commands.catalog") { result ->
+                    sendRpc(registration, "commands.catalog") { result ->
                         parseCommandCatalog(result).takeIf { it.isNotEmpty() }?.let {
-                            publish(HermesSideEvent.CommandCatalog(it))
+                            publish(HermesSideEvent.CommandCatalog(it), registration)
                         }
                     }
                 }
-                override fun onMessage(webSocket: WebSocket, text: String) = parseRpc(text)
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    if (isCurrentSocket(registration, webSocket)) parseRpc(text, registration)
+                }
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    if (!isCurrentSocket("rpc", webSocket)) return
-                    markSocketClosed("rpc", webSocket)
-                    publish(HermesSideEvent.TransportError("ws", t.message ?: "rpc WS failed"))
-                    scheduleReconnect("rpc", webSocket)
+                    if (!isCurrentSocket(registration, webSocket)) return
+                    publish(
+                        HermesSideEvent.TransportError("ws", t.message ?: "rpc WS failed"),
+                        registration,
+                    )
+                    markSocketClosed(registration)
+                    failPendingRpc(registration)
+                    scheduleReconnect("rpc", registration)
+                }
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    if (isCurrentSocket(registration, webSocket)) {
+                        webSocket.close(code, reason)
+                    } else {
+                        webSocket.close(1000, "stale generation")
+                    }
                 }
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    if (!isCurrentSocket("rpc", webSocket)) return
-                    markSocketClosed("rpc", webSocket)
+                    if (!isCurrentSocket(registration, webSocket)) return
                     if (isTerminalCloseCode(code)) {
+                        publish(
+                            HermesSideEvent.TransportError("ws", closeMessage(code, reason)),
+                            registration,
+                        )
+                        markSocketClosed(registration)
                         cancelReconnect("rpc")
-                        publish(HermesSideEvent.TransportError("ws", closeMessage(code, reason)))
-                    } else if (!stopped) {
-                        scheduleReconnect("rpc", webSocket)
+                    } else {
+                        markSocketClosed(registration)
+                        failPendingRpc(registration)
+                        scheduleReconnect("rpc", registration)
                     }
                 }
             },
         )
+        attachSocket(registration, webSocket)
     }
 
-    private fun parseRpc(text: String) {
+    private suspend fun authFor(registration: SocketRegistration, retryOnFailure: Boolean): String? {
+        val snapshot = transportSnapshot ?: return null
+        return try {
+            wsAuth.authQueryParam(snapshot).also {
+                if (!isCurrentRegistration(registration)) return null
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            publish(
+                HermesSideEvent.TransportError(
+                    registration.name,
+                    failure.message ?: "authentication failed",
+                ),
+                registration,
+            )
+            markSocketClosed(registration)
+            if (retryOnFailure) scheduleReconnect(registration.name, registration)
+            null
+        }
+    }
+
+    private fun parseRpc(text: String, registration: SocketRegistration) {
+        if (!isCurrentRegistration(registration)) return
         val el = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
         val id = el["id"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
         if (id != null && el.containsKey("result")) {
-            pendingRpc.remove(id)?.let {
-                it.timeout.cancel()
-                it.callback(el["result"])
+            pendingRpc.remove(id)?.let { pending ->
+                pending.timeout.cancel()
+                if (pending.registration === registration && isCurrentRegistration(registration)) {
+                    pending.callback(el["result"])
+                }
             }
             return
         }
         if (id != null && el.containsKey("error")) {
-            pendingRpc.remove(id)?.let {
-                it.timeout.cancel()
-                it.callback(null)
+            pendingRpc.remove(id)?.let { pending ->
+                pending.timeout.cancel()
+                if (pending.registration === registration && isCurrentRegistration(registration)) {
+                    pending.callback(null)
+                }
             }
             return
         }
         // Non-result frames: classify into a typed event (pure logic below).
-        SidecarFrameParser.parse(el)?.let(::publishParsed)
+        SidecarFrameParser.parse(el)?.let { publishParsed(it, registration) }
     }
 
     /** Convert a skipped server sequence into the same authoritative-read signal as a buffer gap. */
-    private fun publishParsed(event: HermesSideEvent) {
+    private fun publishParsed(event: HermesSideEvent, registration: SocketRegistration) {
         val sequenced = event as? HermesSideEvent.SessionsChanged
         val sequence = sequenced?.sequence
+        var gap: HermesSideEvent? = null
         if (sequence != null) {
-            synchronized(eventSequenceLock) {
+            synchronized(lifecycleLock) {
+                if (!isCurrentRegistrationLocked(registration)) return
                 val previous = lastEventSequence
                 if (previous != null && sequence > previous && sequence - previous > 1L) {
-                    publish(
-                        HermesSideEvent.EventGap(
-                            reason = "event sequence gap: $previous->$sequence",
-                            sessionId = sequenced.sessionId,
-                        ),
+                    gap = HermesSideEvent.EventGap(
+                        reason = "event sequence gap: $previous->$sequence",
+                        sessionId = sequenced.sessionId,
                     )
                 }
                 if (previous == null || sequence > previous) lastEventSequence = sequence
             }
         }
-        publish(event)
+        gap?.let { publish(it, registration) }
+        publish(event, registration)
     }
 
-    private fun publish(event: HermesSideEvent) {
-        if (eventQueueOverflowed.get()) {
-            if (!eventQueue.trySend(HermesSideEvent.EventGap("sidecar event buffer overflow", null)).isSuccess) {
-                return
+    private fun publish(event: HermesSideEvent, registration: SocketRegistration) {
+        synchronized(lifecycleLock) {
+            // A terminal reconnect-budget error is published after the failed
+            // registration is marked closed. Keep that diagnostic, but reject
+            // every other late event from the closed socket.
+            val terminalDiagnostic = event is HermesSideEvent.TransportError &&
+                isCurrentOwnerLocked(registration)
+            if (!isCurrentRegistrationLocked(registration) && !terminalDiagnostic) return
+            val scope = eventScope ?: return
+            val envelope = HermesEventEnvelope(
+                event = event,
+                socketName = registration.name,
+                socketIdentity = registration.identity,
+                generation = registration.generation,
+                scope = scope,
+            )
+            if (eventQueueOverflowed.get()) {
+                val gap = HermesEventEnvelope(
+                    event = HermesSideEvent.EventGap("sidecar event buffer overflow", null),
+                    socketName = registration.name,
+                    socketIdentity = registration.identity,
+                    generation = registration.generation,
+                    scope = scope,
+                )
+                if (eventQueue.trySend(gap).isSuccess) eventQueueOverflowed.set(false)
             }
-            eventQueueOverflowed.set(false)
-        }
-        if (!eventQueue.trySend(event).isSuccess) {
-            eventQueueOverflowed.set(true)
+            if (!eventQueue.trySend(envelope).isSuccess) eventQueueOverflowed.set(true)
         }
     }
 
-    private fun markSocketOpen(name: String, webSocket: WebSocket) {
-        stabilityJobs.remove(name)?.cancel()
-        stabilityJobs[name] = scope.launch {
+    private fun dispatch(envelope: HermesEventEnvelope) {
+        synchronized(lifecycleLock) {
+            if (!isCurrentEnvelopeLocked(envelope)) return
+            _events.tryEmit(envelope)
+        }
+    }
+
+    private fun markSocketOpen(registration: SocketRegistration) {
+        stabilityJobs.remove(registration.name)?.cancel()
+        stabilityJobs[registration.name] = scope.launch {
             delay(SOCKET_STABILITY_MS)
-            if (!stopped && currentSocket(name) === webSocket) {
-                reconnectAttempts.remove(name)
-                stabilityJobs.remove(name)
+            if (isCurrentRegistration(registration)) {
+                reconnectAttempts.remove(registration.name)
+                stabilityJobs.remove(registration.name)
             }
         }
     }
 
-    private fun markSocketClosed(name: String, webSocket: WebSocket) {
-        stabilityJobs.remove(name)?.cancel()
-        if (name == "events" && eventsSocket === webSocket) {
+    private fun markSocketClosed(registration: SocketRegistration) {
+        registration.closed = true
+        stabilityJobs.remove(registration.name)?.cancel()
+        if (registration.name == "events" && isCurrentOwner(registration)) {
             _eventsConnected.value = false
+        }
+    }
+
+    private fun failPendingRpc(registration: SocketRegistration) {
+        pendingRpc.entries.removeIf { (_, pending) ->
+            if (pending.registration !== registration) return@removeIf false
+            pending.timeout.cancel()
+            pending.callback(null)
+            true
         }
     }
 
@@ -520,14 +763,83 @@ class HermesEventClient(
         reconnectAttempts.remove(name)
     }
 
-    private fun currentSocket(name: String): WebSocket? = when (name) {
-        "events" -> eventsSocket
-        "rpc" -> rpcSocket
-        else -> null
+    private fun beginSocket(name: String, lifecycleGeneration: Long): SocketRegistration? {
+        val scope = synchronized(lifecycleLock) {
+            if (!isCurrentLifecycleLocked(lifecycleGeneration)) return@synchronized null
+            eventScope
+        } ?: return null
+        val generation = socketCounters
+            .computeIfAbsent(name) { AtomicLong(0) }
+            .incrementAndGet()
+        val registration = SocketRegistration(
+            name = name,
+            identity = "$name-${UUID.randomUUID()}",
+            lifecycleGeneration = lifecycleGeneration,
+            generation = generation,
+            scope = scope,
+        )
+        val previous = synchronized(lifecycleLock) {
+            if (!isCurrentLifecycleLocked(lifecycleGeneration)) {
+                registration.closed = true
+                null
+            } else {
+                currentSockets.put(name, registration)
+            }
+        }
+        previous?.let {
+            it.closed = true
+            it.socket?.close(1000, "superseded")
+        }
+        if (name == "events") _eventsConnected.value = false
+        return registration.takeIf { !it.closed }
     }
 
-    private fun isCurrentSocket(name: String, webSocket: WebSocket): Boolean =
-        currentSocket(name) === webSocket
+    private fun attachSocket(registration: SocketRegistration, webSocket: WebSocket) {
+        val accepted = synchronized(lifecycleLock) {
+            if (!isCurrentRegistrationLocked(registration)) {
+                false
+            } else {
+                registration.socket = webSocket
+                true
+            }
+        }
+        if (!accepted) webSocket.close(1000, "stale generation")
+    }
+
+    private fun isCurrentSocket(registration: SocketRegistration, webSocket: WebSocket): Boolean =
+        isCurrentRegistration(registration) &&
+            (registration.socket == null || registration.socket === webSocket)
+
+    private fun isCurrentOwner(registration: SocketRegistration): Boolean =
+        synchronized(lifecycleLock) { isCurrentOwnerLocked(registration) }
+
+    private fun isCurrentOwnerLocked(registration: SocketRegistration): Boolean =
+        !stopped &&
+            lifecycleGeneration == registration.lifecycleGeneration &&
+            currentSockets[registration.name] === registration
+
+    private fun isCurrentLifecycleLocked(generation: Long): Boolean =
+        !stopped && lifecycleGeneration == generation
+
+    private fun isCurrentRegistration(registration: SocketRegistration): Boolean =
+        synchronized(lifecycleLock) { isCurrentRegistrationLocked(registration) }
+
+    private fun isCurrentRegistrationLocked(registration: SocketRegistration): Boolean =
+        isCurrentOwnerLocked(registration) && !registration.closed
+
+    private fun isCurrentEnvelope(envelope: HermesEventEnvelope): Boolean =
+        synchronized(lifecycleLock) { isCurrentEnvelopeLocked(envelope) }
+
+    private fun isCurrentEnvelopeLocked(envelope: HermesEventEnvelope): Boolean {
+        val registration = currentSockets[envelope.socketName] ?: return false
+        return !stopped &&
+            registration.lifecycleGeneration == lifecycleGeneration &&
+            registration.identity == envelope.socketIdentity &&
+            registration.generation == envelope.generation &&
+            registration.scope == envelope.scope &&
+            eventScope == envelope.scope &&
+            (!registration.closed || envelope.event is HermesSideEvent.TransportError)
+    }
 
     private fun isTerminalCloseCode(code: Int): Boolean = code in TERMINAL_CLOSE_CODES
 

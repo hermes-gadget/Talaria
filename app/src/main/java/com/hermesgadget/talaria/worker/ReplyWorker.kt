@@ -23,6 +23,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.network.HermesEventClient
+import com.hermesgadget.talaria.core.network.HermesEventScope
 import com.hermesgadget.talaria.core.network.PtyPromptDelivery
 import com.hermesgadget.talaria.core.network.PtyPromptDeliveryException
 import com.hermesgadget.talaria.core.network.PtyWebSocketSession
@@ -51,11 +52,7 @@ class ReplyWorker(
         var session: PtyWebSocketSession? = null
         return try {
             val socketClient = container.clientFactory.webSocketClient(snapshot)
-            // Gated dashboards issue single-use tickets, so the PTY and event
-            // sockets each need their own ticket. Token-mode dashboards simply
-            // return the same reusable token for both calls.
             val ptyAuth = container.wsAuthHelper.authQueryParam(snapshot)
-            val eventAuth = container.wsAuthHelper.authQueryParam(snapshot)
             val channel = "reply:${id}"
             val deliveryId = inputData.getString(KEY_MESSAGE_ID).orEmpty()
                 .ifBlank { id.toString() }
@@ -75,7 +72,13 @@ class ReplyWorker(
                 clientFactory = container.clientFactory,
                 wsAuth = container.wsAuthHelper,
                 fixedSnapshot = snapshot,
-                fixedAuthQuery = eventAuth,
+                fixedEventScope = HermesEventScope(
+                    connectionId = snapshot.connectionId,
+                    managementProfile = snapshot.managementProfile,
+                    channelId = channel,
+                    tabId = "reply:${id}",
+                    sessionId = resumeSessionId,
+                ),
                 fixedWebSocketClient = socketClient,
             )
             eventClient!!.start(channel, includeRpc = false)
