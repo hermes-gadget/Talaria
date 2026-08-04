@@ -34,6 +34,9 @@ class LearningViewModel(
     private val _ui = MutableStateFlow(LearningUiState())
     val ui: StateFlow<LearningUiState> = _ui.asStateFlow()
 
+    /** Monotonic generation for identity-safe async loads (N0.8). */
+    private var loadGeneration = 0L
+
     init { refresh() }
 
     fun refresh() {
@@ -47,11 +50,23 @@ class LearningViewModel(
     }
 
     fun open(node: LearningMapNode) {
+        val generation = ++loadGeneration
+        val nodeId = node.id
         _ui.update { it.copy(selected = node, detail = null, draft = "", busy = true, error = null) }
         viewModelScope.launch {
-            repo.getLearningNode(node.id).fold(
-                onSuccess = { detail -> _ui.update { it.copy(detail = detail, draft = detail.content, busy = false) } },
-                onFailure = { error -> _ui.update { it.copy(busy = false, error = error.message) } },
+            repo.getLearningNode(nodeId).fold(
+                onSuccess = { detail ->
+                    // N0.8: a stale response for a previously opened node must
+                    // never overwrite the currently selected node's detail.
+                    if (generation == loadGeneration && _ui.value.selected?.id == nodeId) {
+                        _ui.update { it.copy(detail = detail, draft = detail.content, busy = false) }
+                    }
+                },
+                onFailure = { error ->
+                    if (generation == loadGeneration && _ui.value.selected?.id == nodeId) {
+                        _ui.update { it.copy(busy = false, error = error.message) }
+                    }
+                },
             )
         }
     }

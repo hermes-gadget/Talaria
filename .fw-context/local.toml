@@ -1,0 +1,29 @@
+# Local developer settings — NOT committed to git.
+# Overrides values from config.toml where both define the same key.
+
+[llm]
+# enabled = false   # disable Ollama, return raw prompts for the agent to answer
+# ollama_url = "http://localhost:11434"
+# model = "qwen2.5-coder:14b"   # minimum 14B recommended — see global config for options
+# num_ctx = 16384
+# keep_alive = "10m"   # how long to keep model loaded in VRAM after each request
+# timeout = 600.0   # HTTP timeout for Ollama requests in seconds (default 600)
+# debug_log = "~/.fw-context/llm-debug.jsonl"   # write LLM prompts/responses to JSONL
+# Embedding model for semantic_search.
+# Pull with:  ollama pull <model>
+# Uncomment exactly ONE of the sections below.
+#
+# ── Default: mxbai-embed-large (~670 MB VRAM, no GPU needed) ──
+# embed_model = "mxbai-embed-large:latest"
+# embed_query_prompt = "Represent this sentence for searching relevant passages: "
+# embed_doc_prompt = ""
+#
+# ── Higher quality: qwen3-embedding:8b (~4.7 GB VRAM, GPU recommended) ──
+# embed_model = "qwen3-embedding:8b"
+# embed_query_prompt = "Retrieve C/C++ functions, types, symbols, and implementation code relevant to the query."
+# embed_doc_prompt = ""
+# analyze_symbols = true    # generate structured symbol descriptions (summary, inputs, outputs) — enabled by default
+# analyze_vendor = false    # when true, also analyze vendor/SDK code (mbed-os, Zephyr, etc.) — can add hours
+
+[index]
+# db_dir = "~/.fw-context/index"   # where to store the SQLite index database

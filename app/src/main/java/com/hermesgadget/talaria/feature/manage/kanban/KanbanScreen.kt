@@ -289,6 +289,7 @@ internal class KanbanViewModel(
 
     fun deleteKanbanTask(taskId: String) {
         val previous = currentContent() ?: return
+        if (previous.busy) return // N0.8 re-entry guard: no overlapping mutations
         _ui.value = KanbanUiState.Content(previous.copy(busy = true))
         viewModelScope.launch {
             runCatching { api.deleteKanbanTask(taskId) }
@@ -302,7 +303,13 @@ internal class KanbanViewModel(
         }
     }
 
+    // N0.8: monotonic generations so a stale detail/run response for a
+    // previously opened item can never overwrite the currently open one.
+    private var taskGeneration = 0L
+    private var runGeneration = 0L
+
     fun openTask(taskId: String) {
+        val generation = ++taskGeneration
         _task.value = KanbanTaskState.Loading
         _run.value = null
         viewModelScope.launch {
@@ -313,17 +320,24 @@ internal class KanbanViewModel(
                     val log = async { runCatching { api.getKanbanTaskLog(taskId) }.getOrNull() }
                     parseTaskDetail(task.await(), comments.await(), log.await())
                 }
-            }.onSuccess { _task.value = KanbanTaskState.Content(it) }
-                .onFailure { error -> _task.value = KanbanTaskState.Failure(error.message) }
+            }.onSuccess {
+                if (generation == taskGeneration) _task.value = KanbanTaskState.Content(it)
+            }.onFailure { error ->
+                if (generation == taskGeneration) _task.value = KanbanTaskState.Failure(error.message)
+            }
         }
     }
 
     fun closeTask() {
+        ++taskGeneration
+        ++runGeneration
         _task.value = null
         _run.value = null
     }
 
     fun addKanbanTaskComment(taskId: String, body: String) {
+        if ((_task.value as? KanbanTaskState.Content) == null && _task.value != KanbanTaskState.Loading) return
+        val generation = taskGeneration
         viewModelScope.launch {
             runCatching {
                 api.addKanbanTaskComment(
@@ -331,33 +345,44 @@ internal class KanbanViewModel(
                     buildJsonObject { put("body", body) },
                 )
             }.onSuccess {
+                if (generation != taskGeneration) return@onSuccess
                 refresh()
                 openTask(taskId)
             }.onFailure { error ->
-                _task.value = KanbanTaskState.Failure(error.message)
+                if (generation == taskGeneration) _task.value = KanbanTaskState.Failure(error.message)
             }
         }
     }
 
     fun getKanbanRun(runId: String) {
+        val generation = ++runGeneration
         _run.value = KanbanRunState.Loading
         viewModelScope.launch {
             runCatching { api.getKanbanRun(runId) }
                 .map(::parseRun)
-                .onSuccess { _run.value = KanbanRunState.Content(it) }
-                .onFailure { error -> _run.value = KanbanRunState.Failure(error.message) }
+                .onSuccess {
+                    if (generation == runGeneration) _run.value = KanbanRunState.Content(it)
+                }
+                .onFailure { error ->
+                    if (generation == runGeneration) _run.value = KanbanRunState.Failure(error.message)
+                }
         }
     }
 
     fun terminateKanbanRun(runId: String, taskId: String) {
+        if ((_run.value as? KanbanRunState.Content) == null && _run.value != KanbanRunState.Loading) return
+        val generation = runGeneration
         viewModelScope.launch {
             runCatching { api.terminateKanbanRun(runId) }
                 .onSuccess {
+                    if (generation != runGeneration) return@onSuccess
                     refresh()
                     openTask(taskId)
                     getKanbanRun(runId)
                 }
-                .onFailure { error -> _run.value = KanbanRunState.Failure(error.message) }
+                .onFailure { error ->
+                    if (generation == runGeneration) _run.value = KanbanRunState.Failure(error.message)
+                }
         }
     }
 

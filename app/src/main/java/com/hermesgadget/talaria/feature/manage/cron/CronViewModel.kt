@@ -67,6 +67,28 @@ class HermesCronGateway(
 ) : CronGateway {
     private fun profile(): String? = profileProvider()?.takeIf { it.isNotBlank() }
 
+    /**
+     * N0.8/A-24 — a 2xx response is not semantic success. The dashboard can
+     * return `{"ok": false, ...}` / `{"error": "..."}` envelopes on a 200
+     * (or a job object whose mutation silently failed). Discard the raw
+     * envelope and throw so the ViewModel surfaces a real failure instead of
+     * refreshing with unchanged state.
+     */
+    private fun requireSemanticOk(label: String, response: JsonElement) {
+        val obj = response as? JsonObject ?: return
+        val ok = obj["ok"]?.jsonPrimitive?.booleanOrNull
+        if (ok == false) {
+            val detail = obj["error"]?.jsonPrimitive?.contentOrNull
+                ?: obj["detail"]?.jsonPrimitive?.contentOrNull
+                ?: "rejected"
+            throw IllegalStateException("$label was rejected by Hermes: $detail")
+        }
+        val error = obj["error"]?.jsonPrimitive?.contentOrNull
+        if (!error.isNullOrBlank() && error != "none") {
+            throw IllegalStateException("$label failed: $error")
+        }
+    }
+
     override suspend fun load(): CronSnapshot {
         val profile = profile()
         return CronSnapshot(
@@ -80,64 +102,68 @@ class HermesCronGateway(
         parseCronRuns(api.getCronJobRunsRaw(jobId, limit, profile()))
 
     override suspend fun create(prompt: String, schedule: String, name: String?, deliver: String) {
-        api.createCronJobRaw(
-            buildJsonObject {
-                put("prompt", prompt)
-                put("schedule", schedule)
-                name?.takeIf { it.isNotBlank() }?.let { put("name", it) }
-                put("deliver", deliver)
-            },
-            profile(),
+        requireSemanticOk(
+            "Creating cron job",
+            api.createCronJobRaw(
+                buildJsonObject {
+                    put("prompt", prompt)
+                    put("schedule", schedule)
+                    name?.takeIf { it.isNotBlank() }?.let { put("name", it) }
+                    put("deliver", deliver)
+                },
+                profile(),
+            ),
         )
     }
 
     override suspend fun update(jobId: String, prompt: String, schedule: String, deliver: String) {
-        api.updateCronJobRaw(
-            jobId,
-            buildJsonObject {
-                put(
-                    "updates",
-                    buildJsonObject {
-                        put("prompt", prompt)
-                        put("schedule", schedule)
-                        put("deliver", deliver)
-                    },
-                )
-            },
-            profile(),
+        requireSemanticOk(
+            "Updating cron job",
+            api.updateCronJobRaw(
+                jobId,
+                buildJsonObject {
+                    put(
+                        "updates",
+                        buildJsonObject {
+                            put("prompt", prompt)
+                            put("schedule", schedule)
+                            put("deliver", deliver)
+                        },
+                    )
+                },
+                profile(),
+            ),
         )
     }
 
-    override suspend fun pause(jobId: String) {
-        api.pauseCronRaw(jobId, profile())
-    }
+    override suspend fun pause(jobId: String) =
+        requireSemanticOk("Pausing cron job", api.pauseCronRaw(jobId, profile()))
 
-    override suspend fun resume(jobId: String) {
-        api.resumeCronRaw(jobId, profile())
-    }
+    override suspend fun resume(jobId: String) =
+        requireSemanticOk("Resuming cron job", api.resumeCronRaw(jobId, profile()))
 
-    override suspend fun trigger(jobId: String) {
-        api.triggerCronRaw(jobId, profile())
-    }
+    override suspend fun trigger(jobId: String) =
+        requireSemanticOk("Running cron job", api.triggerCronRaw(jobId, profile()))
 
-    override suspend fun fireNow(jobId: String) {
-        api.fireCronJob(buildJsonObject { put("job_id", jobId) })
-    }
+    override suspend fun fireNow(jobId: String) =
+        requireSemanticOk("Running cron job", api.fireCronJob(buildJsonObject { put("job_id", jobId) }))
 
-    override suspend fun delete(jobId: String) {
-        api.deleteCronRaw(jobId, profile())
-    }
+    override suspend fun delete(jobId: String) =
+        requireSemanticOk("Deleting cron job", api.deleteCronRaw(jobId, profile()))
 
     override suspend fun instantiate(blueprint: String, values: Map<String, String>) {
-        api.instantiateCronBlueprintRaw(
-            buildJsonObject {
-                put("blueprint", blueprint)
-                put(
-                    "values",
-                    buildJsonObject { values.forEach { (key, value) -> put(key, value) } },
-                )
-            },
-            profile(),
+        requireSemanticOk(
+            "Instantiating blueprint",
+            api.instantiateCronBlueprintRaw(
+                buildJsonObject {
+                    put("blueprint", blueprint)
+                    put(
+                        "values",
+                        buildJsonObject { values.forEach { (key, value) -> put(key, value) } },
+                    )
+                },
+                profile(),
+            ),
         )
     }
 }

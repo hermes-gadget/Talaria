@@ -42,13 +42,22 @@ class TalariaTileService : TileService() {
     private fun refresh() {
         val tile = qsTile ?: return
         scope.launch {
-            val label = runCatching {
+            val (label, state) = runCatching {
                 val status = TalariaApp.instance.container.hermesRepository.refreshStatus().getOrThrow()
-                if ((status.gateway?.running ?: status.gateway_running) == true) "Hermes GW · up" else "Hermes GW · down"
-            }.getOrElse { "Hermes · offline" }
+                if ((status.gateway?.running ?: status.gateway_running) == true) {
+                    // A-38: ACTIVE only when the gateway is genuinely up;
+                    // reachable-but-down is INACTIVE.
+                    "Hermes GW · up" to Tile.STATE_ACTIVE
+                } else {
+                    "Hermes GW · down" to Tile.STATE_INACTIVE
+                }
+            }.getOrElse {
+                // No profile / unreachable: UNAVAILABLE, never ACTIVE.
+                "Hermes · offline" to Tile.STATE_UNAVAILABLE
+            }
             withContext(Dispatchers.Main.immediate) {
                 tile.label = label
-                tile.state = Tile.STATE_ACTIVE
+                tile.state = state
                 tile.updateTile()
             }
         }

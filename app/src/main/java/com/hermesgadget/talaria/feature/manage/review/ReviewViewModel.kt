@@ -198,7 +198,7 @@ class ReviewViewModel(
             val gitRoot = (api.fsGitRoot(cwd) as? JsonObject)?.get("root")
                 ?.let { r -> if (r is JsonNull) null else r.jsonPrimitive.content }
             gitRoot ?: error(
-                "No git repository found at $cwd. Enter a repo path (e.g. /home/ben/Talaria).",
+                "No git repository found at $cwd. Enter a repo path (e.g. ~/my-project).",
             )
         }
         val loaded = coroutineScope {

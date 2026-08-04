@@ -12,6 +12,17 @@ name: Build APK
 # com.nousresearch.talaria application ID (and early builds used its .debug
 # variant). Android treats this independent com.hermesgadget.talaria ID as a
 # separate app, so users must uninstall the former package once.
+#
+# N0.1 (ROADMAP-NEXT): fail-closed release pipeline.
+# - pr-gate runs on every PR/main push with READ-ONLY permissions and no
+#   signing secrets; it is the only job that needs no secret.
+# - build-apk runs ONLY for a strictly parsed version tag (vMAJ.MIN.PATCH or
+#   vMAJ.MIN.PATCH-rcN), depends on pr-gate, and verifies the signed artifact
+#   (apksigner exit code, signer fingerprint, package id, version name/code,
+#   sha256) before upload. Any malformed/out-of-range tag FAILS the job.
+# - All actions are pinned by commit SHA; the wrapper distribution checksum is
+#   enforced in gradle/wrapper/gradle-wrapper.properties.
+
 "on":
   push:
     tags: ["v*"]
@@ -20,23 +31,25 @@ name: Build APK
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  # Quality gate on every PR and main push: the 4,685 lines of unit tests and
-  # lint must gate ordinary changes, not only release tags. Unsigned debug
-  # build only — signing stays on the tag path.
+  # Quality gate on every PR and main push: unit tests and lint must gate
+  # ordinary changes, not only release tags. Unsigned debug build only —
+  # signing stays on the tag path. Read-only, no secrets.
   pr-gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: android-actions/setup-android@v4
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
 
       - name: Install SDK components
         run: |
@@ -52,43 +65,72 @@ jobs:
       - name: Debug assemble
         run: ./gradlew :app:assembleDebug --no-daemon
 
-  build-apk:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
+      - name: Upload test reports (even on failure)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pr-gate-reports
+          path: |
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+          retention-days: 14
 
-      - uses: actions/setup-java@v5
+  # Signed release build. Tag-only, depends on pr-gate, fail-closed.
+  build-apk:
+    needs: pr-gate
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # only to attach the release asset
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: android-actions/setup-android@v4
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
 
       - name: Install SDK components
         run: |
           yes | sdkmanager --licenses > /dev/null
           yes | sdkmanager "platforms;android-36" "build-tools;35.0.0"
 
-      - name: Resolve version from tag
+      - name: Strictly parse and validate version tag
         id: ver
         run: |
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          else
-            VERSION="0.0.0-ci.${GITHUB_RUN_NUMBER}"
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          echo "Tag: ${TAG}"
+          # Strict semver-ish: vMAJ.MIN.PATCH or vMAJ.MIN.PATCH-rcN (N in 1..8).
+          # Anything else (dirty suffix, missing patch, letters) FAILS the job.
+          if [[ ! "${TAG}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-rc([1-8]))?$ ]]; then
+            echo "::error::Unsupported version tag '${TAG}'. Expected vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-rcN (N=1..8)."
+            exit 1
           fi
-          # Semver → monotonic versionCode: major*10000 + minor*100 + patch
-          IFS=. read -r MAJ MIN PAT _ <<< "${VERSION}.0.0"
-          digits() { echo "$1" | tr -cd '0-9'; }
-          MAJ=$(digits "$MAJ"); MAJ=${MAJ:-0}
-          MIN=$(digits "$MIN"); MIN=${MIN:-0}
-          PAT=$(digits "$PAT"); PAT=${PAT:-0}
-          CODE=$((10#$MAJ * 10000 + 10#$MIN * 100 + 10#$PAT))
-          # Floor above prior Obtainium debug builds (versionCode 2 and 201).
-          if [ "$CODE" -le 201 ]; then CODE=202; fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "code=$CODE" >> "$GITHUB_OUTPUT"
-          echo "Resolved versionName=$VERSION versionCode=$CODE"
+          MAJ="${BASH_REMATCH[1]}"; MIN="${BASH_REMATCH[2]}"; PAT="${BASH_REMATCH[3]}"
+          RC="${BASH_REMATCH[5]:-}"
+          # Strip leading zeros to keep arithmetic sane and reject "08"-style.
+          MAJ=$((10#$MAJ)); MIN=$((10#$MIN)); PAT=$((10#$PAT))
+          # Monotonic scheme: MAJ*100000 + MIN*1000 + PAT*10 + suffix,
+          # suffix 1..8 = prerelease candidate (rcN), 9 = stable.
+          # v0.8.3-rc1 -> 8031 < v0.8.3 -> 8039 < v0.8.4 -> 8049.
+          SUFFIX=9
+          if [ -n "${RC}" ]; then SUFFIX="${RC}"; fi
+          CODE=$((MAJ * 100000 + MIN * 1000 + PAT * 10 + SUFFIX))
+          # Floor above legacy Obtainium debug builds (versionCode 2 and 201);
+          # reject any tag that cannot clear it (e.g. v0.0.x).
+          if [ "${CODE}" -lt 202 ]; then
+            echo "::error::versionCode ${CODE} for tag '${TAG}' is below the legacy floor (202). Use a later version."
+            exit 1
+          fi
+          VERSION="${MAJ}.${MIN}.${PAT}"
+          if [ -n "${RC}" ]; then VERSION="${VERSION}-rc${RC}"; fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "code=${CODE}" >> "$GITHUB_OUTPUT"
+          echo "rc=${RC:-}" >> "$GITHUB_OUTPUT"
+          echo "Resolved versionName=${VERSION} versionCode=${CODE}"
 
       - name: Decode CI upload keystore
         env:
@@ -120,19 +162,69 @@ jobs:
           SRC=$(ls app/build/outputs/apk/release/*.apk | head -1)
           OUT="Talaria-v${VERSION}.apk"
           cp "$SRC" "$OUT"
-          $ANDROID_HOME/build-tools/35.0.0/aapt2 dump badging "$OUT" | head -1
-          $ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs "$OUT" \
-            | grep -E 'Signer #|DN:|SHA-256' || true
+          echo "artifact=$(pwd)/${OUT}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${OUT}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v7
+      - name: Verify signed APK (fail-closed)
+        run: |
+          set -euo pipefail
+          OUT="${{ steps.rename.outputs.artifact }}"
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          # 1. Signature must verify (exit non-zero on failure — no '|| true').
+          "$BT/apksigner" verify --print-certs "$OUT" > /tmp/certs.txt
+          echo "== apksigner verify passed =="
+          # 2. Signer fingerprint must match the CI keystore exactly.
+          KEY_FP=$(keytool -list -v -keystore "$TALARIA_CI_KEYSTORE" \
+            -storepass "$TALARIA_CI_KEYSTORE_PASSWORD" -alias "$TALARIA_CI_KEY_ALIAS" 2>/dev/null \
+            | grep -A1 "SHA256:" | tail -1 | tr -d ' ' | tr 'A-F' 'a-f')
+          APK_FP=$(grep -A1 "SHA-256 digest:" /tmp/certs.txt | tail -1 | tr -d ' ' | tr 'A-F' 'a-f')
+          echo "keystore fingerprint: ${KEY_FP}"
+          echo "apk      fingerprint: ${APK_FP}"
+          if [ -z "${KEY_FP}" ] || [ -z "${APK_FP}" ] || [ "${KEY_FP}" != "${APK_FP}" ]; then
+            echo "::error::APK signer fingerprint does not match the CI keystore."
+            exit 1
+          fi
+          # 3. Package id + version name/code must match the parsed tag.
+          BADGING=$("$BT/aapt2" dump badging "$OUT")
+          PACKAGE=$(echo "$BADGING" | grep -oP "package: name='\K[^']+" | head -1)
+          VN=$(echo "$BADGING" | grep -oP "versionName='\K[^']+" | head -1)
+          VC=$(echo "$BADGING" | grep -oP "versionCode='\K[^']+" | head -1)
+          echo "package=${PACKAGE} versionName=${VN} versionCode=${VC}"
+          if [ "${PACKAGE}" != "com.hermesgadget.talaria" ]; then
+            echo "::error::Unexpected package id '${PACKAGE}'."
+            exit 1
+          fi
+          if [ "${VN}" != "${{ steps.ver.outputs.version }}" ]; then
+            echo "::error::versionName '${VN}' != expected '${{ steps.ver.outputs.version }}'."
+            exit 1
+          fi
+          if [ "${VC}" != "${{ steps.ver.outputs.code }}" ]; then
+            echo "::error::versionCode '${VC}' != expected '${{ steps.ver.outputs.code }}'."
+            exit 1
+          fi
+          # 4. Record the artifact SHA-256 for the release notes / audit trail.
+          sha256sum "$OUT" | tee /tmp/apk.sha256
+
+      - name: Publish verification summary
+        run: |
+          {
+            echo "## Signed APK verification (N0.1)"
+            echo ""
+            echo "- **Artifact:** ${{ steps.rename.outputs.artifact_name }}"
+            echo "- **Package:** com.hermesgadget.talaria"
+            echo "- **versionName:** ${{ steps.ver.outputs.version }} · **versionCode:** ${{ steps.ver.outputs.code }}"
+            echo "- **Signer:** matches TALARIA_CI_KEYSTORE (apksigner verify passed)"
+            echo "- **SHA-256:** $(awk '{print $1}' /tmp/apk.sha256)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: talaria-apk
           path: Talaria-v*.apk
           retention-days: 30
 
       - name: Attach APK to release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e # v3
         with:
           files: Talaria-v*.apk
           prerelease: true

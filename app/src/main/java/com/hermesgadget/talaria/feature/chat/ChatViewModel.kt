@@ -2252,19 +2252,34 @@ class ChatViewModel(
         runtimes.values.forEach { it.transport.resizeChecked(lastCols, lastRows) }
     }
 
-    fun respondPrompt(approved: Boolean, text: String? = null) {
+    fun respondPrompt(approved: Boolean, text: String? = null, approvalChoice: String? = null) {
         val tabId = _ui.value.active?.id ?: return
         val rt = runtimes[tabId] ?: return
         val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return
         val prompt = tab.prompt ?: return
-        val approvalChoice = prompt.choices.firstOrNull { it != "deny" } ?: "once"
+        // N0.2 — fail closed: never submit a choice the user did not
+        // explicitly select. The generic approve path (no explicit choice)
+        // resolves ONLY the safe one-shot value ("once") and only when the
+        // server offered it or offered nothing; broad-only or unknown choice
+        // sets make the generic approve a no-op (error) instead of silently
+        // granting a broader authorization.
+        val approvalChoice = when {
+            !approved -> null
+            prompt.kind != com.hermesgadget.talaria.core.network.PromptKind.APPROVAL -> null
+            approvalChoice != null -> ApprovalChoicePolicy.resolveChoice(prompt.choices, approvalChoice)
+            else -> ApprovalChoicePolicy.resolveChoice(prompt.choices, ApprovalChoicePolicy.SAFE_ONESHOT_CHOICES.first())
+        }?.takeIf { approved }
+        if (approved && prompt.kind == com.hermesgadget.talaria.core.network.PromptKind.APPROVAL && approvalChoice == null) {
+            updateTab(tabId) { it.copy(error = "Choose an explicit approval option — no choice was selected") }
+            return
+        }
         rt.eventClient.respondPrompt(
             kind = prompt.kind,
             sessionId = tab.liveSessionId ?: tab.resumeSessionId,
             requestId = prompt.requestId,
             approved = approved,
             text = text,
-            approvalChoice = approvalChoice,
+            approvalChoice = approvalChoice ?: "once",
         ) { success ->
             if (success) {
                 dispatchAgentAlert(

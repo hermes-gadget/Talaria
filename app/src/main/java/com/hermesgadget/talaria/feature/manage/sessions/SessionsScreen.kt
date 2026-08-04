@@ -206,8 +206,11 @@ fun SessionsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     confirmBulkDelete = false
+                    // N0.8: reload happens only after the delete is
+                    // acknowledged (adminVm.bulkDeleteSelected -> loadSnapshot);
+                    // reloading here races the async delete and can resurrect
+                    // the just-deleted rows in the UI.
                     adminVm.bulkDeleteSelected()
-                    reload()
                 }) { Text("Delete") }
             },
             dismissButton = { TextButton(onClick = { confirmBulkDelete = false }) { Text("Cancel") } },
@@ -223,8 +226,8 @@ fun SessionsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     confirmEmptyDelete = false
+                    // N0.8: reload only after the delete is acknowledged.
                     adminVm.deleteEmpty()
-                    reload()
                 }) { Text("Delete") }
             },
             dismissButton = { TextButton(onClick = { confirmEmptyDelete = false }) { Text("Cancel") } },

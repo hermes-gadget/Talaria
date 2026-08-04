@@ -285,12 +285,23 @@ fun ChatScreen(
             prompt.instanceId,
         )
         var clarifyText by remember(promptStateKey) { mutableStateOf("") }
+        // N0.2: approval prompts offer explicit choice buttons instead of a
+        // single generic Approve. Broad choices require a confirm step.
+        var pendingBroadChoice by remember(promptStateKey) { mutableStateOf<String?>(null) }
         val needsText = prompt.kind != com.hermesgadget.talaria.core.network.PromptKind.APPROVAL
         val masksText = prompt.kind == com.hermesgadget.talaria.core.network.PromptKind.SUDO ||
             prompt.kind == com.hermesgadget.talaria.core.network.PromptKind.SECRET
+        val approvalChoices = if (needsText) emptyList() else {
+            val offered = prompt.choices
+                .map { it.trim().lowercase() }
+                .filter { it.isNotEmpty() && it != "deny" }
+                .distinct()
+            offered.ifEmpty { listOf(ApprovalChoicePolicy.SAFE_ONESHOT_CHOICES.first()) }
+        }
         AlertDialog(
             onDismissRequest = {
                 clarifyText = ""
+                pendingBroadChoice = null
                 vm.respondPrompt(false)
             },
             title = { Text(prompt.kind.name) },
@@ -302,6 +313,14 @@ fun ChatScreen(
                             stringResource(R.string.chat_choices, prompt.choices.joinToString(", ")),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    pendingBroadChoice?.let { broad ->
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            stringResource(R.string.chat_approval_broad_warning, broad),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
                         )
                     }
                     if (needsText) {
@@ -327,20 +346,46 @@ fun ChatScreen(
                 }
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        val response = clarifyText.ifBlank { null }
-                        clarifyText = ""
-                        if (needsText) vm.respondPrompt(true, response)
-                        else vm.respondPrompt(true)
-                    },
-                ) {
-                    Text(stringResource(if (needsText) R.string.common_send else R.string.common_approve))
+                if (needsText) {
+                    TextButton(
+                        onClick = {
+                            val response = clarifyText.ifBlank { null }
+                            clarifyText = ""
+                            vm.respondPrompt(true, response)
+                        },
+                    ) {
+                        Text(stringResource(R.string.common_send))
+                    }
+                } else {
+                    // N0.2: explicit per-choice approval buttons. Broad choices
+                    // arm a confirm step instead of granting immediately.
+                    val broad = pendingBroadChoice
+                    if (broad != null) {
+                        TextButton(onClick = {
+                            pendingBroadChoice = null
+                            vm.respondPrompt(true, approvalChoice = broad)
+                        }) {
+                            Text(stringResource(R.string.chat_approval_confirm, broad))
+                        }
+                    } else {
+                        Column(horizontalAlignment = Alignment.End) {
+                            approvalChoices.forEach { choice ->
+                                val isBroad = ApprovalChoicePolicy.requiresExplicitBroadConfirm(choice)
+                                TextButton(onClick = {
+                                    if (isBroad) pendingBroadChoice = choice
+                                    else vm.respondPrompt(true, approvalChoice = choice)
+                                }) {
+                                    Text(stringResource(R.string.chat_approval_choice_button, choice))
+                                }
+                            }
+                        }
+                    }
                 }
             },
             dismissButton = {
                 TextButton(onClick = {
                     clarifyText = ""
+                    pendingBroadChoice = null
                     vm.respondPrompt(false)
                 }) {
                     Text(stringResource(R.string.common_deny))

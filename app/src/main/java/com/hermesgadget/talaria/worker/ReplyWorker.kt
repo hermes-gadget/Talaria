@@ -92,7 +92,9 @@ class ReplyWorker(
             Result.success()
         } catch (failure: PtyPromptDeliveryException) {
             val message = failure.message ?: "Reply was not acknowledged"
-            if (!failure.frameAccepted && runAttemptCount < MAX_ATTEMPTS) {
+            // A-37: runAttemptCount is 0-based — the initial attempt plus
+            // (MAX_ATTEMPTS - 1) retries, so compare against MAX_ATTEMPTS - 1.
+            if (!failure.frameAccepted && runAttemptCount < MAX_ATTEMPTS - 1) {
                 Result.retry()
             } else {
                 container.notifier.notifyError("Reply delivery failed", message)
@@ -105,7 +107,7 @@ class ReplyWorker(
             if (message.contains("saved connection changed", ignoreCase = true)) {
                 container.notifier.notifyError("Reply delivery canceled", message)
                 Result.failure(workDataOf(KEY_ERROR to message))
-            } else if (runAttemptCount < MAX_ATTEMPTS) {
+            } else if (runAttemptCount < MAX_ATTEMPTS - 1) {
                 Result.retry()
             } else {
                 container.notifier.notifyError("Reply delivery failed", message)

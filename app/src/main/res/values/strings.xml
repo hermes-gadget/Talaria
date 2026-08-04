@@ -74,6 +74,9 @@
     <string name="chat_status_retry">Disconnected · retry available</string>
     <string name="chat_choices">Choices: %1$s</string>
     <string name="chat_secure_response">Secure response</string>
+    <string name="chat_approval_choice_button">Approve: %1$s</string>
+    <string name="chat_approval_confirm">Confirm %1$s</string>
+    <string name="chat_approval_broad_warning">%1$s grants persistent authority. Confirm to continue.</string>
     <string name="chat_response">Response</string>
     <string name="chat_rename_agent">Rename agent</string>
     <string name="chat_rewind_title">Rewind to this message?</string>

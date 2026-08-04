@@ -127,7 +127,7 @@ fun ReviewScreen(
                         value = repoPath,
                         onValueChange = { repoPath = it },
                         label = { Text("Repository path") },
-                        placeholder = { Text("/home/ben/Talaria") },
+                        placeholder = { Text("~/my-project") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
