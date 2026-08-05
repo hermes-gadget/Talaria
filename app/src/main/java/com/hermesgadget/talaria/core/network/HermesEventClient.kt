@@ -235,6 +235,8 @@ class HermesEventClient(
                 }
                 delay(10L)
             }
+            @Suppress("UNREACHABLE_CODE")
+            false
         } ?: false
 
     fun start(channel: String = UUID.randomUUID().toString(), includeRpc: Boolean = true) {
