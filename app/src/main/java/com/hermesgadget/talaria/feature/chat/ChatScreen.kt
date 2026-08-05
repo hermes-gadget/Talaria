@@ -245,6 +245,7 @@ fun ChatScreen(
         )
         ChatTransportRecoveryState.Reconciled -> stringResource(R.string.chat_status_reconciled)
         is ChatTransportRecoveryState.Retry -> stringResource(R.string.chat_status_retry)
+        is ChatTransportRecoveryState.ConsentRequired -> stringResource(R.string.chat_status_consent_required)
         null -> stringResource(R.string.chat_status_disconnected)
         ChatTransportRecoveryState.None -> when {
             active?.connecting == true -> stringResource(R.string.chat_status_connecting)
@@ -725,7 +726,8 @@ fun ChatScreen(
                                 enabled = active != null &&
                                     !active.connected &&
                                     !active.connecting &&
-                                    active.transportRecovery !is ChatTransportRecoveryState.Retry,
+                                    active.transportRecovery !is ChatTransportRecoveryState.Retry &&
+                                    active.transportRecovery !is ChatTransportRecoveryState.ConsentRequired,
                             ) { vm.reconnectDisconnected() },
                         )
                     }
@@ -1314,6 +1316,18 @@ fun ChatScreen(
                     )
                     TextButton(onClick = { active?.id?.let(vm::reconnectTab) }) {
                         Text(stringResource(R.string.common_retry))
+                    }
+                }
+                is ChatTransportRecoveryState.ConsentRequired -> Column(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.chat_consent_required_message, recovery.origin),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    TextButton(onClick = { vm.grantCleartextConsent() }) {
+                        Text(stringResource(R.string.chat_consent_allow_http))
                     }
                 }
                 ChatTransportRecoveryState.None,

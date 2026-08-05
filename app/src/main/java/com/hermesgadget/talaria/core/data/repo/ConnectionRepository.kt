@@ -185,6 +185,39 @@ class ConnectionRepository(
         revoked
     }
 
+    /**
+     * Records explicit cleartext consent for the exact origin of a saved profile
+     * (the recovery half of [revokeCleartextConsent]). This is how an upgraded
+     * profile whose fail-closed migration wiped consent re-approves its own
+     * http:// LAN/Tailscale destination without re-entering every field.
+     */
+    suspend fun recordCleartextConsent(id: String): Boolean = withContext(Dispatchers.IO) {
+        val snapshot = store.snapshotFor(id) ?: return@withContext false
+        val profile = snapshot.profile
+        val baseUrl = profile.baseUrl.trim().trimEnd('/').toHttpUrlOrNull() ?: return@withContext false
+        if (baseUrl.isHttps || !CleartextPolicy.isVerifiedDestination(baseUrl.host)) {
+            return@withContext false
+        }
+        val consent = CleartextConsentPolicy.resolve(
+            baseUrl = baseUrl,
+            requestedRecorded = true,
+            requestedOrigin = ConnectionOrigin.normalize(baseUrl),
+            previous = profile,
+        )
+        if (!consent.recorded) return@withContext false
+        store.upsert(
+            profile.copy(
+                allowCleartext = true,
+                cleartextConsentRecorded = true,
+                cleartextConsentOrigin = consent.origin,
+            ),
+            snapshot.secrets,
+        )
+        wsAuthHelper.invalidate()
+        clientFactory.invalidate()
+        true
+    }
+
     suspend fun testConnection(
         snapshot: ConnectionSnapshot? = clientFactory.snapshot(),
     ): Result<StatusResponse> = withContext(Dispatchers.IO) {

@@ -244,6 +244,9 @@
     <string name="chat_status_recovering">正在恢复 · 尝试 %1$d/%2$d · %3$d 秒后重试</string>
     <string name="chat_status_reconciled">已重新连接 · 会话记录已刷新</string>
     <string name="chat_status_retry">已断开 · 可以重试</string>
+    <string name="chat_status_consent_required">已断开 · 需要 HTTP 许可</string>
+    <string name="chat_consent_required_message">此仪表板在 %1$s 上使用明文 http://。是否允许通过本地网络进行未加密访问以重新连接？</string>
+    <string name="chat_consent_allow_http">允许 HTTP</string>
     <string name="chat_approval_choice_button">批准：%1$s</string>
     <string name="chat_approval_confirm">确认 %1$s</string>
     <string name="chat_approval_broad_warning">%1$s 授予持久权限。请确认以继续。</string>

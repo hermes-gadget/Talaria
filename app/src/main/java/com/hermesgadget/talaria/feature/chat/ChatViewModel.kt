@@ -35,6 +35,8 @@ import com.hermesgadget.talaria.core.data.repo.TranscriptSnapshot
 import com.hermesgadget.talaria.core.network.HermesEventClient
 import com.hermesgadget.talaria.core.network.HermesEventScope
 import com.hermesgadget.talaria.core.network.HermesSideEvent
+import com.hermesgadget.talaria.core.network.CleartextPolicy
+import com.hermesgadget.talaria.core.network.ConnectionOrigin
 import com.hermesgadget.talaria.core.network.ProfileRegistry
 import com.hermesgadget.talaria.core.network.PromptKind
 import com.hermesgadget.talaria.core.network.PtyEvent
@@ -52,6 +54,7 @@ import com.hermesgadget.talaria.core.voice.TtsSpeaker
 import com.hermesgadget.talaria.domain.model.VoiceCapabilities
 import com.hermesgadget.talaria.domain.model.VoiceTranscriptionRequest
 import com.hermesgadget.talaria.feature.voice.VoiceRecorder
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import com.hermesgadget.talaria.domain.model.ChatLine
 import com.hermesgadget.talaria.domain.model.HERMES_DEFAULT_PROFILE
 import com.hermesgadget.talaria.domain.model.ModelOption
@@ -135,6 +138,8 @@ sealed interface ChatTransportRecoveryState {
     ) : ChatTransportRecoveryState
     data object Reconciled : ChatTransportRecoveryState
     data class Retry(val message: String) : ChatTransportRecoveryState
+    /** Cleartext http connection blocked because consent is missing for this origin. */
+    data class ConsentRequired(val origin: String) : ChatTransportRecoveryState
 }
 
 /** One running Hermes agent (its own PTY + sidecar), shown as a tab. */
@@ -662,7 +667,8 @@ class ChatViewModel(
                 it.profileName == activeProfileName &&
                     !it.connected &&
                     !it.connecting &&
-                    it.transportRecovery !is ChatTransportRecoveryState.Retry
+                    it.transportRecovery !is ChatTransportRecoveryState.Retry &&
+                    it.transportRecovery !is ChatTransportRecoveryState.ConsentRequired
             }
             .forEach { reconnectTab(it.id) }
     }
@@ -2666,7 +2672,7 @@ class ChatViewModel(
                                         transportRecovery = if (loaded) {
                                             ChatTransportRecoveryState.Reconciled
                                         } else {
-                                            ChatTransportRecoveryState.Retry(
+                                            transportRecoveryForFailure(
                                                 "PTY reconnected, but the REST transcript could not be refreshed.",
                                             )
                                         },
@@ -2710,7 +2716,7 @@ class ChatViewModel(
                         connecting = false,
                         working = false,
                         error = null,
-                        transportRecovery = ChatTransportRecoveryState.Retry(state.message),
+                        transportRecovery = transportRecoveryForFailure(state.message),
                     )
                 }
                 container.notifier.notifyError("Chat disconnected", state.message)
@@ -2830,11 +2836,44 @@ class ChatViewModel(
                 transportRecovery = if (loaded) {
                     ChatTransportRecoveryState.Reconciled
                 } else {
-                    ChatTransportRecoveryState.Retry(
+                    transportRecoveryForFailure(
                         "PTY reconnected, but the REST transcript could not be refreshed.",
                     )
                 },
             )
+        }
+    }
+
+    /**
+     * Maps a transport failure to a recovery state. When the active connection
+     * is plain http to a verified private/local destination whose exact-origin
+     * cleartext consent is missing (e.g. wiped by the fail-closed v0.8.4
+     * migration), a generic Retry can NEVER succeed — every request is rejected
+     * before it leaves the app. Surface ConsentRequired so the user can re-approve
+     * the exact origin in place instead of looping on an unrecoverable retry.
+     */
+    private fun transportRecoveryForFailure(message: String): ChatTransportRecoveryState {
+        val snapshot = container.connectionStore.activeSnapshot() ?: return ChatTransportRecoveryState.Retry(message)
+        val url = snapshot.baseUrl.toHttpUrlOrNull() ?: return ChatTransportRecoveryState.Retry(message)
+        if (url.isHttps || !CleartextPolicy.isVerifiedDestination(url.host)) {
+            return ChatTransportRecoveryState.Retry(message)
+        }
+        return if (snapshot.hasCleartextConsentFor(url)) {
+            ChatTransportRecoveryState.Retry(message)
+        } else {
+            ChatTransportRecoveryState.ConsentRequired(ConnectionOrigin.normalize(url))
+        }
+    }
+
+    /** Records exact-origin cleartext consent for the active connection and reconnects. */
+    fun grantCleartextConsent() {
+        val profileId = container.connectionStore.activeProfile()?.id ?: return
+        viewModelScope.launch {
+            val recorded = container.connectionRepository.recordCleartextConsent(profileId)
+            if (!recorded) return@launch
+            _ui.value.tabs
+                .filter { it.transportRecovery is ChatTransportRecoveryState.ConsentRequired }
+                .forEach { reconnectTab(it.id) }
         }
     }
 
