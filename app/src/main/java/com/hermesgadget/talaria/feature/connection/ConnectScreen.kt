@@ -246,6 +246,13 @@ fun ConnectScreen(
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 )
+                TextButton(
+                    onClick = vm::fetchTokenFromDashboard,
+                    enabled = !ui.tokenFetching && ui.baseUrl.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (ui.tokenFetching) "Fetching…" else "Fetch token from dashboard")
+                }
             }
             if (ui.authMode == AuthMode.BASIC) {
                 OutlinedTextField(

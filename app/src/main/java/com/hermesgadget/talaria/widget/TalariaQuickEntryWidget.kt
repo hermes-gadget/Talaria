@@ -16,6 +16,7 @@
 
 package com.hermesgadget.talaria.widget
 
+import com.hermesgadget.talaria.R
 import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
@@ -25,6 +26,7 @@ import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
+import androidx.glance.LocalContext
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.action.actionStartActivity
@@ -82,6 +84,7 @@ class TalariaQuickEntryWidget : GlanceAppWidget() {
 
 @Composable
 private fun QuickEntryContent(packageName: String) {
+    val strings = LocalContext.current
     Column(
         modifier = GlanceModifier
             .fillMaxSize()
@@ -90,7 +93,7 @@ private fun QuickEntryContent(packageName: String) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            "Talaria quick entry",
+            strings.getString(R.string.widget_quick_entry_title),
             style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 16.sp),
         )
         Spacer(GlanceModifier.height(4.dp))
@@ -99,12 +102,12 @@ private fun QuickEntryContent(packageName: String) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             FilledButton(
-                text = "New chat",
+                text = strings.getString(R.string.widget_new_chat),
                 onClick = actionStartActivity(QuickEntryWidgetIntents.newChat(packageName)),
             )
             Spacer(GlanceModifier.width(8.dp))
             FilledButton(
-                text = "Talk",
+                text = strings.getString(R.string.widget_talk),
                 onClick = actionStartActivity(QuickEntryWidgetIntents.talk(packageName)),
             )
         }

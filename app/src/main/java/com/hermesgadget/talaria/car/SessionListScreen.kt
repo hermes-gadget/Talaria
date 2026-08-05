@@ -98,16 +98,16 @@ class SessionListScreen(
 
     private val quickStarts = listOf(
         QuickStart(
-            "Draft a release note",
-            "Draft a release note covering the latest changes.",
+            carContext.getString(R.string.car_prompt_release_note),
+            carContext.getString(R.string.car_prompt_release_note_body),
         ),
         QuickStart(
-            "Summarize my sessions",
-            "Summarize my active agent sessions and what each is working on.",
+            carContext.getString(R.string.car_prompt_summarize),
+            carContext.getString(R.string.car_prompt_summarize_body),
         ),
         QuickStart(
-            "Plan today",
-            "Plan today's work based on my recent activity.",
+            carContext.getString(R.string.car_prompt_plan),
+            carContext.getString(R.string.car_prompt_plan_body),
         ),
     )
 
@@ -136,13 +136,13 @@ class SessionListScreen(
                     .setHeaderAction(Action.APP_ICON)
                     .addAction(
                         Action.Builder()
-                            .setTitle("Retry")
+                            .setTitle(carContext.getString(R.string.car_retry))
                             .setOnClickListener { error = null; loading = false; invalidate() }
                             .build(),
                     )
                     .build()
             } else {
-                MessageTemplate.Builder("Loading your agents…")
+                MessageTemplate.Builder(carContext.getString(R.string.car_loading_agents))
                     .setTitle("Talaria")
                     .setHeaderAction(Action.APP_ICON)
                     .build()
@@ -157,12 +157,12 @@ class SessionListScreen(
             itemList.addItem(
                 ConversationItem.Builder(
                     CREATE_AGENT_ID,
-                    CarText.create("Create new agent"),
+                    CarText.create(carContext.getString(R.string.car_create_agent)),
                     createPerson,
                     listOf(
                         CarMessage.Builder()
                             .setSender(hermesPerson)
-                            .setBody(CarText.create("Tap the mic and say what you want this agent to do."))
+                            .setBody(CarText.create(carContext.getString(R.string.car_create_agent_body)))
                             .setReceivedTimeEpochMillis(System.currentTimeMillis())
                             .setRead(true)
                             .build(),
@@ -186,8 +186,8 @@ class SessionListScreen(
         } else {
             itemList.addItem(
                 Row.Builder()
-                    .setTitle("Phone confirmation required")
-                    .addText("Open Manage → System → Car hosts on your phone. Approval lasts 15 minutes.")
+                    .setTitle(carContext.getString(R.string.car_phone_confirmation))
+                    .addText(carContext.getString(R.string.car_approval_hint))
                     .setImage(CarIcon.APP_ICON)
                     .build(),
             )
@@ -200,14 +200,14 @@ class SessionListScreen(
                 itemList.addItem(
                     ConversationItem.Builder(
                         session.id,
-                        CarText.create(session.title ?: "Untitled agent"),
+                        CarText.create(session.title ?: carContext.getString(R.string.car_untitled_agent)),
                         selfPerson,
                         conversation.messages.map { toCarMessage(it) },
                         sessionCallback(session),
                     ).build(),
                 )
             } else {
-                val row = Row.Builder().setTitle(session.title ?: "Untitled agent")
+                val row = Row.Builder().setTitle(session.title ?: carContext.getString(R.string.car_untitled_agent))
                 conversation.messages.takeLast(2).forEach { message ->
                     val sender = if (message.role == "user") "Me" else "Hermes"
                     row.addText("$sender: ${message.content.orEmpty().trim().replace('\n', ' ')}")
@@ -220,7 +220,7 @@ class SessionListScreen(
             .setHeader(
                 Header.Builder()
                     .setStartHeaderAction(Action.APP_ICON)
-                    .setTitle("Talaria agents")
+                    .setTitle(carContext.getString(R.string.car_agents_title))
                     .build(),
             )
             .setSingleList(itemList.build())
@@ -230,13 +230,13 @@ class SessionListScreen(
     private fun notTrustedTemplate(): Template {
         val identity = authorizer.identity
         val detail = if (identity == null) {
-            "The car host identity could not be verified."
+            carContext.getString(R.string.car_identity_unverified)
         } else {
             "${identity.packageName}\nSHA-256 ${identity.certificateSha256}"
         }
         return MessageTemplate.Builder(
-            "Not trusted\n\n$detail\n\nOpen Talaria on your phone, then Manage → System → Car hosts. " +
-                "No conversations or actions are available until you explicitly enroll this certificate.",
+            carContext.getString(R.string.car_not_trusted_detail, detail) + "\n\n" +
+                carContext.getString(R.string.car_no_actions_until_enroll),
         )
             .setTitle("Talaria")
             .setHeaderAction(Action.APP_ICON)
@@ -265,7 +265,7 @@ class SessionListScreen(
                 if (prompt.isEmpty()) return
                 executeInBackground {
                     val result = kotlinx.coroutines.runBlocking {
-                        authorizer.authorizeAction(ACTION_CREATE).exceptionOrNull()?.let {
+                        authorizer.authorizeAction(ACTION_CREATE, carContext).exceptionOrNull()?.let {
                             return@runBlocking Result.failure(it)
                         }
                         CarSessionsRepository.createSession(requireSnapshot(), prompt)
@@ -275,11 +275,11 @@ class SessionListScreen(
                             onSuccess = {
                                 CarToast.makeText(
                                     carContext,
-                                    "Agent created — it's in your list.",
+                                    carContext.getString(R.string.car_agent_created),
                                     CarToast.LENGTH_LONG,
                                 ).show()
                             },
-                            onFailure = { error = it.message ?: "Failed to create agent" },
+                            onFailure = { error = it.message ?: carContext.getString(R.string.car_failed_create_agent) },
                         )
                         conversations = null // reload — the new session appears as a conversation
                         invalidate()
@@ -297,7 +297,7 @@ class SessionListScreen(
                 if (prompt.isEmpty()) return
                 executeInBackground {
                     val result = kotlinx.coroutines.runBlocking {
-                        authorizer.authorizeAction(ACTION_SEND).exceptionOrNull()?.let {
+                        authorizer.authorizeAction(ACTION_SEND, carContext).exceptionOrNull()?.let {
                             return@runBlocking Result.failure(it)
                         }
                         CarSessionsRepository.sendText(requireSnapshot(), session.id, prompt)
@@ -317,7 +317,7 @@ class SessionListScreen(
     private fun startQuickAction(quick: QuickStart) {
         executeInBackground {
             val result = kotlinx.coroutines.runBlocking {
-                authorizer.authorizeAction(ACTION_CREATE).exceptionOrNull()?.let {
+                authorizer.authorizeAction(ACTION_CREATE, carContext).exceptionOrNull()?.let {
                     return@runBlocking Result.failure(it)
                 }
                 CarSessionsRepository.createSession(requireSnapshot(), quick.prompt)
@@ -327,11 +327,11 @@ class SessionListScreen(
                     onSuccess = {
                         CarToast.makeText(
                             carContext,
-                            "Agent started — it's in your list.",
+                            carContext.getString(R.string.car_agent_started),
                             CarToast.LENGTH_LONG,
                         ).show()
                     },
-                    onFailure = { error = it.message ?: "Failed to start agent" },
+                    onFailure = { error = it.message ?: carContext.getString(R.string.car_failed_start_agent) },
                 )
                 conversations = null
                 invalidate()
@@ -345,7 +345,7 @@ class SessionListScreen(
         executeInBackground {
             val result = kotlinx.coroutines.runBlocking {
                 if (!CarSessionsRepository.hasConnection(snapshot)) {
-                    Result.failure(IllegalStateException("Connect Talaria to Hermes on your phone first"))
+                    Result.failure(IllegalStateException(carContext.getString(R.string.car_connect_phone_first)))
                 } else {
                     CarSessionsRepository.conversations(requireSnapshot())
                 }
@@ -362,7 +362,7 @@ class SessionListScreen(
                             CarConversationNotifier.update(carContext, snap, it)
                         }
                     },
-                    onFailure = { error = it.message ?: "Failed to load sessions" },
+                    onFailure = { error = it.message ?: carContext.getString(R.string.car_failed_load_sessions) },
                 )
                 invalidate()
             }
@@ -394,7 +394,7 @@ class SessionListScreen(
     }
 
     private fun requireSnapshot(): ConnectionSnapshot = snapshot
-        ?: throw IllegalStateException("Connect Talaria to Hermes on your phone first")
+        ?: throw IllegalStateException(carContext.getString(R.string.car_connect_phone_first))
 
     companion object {
         private const val CREATE_AGENT_ID = "create-agent"

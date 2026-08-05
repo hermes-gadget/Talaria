@@ -68,6 +68,7 @@
     <string name="chat_microphone_permission_denied">麥克風權限遭拒</string>
     <string name="chat_status_connecting">連線中…</string>
     <string name="chat_status_live">線上 · %1$s</string>
+    <string name="chat_refresh_now">立即重新整理</string>
     <string name="chat_status_detail"> · %1$s</string>
     <string name="chat_status_yolo"> · ⚡YOLO</string>
         <plurals name="chat_status_tokens">

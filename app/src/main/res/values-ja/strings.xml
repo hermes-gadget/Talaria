@@ -68,6 +68,7 @@
     <string name="chat_microphone_permission_denied">マイクの権限が拒否されました</string>
     <string name="chat_status_connecting">接続中…</string>
     <string name="chat_status_live">ライブ · %1$s</string>
+    <string name="chat_refresh_now">今すぐ更新</string>
     <string name="chat_status_detail"> · %1$s</string>
     <string name="chat_status_yolo"> · ⚡YOLO</string>
         <plurals name="chat_status_tokens">

@@ -68,6 +68,7 @@
     <string name="chat_microphone_permission_denied">تم رفض إذن الميكروفون</string>
     <string name="chat_status_connecting">جارٍ الاتصال…</string>
     <string name="chat_status_live">مباشر · %1$s</string>
+    <string name="chat_refresh_now">تحديث الآن</string>
     <string name="chat_status_detail"> · %1$s</string>
     <string name="chat_status_yolo"> · ⚡YOLO</string>
         <plurals name="chat_status_tokens">

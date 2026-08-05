@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_quick_entry_title">Talaria クイック入力</string>
+    <string name="widget_new_chat">新しいチャット</string>
+    <string name="widget_talk">話す</string>
+    <string name="widget_status_connect">Talaria · Hermes に接続</string>
+    <string name="widget_status_gw_up">GW 起動中</string>
+    <string name="widget_status_gw_down">GW 停止中</string>
+    <string name="widget_status_title">Talaria</string>
+    <string name="widget_status_cached">%1$s · キャッシュ済み</string>
+    <plurals name="widget_status_pairing">
+        <item quantity="one">%1$d ペアリング要求</item>
+        <item quantity="other">%1$d ペアリング要求</item>
+    </plurals>
+    <string name="tile_status_up">Hermes GW · 起動中</string>
+    <string name="tile_status_down">Hermes GW · 停止中</string>
+    <string name="tile_status_offline">Hermes · オフライン</string>
+    <string name="car_untitled_agent">無題のエージェント</string>
+    <string name="car_reply_to_hermes">Hermes に返信</string>
+    <string name="car_tap_to_open">タップして会話を開く</string>
+    <string name="car_reply">返信</string>
+    <string name="car_confirm_host">このカーホストを電話で確認してください。確認は15分間有効です。</string>
+    <string name="car_host_not_trusted">このカーホストは信頼されていません。先に電話で登録してください。</string>
+    <string name="car_prompt_release_note">リリースノートを書く</string>
+    <string name="car_prompt_release_note_body">最新の変更点をまとめたリリースノートを書いてください。</string>
+    <string name="car_prompt_summarize">セッションを要約</string>
+    <string name="car_prompt_summarize_body">アクティブなエージェントセッションと各エージェントの作業を要約してください。</string>
+    <string name="car_prompt_plan">今日の計画</string>
+    <string name="car_prompt_plan_body">最近のアクティビティに基づいて今日の作業を計画してください。</string>
+    <string name="car_retry">再試行</string>
+    <string name="car_loading_agents">エージェントを読み込み中…</string>
+    <string name="car_create_agent">新しいエージェントを作成</string>
+    <string name="car_create_agent_body">マイクをタップして、このエージェントにさせたいことを話してください。</string>
+    <string name="car_phone_confirmation">電話での確認が必要です</string>
+    <string name="car_approval_hint">電話で管理 → システム → カーホストを開いてください。承認は15分間有効です。</string>
+    <string name="car_connect_phone_first">先に電話で Talaria を Hermes に接続してください</string>
+    <string name="car_agent_created">エージェントを作成しました — リストに表示されています。</string>
+    <string name="car_agent_started">エージェントを開始しました — リストに表示されています。</string>
+    <string name="car_failed_create_agent">エージェントの作成に失敗</string>
+    <string name="car_failed_start_agent">エージェントの開始に失敗</string>
+    <string name="car_failed_load_sessions">セッションの読み込みに失敗</string>
+    <string name="car_no_messages_drive">このドライブ中の新しいメッセージはありません</string>
+    <string name="car_no_actions_until_enroll">この証明書を明示的に登録するまで、会話や操作は利用できません。</string>
+    <string name="car_identity_unverified">カーホストの ID を確認できませんでした。</string>
+    <string name="car_not_trusted_detail">信頼されていません\n\n%1$s\n\n電話で Talaria を開き、管理 → システム → カーホスト に移動してください。</string>
+    <string name="car_agents_title">Talaria エージェント</string>
+</resources>

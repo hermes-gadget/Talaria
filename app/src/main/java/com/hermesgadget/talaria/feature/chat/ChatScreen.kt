@@ -1284,12 +1284,21 @@ fun ChatScreen(
                 )
             }
             ui.reconciliationStatus?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(vertical = 4.dp),
-                )
+                ) {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = vm::refreshSessions) {
+                        Text(stringResource(R.string.chat_refresh_now), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             }
             when (val recovery = active?.transportRecovery) {
                 is ChatTransportRecoveryState.Recovering -> Row(

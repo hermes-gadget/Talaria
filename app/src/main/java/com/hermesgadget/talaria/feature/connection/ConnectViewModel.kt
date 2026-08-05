@@ -25,12 +25,15 @@ import com.hermesgadget.talaria.core.data.repo.ConnectionRepository
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStoreState
 import com.hermesgadget.talaria.core.network.CleartextPolicy
 import com.hermesgadget.talaria.core.network.ConnectionOrigin
+import com.hermesgadget.talaria.core.network.AuthInterceptor
 import com.hermesgadget.talaria.core.network.WsAuthHelper
 import com.hermesgadget.talaria.core.network.NativeOidcLogin
 import com.hermesgadget.talaria.core.network.NativeOidcProvider
+import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.SnapshotAuthGuard
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import com.hermesgadget.talaria.domain.model.AuthMode
+import com.hermesgadget.talaria.domain.model.ConnectionSecrets
 import com.hermesgadget.talaria.domain.model.CredentialPoolEntry
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
 import com.hermesgadget.talaria.core.util.suspendResult
@@ -64,6 +67,7 @@ data class ConnectUiState(
     val pinSha256: String = "",
     val testing: Boolean = false,
     val diagnosing: Boolean = false,
+    val tokenFetching: Boolean = false,
     val error: String? = null,
     val statusLine: String? = null,
     val doctorReport: String? = null,
@@ -600,6 +604,66 @@ class ConnectViewModel(
         )
     }
 
+    /** One-tap discovery of the dashboard's SPA-shell token (loopback dashboards). */
+    fun fetchTokenFromDashboard() {
+        val s = _ui.value
+        if (s.baseUrl.isBlank()) {
+            _ui.value = _ui.value.copy(
+                error = "Enter the dashboard URL first",
+                tokenFetching = false,
+            )
+            return
+        }
+        _ui.value = _ui.value.copy(tokenFetching = true, error = null)
+        viewModelScope.launch {
+            try {
+                val base = s.baseUrl.trim().trimEnd('/')
+                val origin = ConnectionOrigin.normalize(base)
+                val consented = hasConsentForCurrentOrigin(s)
+                // Mirror saveConnectionDraft's consent decision so the fetch
+                // obeys the same cleartext gate as every other request.
+                val profile = ConnectionProfile(
+                    id = "draft-fetch",
+                    name = s.name,
+                    baseUrl = base,
+                    authMode = s.authMode,
+                    username = s.username.ifBlank { null },
+                    authProvider = if (s.authMode == AuthMode.OIDC_BROWSER) s.oidcProvider else s.passwordProvider,
+                    managementProfile = s.managementProfile,
+                    pinSha256 = s.pinSha256.ifBlank { null },
+                    allowCleartext = consented,
+                    cleartextConsentRecorded = if (consented) true else null,
+                    cleartextConsentOrigin = if (consented) origin else null,
+                )
+                val snapshot = ConnectionSnapshot.from(
+                    profile,
+                    ConnectionSecrets(sessionToken = null),
+                )
+                val token = TalariaApp.instance.container.wsAuthHelper
+                    .fetchLoopbackSessionToken(snapshot)
+                if (token.isNullOrBlank()) {
+                    _ui.value = _ui.value.copy(
+                        tokenFetching = false,
+                        error = "No token found — is this the dashboard's web UI, and is it reachable?",
+                    )
+                } else {
+                    _ui.value = _ui.value.copy(
+                        tokenFetching = false,
+                        sessionToken = AuthInterceptor.sanitizeToken(token),
+                        statusLine = "Token fetched from dashboard",
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                _ui.value = _ui.value.copy(
+                    tokenFetching = false,
+                    error = t.message ?: "Could not fetch the session token",
+                )
+            }
+        }
+    }
+
     private fun hasConsentForCurrentOrigin(s: ConnectUiState): Boolean {
         val origin = ConnectionOrigin.normalize(s.baseUrl) ?: return false
         return s.cleartextConsentApproved && s.cleartextConsentOrigin == origin
@@ -885,6 +949,29 @@ class ConnectViewModel(
                         profile.id,
                         profile.managementProfile,
                     ) ?: error(SnapshotAuthGuard.CHANGED_MESSAGE)
+                    // Token-gated REST probe: /api/status is public, so a
+                    // stored token that no longer matches the dashboard's
+                    // process token still shows "OK" there while every real
+                    // REST call (sessions, transcripts, providers) 401s —
+                    // chats appear Live but never update. Probe sessions to
+                    // surface exactly that split.
+                    val api = TalariaApp.instance.container.clientFactory.api(snapshot)
+                    val sessions = suspendResult {
+                        api.getSessionsForProfile(
+                            profile = snapshot.managementProfile,
+                            limit = 1,
+                        )
+                    }
+                    sessions.fold(
+                        onSuccess = {
+                            lines += "REST /api/sessions · OK · stored token accepted"
+                        },
+                        onFailure = { e ->
+                            val code = (e as? retrofit2.HttpException)?.code()
+                            lines += "REST /api/sessions · ${code ?: "FAIL"} · ${e.message}"
+                            lines += "Fix: stored session token is stale or wrong — use 'Fetch token from dashboard' or re-save."
+                        },
+                    )
                 }
 
                 val container = TalariaApp.instance.container

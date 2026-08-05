@@ -304,6 +304,7 @@ class ChatViewModel(
     private var restoring = false
     private var sttJob: Job? = null
     private var slashCompletionJob: Job? = null
+    private var draftSaveJob: Job? = null
     private var scopeLoadJob: Job? = null
     private var sessionPollJob: Job? = null
     private var sessionRefreshJob: Job? = null
@@ -327,6 +328,10 @@ class ChatViewModel(
         }
         override fun onStop(owner: LifecycleOwner) {
             appInBackground = true
+            // N1.14: never keep recording while the app is off-screen —
+            // the mic stays hot otherwise and the user cannot see the state.
+            cancelVoiceInput()
+            voiceRecorder.cancel()
             // Re-arm one watch socket per live tab so background alerts keep
             // flowing and survive process death.
             _ui.value.tabs.forEach { tab ->
@@ -2022,7 +2027,15 @@ class ChatViewModel(
                 composerSuggestions = composer.completions,
             )
         }
-        viewModelScope.launch { chatRepository.saveDraft(text) }
+        // N1.14: debounce per-keystroke Room writes (300-500ms) so fast
+        // typing does not hit the database on every key. The last edit of a
+        // burst always flushes; a cancelled job's pending text is re-saved by
+        // the next keystroke or by send/stop paths that save synchronously.
+        draftSaveJob?.cancel()
+        draftSaveJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(350)
+            chatRepository.saveDraft(text)
+        }
 
         slashCompletionJob?.cancel()
         val generation = ++slashRequestGeneration
@@ -2069,7 +2082,11 @@ class ChatViewModel(
         updateTab(tabId) { it.copy(draft = replacement) }
         _ui.update { it.copy(showSlashPalette = false, slashSuggestions = emptyList()) }
         updateComposerAnalysis(replacement)
-        viewModelScope.launch { chatRepository.saveDraft(replacement) }
+        draftSaveJob?.cancel()
+        draftSaveJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(350)
+            chatRepository.saveDraft(replacement)
+        }
     }
 
     private fun knownComposerAgents(): List<String> = buildList {
@@ -2210,6 +2227,7 @@ class ChatViewModel(
             )
         }
         _ui.update { it.copy(showSlashPalette = false) }
+        draftSaveJob?.cancel()
         viewModelScope.launch { chatRepository.saveDraft("") }
     }
 
@@ -2366,6 +2384,7 @@ class ChatViewModel(
             }
         }
         if (_ui.value.activeTabId == tabId && _ui.value.active?.draft.isNullOrEmpty()) {
+            draftSaveJob?.cancel()
             viewModelScope.launch { chatRepository.saveDraft("") }
         }
     }

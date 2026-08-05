@@ -16,6 +16,7 @@
 
 package com.hermesgadget.talaria.car
 
+import com.hermesgadget.talaria.R
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.car.app.HostInfo
@@ -163,13 +164,13 @@ class CarHostSessionAuthorizer(
         nowMillis = nowMillis(),
     )
 
-    fun authorizeAction(action: String): Result<CarHostIdentity?> {
+    fun authorizeAction(action: String, context: Context): Result<CarHostIdentity?> {
         val decision = access()
         if (!decision.canPerformActions) {
             val message = if (decision.level == CarHostTrustLevel.MANUALLY_ENROLLED) {
-                "Confirm this car host on your phone. Confirmations last 15 minutes."
+                context.getString(R.string.car_confirm_host)
             } else {
-                "This car host is not trusted. Enroll it on your phone first."
+                context.getString(R.string.car_host_not_trusted)
             }
             return Result.failure(SecurityException(message))
         }

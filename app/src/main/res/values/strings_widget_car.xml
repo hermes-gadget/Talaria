@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Quick-entry widget -->
+    <string name="widget_quick_entry_title">Talaria quick entry</string>
+    <string name="widget_new_chat">New chat</string>
+    <string name="widget_talk">Talk</string>
+
+    <!-- Status widget -->
+    <string name="widget_status_connect">Talaria · connect Hermes</string>
+    <string name="widget_status_gw_up">GW up</string>
+    <string name="widget_status_gw_down">GW down</string>
+    <string name="widget_status_title">Talaria</string>
+    <string name="widget_status_cached">%1$s · cached</string>
+    <plurals name="widget_status_pairing">
+        <item quantity="one">%1$d pairing request</item>
+        <item quantity="other">%1$d pairing requests</item>
+    </plurals>
+
+    <!-- Quick settings tile -->
+    <string name="tile_status_up">Hermes GW · up</string>
+    <string name="tile_status_down">Hermes GW · down</string>
+    <string name="tile_status_offline">Hermes · offline</string>
+
+    <!-- Car conversation notifications -->
+    <string name="car_untitled_agent">Untitled agent</string>
+    <string name="car_reply_to_hermes">Reply to Hermes</string>
+    <string name="car_tap_to_open">Tap to open conversation</string>
+    <string name="car_reply">Reply</string>
+
+    <!-- Car host security -->
+    <string name="car_confirm_host">Confirm this car host on your phone. Confirmations last 15 minutes.</string>
+    <string name="car_host_not_trusted">This car host is not trusted. Enroll it on your phone first.</string>
+
+    <!-- Car session list -->
+    <string name="car_prompt_release_note">Draft a release note</string>
+    <string name="car_prompt_release_note_body">Draft a release note covering the latest changes.</string>
+    <string name="car_prompt_summarize">Summarize my sessions</string>
+    <string name="car_prompt_summarize_body">Summarize my active agent sessions and what each is working on.</string>
+    <string name="car_prompt_plan">Plan today</string>
+    <string name="car_prompt_plan_body">Plan today\'s work based on my recent activity.</string>
+    <string name="car_retry">Retry</string>
+    <string name="car_loading_agents">Loading your agents…</string>
+    <string name="car_create_agent">Create new agent</string>
+    <string name="car_create_agent_body">Tap the mic and say what you want this agent to do.</string>
+    <string name="car_phone_confirmation">Phone confirmation required</string>
+    <string name="car_approval_hint">Open Manage → System → Car hosts on your phone. Approval lasts 15 minutes.</string>
+    <string name="car_connect_phone_first">Connect Talaria to Hermes on your phone first</string>
+    <string name="car_agent_created">Agent created — it\'s in your list.</string>
+    <string name="car_agent_started">Agent started — it\'s in your list.</string>
+    <string name="car_failed_create_agent">Failed to create agent</string>
+    <string name="car_failed_start_agent">Failed to start agent</string>
+    <string name="car_failed_load_sessions">Failed to load sessions</string>
+    <string name="car_no_messages_drive">No new messages during this drive</string>
+    <string name="car_no_actions_until_enroll">No conversations or actions are available until you explicitly enroll this certificate.</string>
+    <string name="car_identity_unverified">The car host identity could not be verified.</string>
+    <string name="car_not_trusted_detail">Not trusted\n\n%1$s\n\nOpen Talaria on your phone, then Manage → System → Car hosts.</string>
+    <string name="car_agents_title">Talaria agents</string>
+</resources>

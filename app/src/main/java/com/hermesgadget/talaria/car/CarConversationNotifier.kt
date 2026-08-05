@@ -85,7 +85,7 @@ object CarConversationNotifier {
     ): Int? {
         val session = conversation.session
         val id = notificationId(snapshot, session.id)
-        val title = session.title?.takeIf { it.isNotBlank() } ?: "Untitled agent"
+        val title = session.title?.takeIf { it.isNotBlank() } ?: context.getString(R.string.car_untitled_agent)
         val deepLink = sessionDeepLink(snapshot, session.id)
 
         val hermes = Person.Builder().setName("Hermes").setKey("hermes").build()
@@ -121,13 +121,13 @@ object CarConversationNotifier {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val remoteInput = RemoteInput.Builder(NotificationActionReceiver.KEY_REPLY)
-            .setLabel("Reply to Hermes")
+            .setLabel(context.getString(R.string.car_reply_to_hermes))
             .build()
 
         val notification = NotificationCompat.Builder(context, NotificationChannels.CONVERSATIONS)
             .setSmallIcon(R.drawable.ic_notification_small)
             .setContentTitle(title)
-            .setContentText(conversation.messages.lastOrNull()?.content?.trim() ?: "Tap to open conversation")
+            .setContentText(conversation.messages.lastOrNull()?.content?.trim() ?: context.getString(R.string.car_tap_to_open))
             .setStyle(style)
             .setContentIntent(openPi)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
@@ -138,7 +138,7 @@ object CarConversationNotifier {
             .addAction(
                 NotificationCompat.Action.Builder(
                     0, // no icon — matches TalariaNotifier's reply action pattern
-                    "Reply",
+                    context.getString(R.string.car_reply),
                     replyPi,
                 ).addRemoteInput(remoteInput).build(),
             )

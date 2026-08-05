@@ -128,7 +128,14 @@ class WsAuthHelper(
         throw failure
     }
 
-    private suspend fun fetchLoopbackSessionToken(snapshot: ConnectionSnapshot): String? {
+    /**
+     * Fetch the loopback session token from the dashboard's SPA shell.
+     * Returns null when the shell is unreachable or carries no token.
+     * Public so the connect screen can offer one-tap token discovery
+     * instead of requiring a manual paste (which is how stale/malformed
+     * tokens historically ended up stored).
+     */
+    suspend fun fetchLoopbackSessionToken(snapshot: ConnectionSnapshot): String? {
         val base = snapshot.baseUrl.trimEnd('/')
         val req = Request.Builder()
             .url("$base/")

@@ -17,6 +17,7 @@
 
 package com.hermesgadget.talaria.widget
 
+import com.hermesgadget.talaria.R
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import com.hermesgadget.talaria.TalariaApp
@@ -41,19 +42,22 @@ class TalariaTileService : TileService() {
 
     private fun refresh() {
         val tile = qsTile ?: return
+        val up = getString(R.string.tile_status_up)
+        val down = getString(R.string.tile_status_down)
+        val offline = getString(R.string.tile_status_offline)
         scope.launch {
             val (label, state) = runCatching {
                 val status = TalariaApp.instance.container.hermesRepository.refreshStatus().getOrThrow()
                 if ((status.gateway?.running ?: status.gateway_running) == true) {
                     // A-38: ACTIVE only when the gateway is genuinely up;
                     // reachable-but-down is INACTIVE.
-                    "Hermes GW · up" to Tile.STATE_ACTIVE
+                    up to Tile.STATE_ACTIVE
                 } else {
-                    "Hermes GW · down" to Tile.STATE_INACTIVE
+                    down to Tile.STATE_INACTIVE
                 }
             }.getOrElse {
                 // No profile / unreachable: UNAVAILABLE, never ACTIVE.
-                "Hermes · offline" to Tile.STATE_UNAVAILABLE
+                offline to Tile.STATE_UNAVAILABLE
             }
             withContext(Dispatchers.Main.immediate) {
                 tile.label = label

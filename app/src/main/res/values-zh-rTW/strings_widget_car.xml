@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_quick_entry_title">Talaria 快速輸入</string>
+    <string name="widget_new_chat">新聊天</string>
+    <string name="widget_talk">說話</string>
+    <string name="widget_status_connect">Talaria · 連線 Hermes</string>
+    <string name="widget_status_gw_up">閘道執行中</string>
+    <string name="widget_status_gw_down">閘道已停止</string>
+    <string name="widget_status_title">Talaria</string>
+    <string name="widget_status_cached">%1$s · 已快取</string>
+    <plurals name="widget_status_pairing">
+        <item quantity="one">%1$d 個配對要求</item>
+        <item quantity="other">%1$d 個配對要求</item>
+    </plurals>
+    <string name="tile_status_up">Hermes GW · 執行中</string>
+    <string name="tile_status_down">Hermes GW · 已停止</string>
+    <string name="tile_status_offline">Hermes · 離線</string>
+    <string name="car_untitled_agent">未命名代理</string>
+    <string name="car_reply_to_hermes">回覆 Hermes</string>
+    <string name="car_tap_to_open">點按開啟對話</string>
+    <string name="car_reply">回覆</string>
+    <string name="car_confirm_host">請在手機上確認此車載主機。確認有效期為 15 分鐘。</string>
+    <string name="car_host_not_trusted">此車載主機不受信任。請先在手機上註冊。</string>
+    <string name="car_prompt_release_note">撰寫發布說明</string>
+    <string name="car_prompt_release_note_body">撰寫涵蓋最新變更的發布說明。</string>
+    <string name="car_prompt_summarize">彙總我的工作階段</string>
+    <string name="car_prompt_summarize_body">彙總我活躍的代理工作階段以及每個代理正在進行的工作。</string>
+    <string name="car_prompt_plan">規劃今天</string>
+    <string name="car_prompt_plan_body">根據我最近的活動規劃今天的工作。</string>
+    <string name="car_retry">重試</string>
+    <string name="car_loading_agents">正在載入代理…</string>
+    <string name="car_create_agent">建立新代理</string>
+    <string name="car_create_agent_body">點按麥克風並說出您希望此代理做什麼。</string>
+    <string name="car_phone_confirmation">需要手機確認</string>
+    <string name="car_approval_hint">請在手機上開啟 管理 → 系統 → 車載主機。核准有效期為 15 分鐘。</string>
+    <string name="car_connect_phone_first">請先在手機上連線 Talaria 與 Hermes</string>
+    <string name="car_agent_created">代理已建立 — 它已在您的清單中。</string>
+    <string name="car_agent_started">代理已啟動 — 它已在您的清單中。</string>
+    <string name="car_failed_create_agent">建立代理失敗</string>
+    <string name="car_failed_start_agent">啟動代理失敗</string>
+    <string name="car_failed_load_sessions">載入工作階段失敗</string>
+    <string name="car_no_messages_drive">本次駕駛期間沒有新訊息</string>
+    <string name="car_no_actions_until_enroll">在您明確註冊此憑證之前，沒有可用的對話或操作。</string>
+    <string name="car_identity_unverified">無法驗證車載主機身分。</string>
+    <string name="car_not_trusted_detail">不受信任\n\n%1$s\n\n請在手機上開啟 Talaria，然後前往 管理 → 系統 → 車載主機。</string>
+    <string name="car_agents_title">Talaria 代理</string>
+</resources>

@@ -60,6 +60,7 @@
     <string name="chat_microphone_permission_denied">Microphone permission denied</string>
     <string name="chat_status_connecting">Connecting…</string>
     <string name="chat_status_live">Live · %1$s</string>
+    <string name="chat_refresh_now">Refresh now</string>
     <string name="chat_status_detail"> · %1$s</string>
     <string name="chat_status_yolo"> · ⚡yolo</string>
         <plurals name="chat_status_tokens">

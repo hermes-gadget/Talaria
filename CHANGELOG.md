@@ -2,7 +2,41 @@
 
 All notable Talaria changes are documented here. Versions below correspond to repository tags; there has never been a `1.0.0` release.
 
-## [Unreleased]
+## [0.9.0] — 2026-08-05 (unreleased)
+
+### Added
+
+- Connect screen: one-tap "Fetch token from dashboard" — reads the SPA-shell loopback token instead of requiring a manual paste (kills the stale/malformed-token bug class).
+- Connection doctor now probes the token-gated REST surface (`/api/sessions`), so a stored-token mismatch is reported as "REST 401 · WS OK" instead of a confusing Live-but-stale chat.
+- Explicit "Refresh now" action on the "Live updates delayed; reconciling…" status row.
+- Multi-item share intake (R1.8): `ACTION_SEND_MULTIPLE` and `ACTION_PROCESS_TEXT` capture surface with owned, byte-bounded staging, target selection, and URL suggestion chips.
+- Local session organization (R1.9): labels/groups/favorites/saved filters, Room-backed, profile-scoped, with a clear Local badge; bulk actions respect filtered selections.
+- Widget/car strings moved into resources across all five locales (N1.11 slice).
+- Draft persistence debounced to 350 ms; microphone recording stops when the app leaves the foreground (N1.14 slices).
+
+### Fixed
+
+- REST auth now converges with WS auth: the SPA-discovered loopback token is persisted to the store, so chats update again after a dashboard restart or stale stored token.
+- Launch crash loop from untrimmed pasted tokens (sanitized at input, persistence, load, and transport boundaries).
+
+## [0.8.5] — 2026-08-05
+
+### Fixed
+
+- Launch crash loop caused by untrimmed pasted session/bearer tokens in HTTP headers (OkHttp rejects control characters); sanitized at input, persistence, heal-on-load, and every header site.
+- REST/WS auth divergence: the SPA-discovered loopback token is now synced into the store so REST calls stop 401ing after a dashboard restart or stale stored token.
+- In-chat HTTP consent re-approval after the fail-closed cleartext migration.
+
+### Changed
+
+- AGP 9.1.1 / Gradle 9.3.1 / compileSdk 37 migration (built-in Kotlin 2.3.0).
+- Lint debt cleared (702 findings → 21 documented toolchain pins).
+
+## [0.8.4] — 2026-08-05
+
+### Fixed
+
+- Android Auto message center showing "No new messages during this drive" despite live chats (CarConversationNotifier per-conversation notifications).
 
 ## [0.8.3] — 2026-08-04
 

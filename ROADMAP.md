@@ -1,6 +1,6 @@
 # Talaria roadmap
 
-Current released version: **`0.8.3`** (2026-08-04). Current compatibility baseline: Hermes Agent `v0.19.1` unless a feature performs explicit capability discovery. Talaria remains an Android-first Kotlin + Compose client for remote-capable Hermes chat and management workflows; Electron-only local-window, tray, local-shell, and novelty-overlay behavior is not a parity target.
+Current released version: **`0.8.5`** (2026-08-05). Current compatibility baseline: Hermes Agent `v0.19.1` unless a feature performs explicit capability discovery. Talaria remains an Android-first Kotlin + Compose client for remote-capable Hermes chat and management workflows; Electron-only local-window, tray, local-shell, and novelty-overlay behavior is not a parity target.
 
 This roadmap is based on the public reviews under `review-reports/` plus the verified repository release history. It supersedes the completed v0.6 backlog as the forward implementation plan.
 

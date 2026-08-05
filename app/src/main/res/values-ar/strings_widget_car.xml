@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_quick_entry_title">إدخال سريع لـ Talaria</string>
+    <string name="widget_new_chat">محادثة جديدة</string>
+    <string name="widget_talk">تحدث</string>
+    <string name="widget_status_connect">Talaria · اتصل بـ Hermes</string>
+    <string name="widget_status_gw_up">البوابة تعمل</string>
+    <string name="widget_status_gw_down">البوابة معطلة</string>
+    <string name="widget_status_title">Talaria</string>
+    <string name="widget_status_cached">%1$s · مخزّن مؤقتًا</string>
+    <plurals name="widget_status_pairing">
+        <item quantity="one">%1$d طلب اقتران</item>
+        <item quantity="other">%1$d طلبات اقتران</item>
+    </plurals>
+    <string name="tile_status_up">Hermes GW · يعمل</string>
+    <string name="tile_status_down">Hermes GW · معطل</string>
+    <string name="tile_status_offline">Hermes · غير متصل</string>
+    <string name="car_untitled_agent">وكيل بدون عنوان</string>
+    <string name="car_reply_to_hermes">الرد على Hermes</string>
+    <string name="car_tap_to_open">اضغط لفتح المحادثة</string>
+    <string name="car_reply">رد</string>
+    <string name="car_confirm_host">أكّد مضيف السيارة هذا على هاتفك. تستمر التأكيدات 15 دقيقة.</string>
+    <string name="car_host_not_trusted">مضيف السيارة هذا غير موثوق. سجّله على هاتفك أولاً.</string>
+    <string name="car_prompt_release_note">اكتب ملاحظة إصدار</string>
+    <string name="car_prompt_release_note_body">اكتب ملاحظة إصدار تغطي أحدث التغييرات.</string>
+    <string name="car_prompt_summarize">لخّص جلساتي</string>
+    <string name="car_prompt_summarize_body">لخّص جلسات الوكلاء النشطة وما يعمل عليه كل منها.</string>
+    <string name="car_prompt_plan">خطّط اليوم</string>
+    <string name="car_prompt_plan_body">خطّط عمل اليوم بناءً على نشاطي الأخير.</string>
+    <string name="car_retry">إعادة المحاولة</string>
+    <string name="car_loading_agents">جارٍ تحميل الوكلاء…</string>
+    <string name="car_create_agent">إنشاء وكيل جديد</string>
+    <string name="car_create_agent_body">اضغط على الميكروفون وقل ما تريد أن يفعله هذا الوكيل.</string>
+    <string name="car_phone_confirmation">مطلوب تأكيد الهاتف</string>
+    <string name="car_approval_hint">افتح الإدارة ← النظام ← مضيفو السيارة على هاتفك. تستمر الموافقة 15 دقيقة.</string>
+    <string name="car_connect_phone_first">اربط Talaria بـ Hermes على هاتفك أولاً</string>
+    <string name="car_agent_created">تم إنشاء الوكيل — إنه في قائمتك.</string>
+    <string name="car_agent_started">تم تشغيل الوكيل — إنه في قائمتك.</string>
+    <string name="car_failed_create_agent">فشل إنشاء الوكيل</string>
+    <string name="car_failed_start_agent">فشل تشغيل الوكيل</string>
+    <string name="car_failed_load_sessions">فشل تحميل الجلسات</string>
+    <string name="car_no_messages_drive">لا توجد رسائل جديدة أثناء هذه الرحلة</string>
+    <string name="car_no_actions_until_enroll">لا تتوفر محادثات أو إجراءات حتى تسجّل هذه الشهادة صراحةً.</string>
+    <string name="car_identity_unverified">تعذر التحقق من هوية مضيف السيارة.</string>
+    <string name="car_not_trusted_detail">غير موثوق\n\n%1$s\n\nافتح Talaria على هاتفك، ثم الإدارة ← النظام ← مضيفو السيارة.</string>
+    <string name="car_agents_title">وكلاء Talaria</string>
+</resources>
