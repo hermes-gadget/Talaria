@@ -253,4 +253,25 @@
     <string name="chat_approval_broad_warning">%1$s 授予持久權限。請確認以繼續。</string>
     <string name="manage_car_hosts_title">車載主機</string>
     <string name="manage_car_hosts_subtitle">憑證註冊與存取</string>
+    <string name="capture_title">分享至 Talaria</string>
+    <string name="capture_close">關閉分享任務</string>
+    <string name="capture_share_into">分享至</string>
+    <string name="capture_profile">設定檔：%1$s</string>
+    <string name="capture_current_chat">目前聊天</string>
+    <string name="capture_current_unavailable">目前聊天無法使用</string>
+    <string name="capture_new_chat">新聊天</string>
+    <string name="capture_shared_text">分享的文字</string>
+    <string name="capture_url_suggestions">URL 任務建議</string>
+    <string name="capture_summarize">摘要</string>
+    <string name="capture_compare">比較</string>
+    <string name="capture_extract">擷取</string>
+    <string name="capture_attachments">附件</string>
+    <string name="capture_remove">移除附件</string>
+    <string name="capture_managed_file_notice">以受管理檔案參照傳送（上傳/連結替代方案）。</string>
+    <string name="capture_instruction_label">選用指示</string>
+    <string name="capture_instruction_hint">希望 Hermes 如何處理這份分享？</string>
+    <string name="capture_discard">捨棄</string>
+    <string name="capture_send">傳送</string>
+    <string name="capture_sending">傳送中…</string>
+    <string name="capture_delivery_unknown">傳送狀態不明；請在重試前檢查此草稿。</string>
 </resources>

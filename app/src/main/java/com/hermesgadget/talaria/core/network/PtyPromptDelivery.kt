@@ -107,6 +107,7 @@ object PtyPromptDelivery {
         text: String,
         eventClient: HermesEventClient? = null,
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+        beforeSend: suspend (sessionKey: String) -> Unit = {},
     ): PtyPromptDeliveryReceipt {
         require(timeoutMs > 0) { "timeoutMs must be positive" }
 
@@ -139,6 +140,7 @@ object PtyPromptDelivery {
                                 is PtyEvent.Output -> {
                                     if (sendReceipt == null) {
                                         if (sessionKey.isBlank()) return@collect
+                                        beforeSend(sessionKey)
                                         val result = session.sendTextChecked(text)
                                         sendReceipt = result.getOrElse { failure ->
                                             val sendFailure = failure as? PtySendException

@@ -260,4 +260,25 @@ See PRIVACY.md in the repository for the full statement.</string>
     <string name="activity_filter_chat">Chat</string>
     <string name="activity_empty">No activity yet. Background sync will populate this feed.</string>
     <string name="activity_no_filter_matches">No events for this filter.</string>
+    <string name="capture_title">Share to Talaria</string>
+    <string name="capture_close">Close share task</string>
+    <string name="capture_share_into">Share into</string>
+    <string name="capture_profile">Profile: %1$s</string>
+    <string name="capture_current_chat">Current chat</string>
+    <string name="capture_current_unavailable">Current chat unavailable</string>
+    <string name="capture_new_chat">New chat</string>
+    <string name="capture_shared_text">Shared text</string>
+    <string name="capture_url_suggestions">URL task suggestions</string>
+    <string name="capture_summarize">Summarize</string>
+    <string name="capture_compare">Compare</string>
+    <string name="capture_extract">Extract</string>
+    <string name="capture_attachments">Attachments</string>
+    <string name="capture_remove">Remove attachment</string>
+    <string name="capture_managed_file_notice">Sent as a managed file reference (upload/link alternative).</string>
+    <string name="capture_instruction_label">Optional instruction</string>
+    <string name="capture_instruction_hint">What should Hermes do with this share?</string>
+    <string name="capture_discard">Discard</string>
+    <string name="capture_send">Send</string>
+    <string name="capture_sending">Sending…</string>
+    <string name="capture_delivery_unknown">Delivery status is unknown; review this draft before retrying.</string>
 </resources>
