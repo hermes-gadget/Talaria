@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="secure_store_corrupt_title">Encrypted connections need recovery</string>
+    <string name="secure_store_corrupt_message">Talaria could not safely read the saved connection data. Nothing was erased. Retry after restarting or copy the non-secret diagnostics for support.</string>
+    <string name="secure_store_permanent_title">Android Keystore access was lost</string>
+    <string name="secure_store_permanent_message">The device can no longer decrypt the saved connections. Nothing was erased. You can copy diagnostics before choosing the destructive reset.</string>
+    <string name="secure_store_retry">Retry</string>
+    <string name="secure_store_copy_diagnostics">Copy diagnostics</string>
+    <string name="secure_store_diagnostics_label">Talaria secure-store diagnostics</string>
+    <string name="secure_store_reset_documentation">Reset removes only saved Hermes connections and their encrypted credentials. Settings, chat cache, and car-host trust are not removed. You will need to add connections again.</string>
+    <string name="secure_store_reset_action">Reset encrypted connections…</string>
+    <string name="secure_store_reset_title">Reset encrypted connections?</string>
+    <string name="secure_store_reset_explanation">This permanently removes every saved Hermes connection and credential from this device. It does not erase other Talaria data. This cannot be undone.</string>
+    <string name="secure_store_reset_confirm">Reset connections</string>
+</resources>

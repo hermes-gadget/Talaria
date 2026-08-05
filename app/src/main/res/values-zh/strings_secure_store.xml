@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="secure_store_corrupt_title">加密连接需要恢复</string>
+    <string name="secure_store_corrupt_message">Talaria 无法安全读取已保存的连接数据。没有删除任何内容。请在重启后重试，或复制不含机密的诊断信息以寻求支持。</string>
+    <string name="secure_store_permanent_title">已失去 Android Keystore 访问权限</string>
+    <string name="secure_store_permanent_message">设备无法再解密已保存的连接。没有删除任何内容。你可以在选择重置前复制诊断信息。</string>
+    <string name="secure_store_retry">重试</string>
+    <string name="secure_store_copy_diagnostics">复制诊断信息</string>
+    <string name="secure_store_diagnostics_label">Talaria 安全存储诊断</string>
+    <string name="secure_store_reset_documentation">重置只会删除已保存的 Hermes 连接及其加密凭据。设置、聊天缓存和车载主机信任不会被删除。你需要重新添加连接。</string>
+    <string name="secure_store_reset_action">重置加密连接…</string>
+    <string name="secure_store_reset_title">重置加密连接？</string>
+    <string name="secure_store_reset_explanation">这将从此设备永久删除所有已保存的 Hermes 连接和凭据。不会删除其他 Talaria 数据。此操作无法撤销。</string>
+    <string name="secure_store_reset_confirm">重置连接</string>
+</resources>

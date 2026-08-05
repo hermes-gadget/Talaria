@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="secure_store_corrupt_title">暗号化接続の復旧が必要です</string>
+    <string name="secure_store_corrupt_message">保存済み接続データを安全に読み取れませんでした。データは削除されていません。再起動後に再試行するか、秘密情報を含まない診断情報をコピーしてください。</string>
+    <string name="secure_store_permanent_title">Android Keystore へのアクセスが失われました</string>
+    <string name="secure_store_permanent_message">保存済み接続を復号できなくなりました。データは削除されていません。リセットする前に診断情報をコピーできます。</string>
+    <string name="secure_store_retry">再試行</string>
+    <string name="secure_store_copy_diagnostics">診断情報をコピー</string>
+    <string name="secure_store_diagnostics_label">Talaria セキュアストア診断</string>
+    <string name="secure_store_reset_documentation">リセットでは、保存済み Hermes 接続と暗号化された認証情報のみが削除されます。設定、チャットキャッシュ、車載ホストの信頼情報は削除されません。接続の再追加が必要です。</string>
+    <string name="secure_store_reset_action">暗号化接続をリセット…</string>
+    <string name="secure_store_reset_title">暗号化接続をリセットしますか？</string>
+    <string name="secure_store_reset_explanation">この端末に保存されたすべての Hermes 接続と認証情報が完全に削除されます。他の Talaria データは削除されません。この操作は元に戻せません。</string>
+    <string name="secure_store_reset_confirm">接続をリセット</string>
+</resources>

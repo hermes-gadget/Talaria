@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="secure_store_corrupt_title">تحتاج الاتصالات المشفرة إلى الاسترداد</string>
+    <string name="secure_store_corrupt_message">تعذّر على Talaria قراءة بيانات الاتصال المحفوظة بأمان. لم يتم حذف أي شيء. أعد المحاولة بعد إعادة التشغيل أو انسخ معلومات التشخيص غير السرية للدعم.</string>
+    <string name="secure_store_permanent_title">فُقد الوصول إلى Android Keystore</string>
+    <string name="secure_store_permanent_message">لم يعد الجهاز قادرًا على فك تشفير الاتصالات المحفوظة. لم يتم حذف أي شيء. يمكنك نسخ معلومات التشخيص قبل اختيار إعادة الضبط.</string>
+    <string name="secure_store_retry">إعادة المحاولة</string>
+    <string name="secure_store_copy_diagnostics">نسخ معلومات التشخيص</string>
+    <string name="secure_store_diagnostics_label">تشخيص مخزن Talaria الآمن</string>
+    <string name="secure_store_reset_documentation">تحذف إعادة الضبط اتصالات Hermes المحفوظة وبيانات اعتمادها المشفرة فقط. لن تُحذف الإعدادات أو ذاكرة الدردشة أو ثقة مضيف السيارة. ستحتاج إلى إضافة الاتصالات مجددًا.</string>
+    <string name="secure_store_reset_action">إعادة ضبط الاتصالات المشفرة…</string>
+    <string name="secure_store_reset_title">إعادة ضبط الاتصالات المشفرة؟</string>
+    <string name="secure_store_reset_explanation">سيؤدي هذا إلى حذف كل اتصال Hermes محفوظ وبيانات اعتماده نهائيًا من هذا الجهاز. لن يحذف بيانات Talaria الأخرى. لا يمكن التراجع عن ذلك.</string>
+    <string name="secure_store_reset_confirm">إعادة ضبط الاتصالات</string>
+</resources>

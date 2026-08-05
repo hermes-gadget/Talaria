@@ -17,6 +17,9 @@
 
 package com.hermesgadget.talaria.feature.connection
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -48,11 +51,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.hermesgadget.talaria.R
+import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStoreState
+import com.hermesgadget.talaria.core.data.prefs.SecureStoreDiagnostics
 import com.hermesgadget.talaria.core.network.ConnectionOrigin
 import com.hermesgadget.talaria.domain.model.AuthMode
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
@@ -69,10 +76,31 @@ fun ConnectScreen(
 ) {
     val ui by vm.ui.collectAsState()
     val profiles by vm.profiles.collectAsState()
+    val secureStoreState by vm.secureStoreState.collectAsState()
     var authExpanded by remember { mutableStateOf(false) }
     var oidcProviderExpanded by remember { mutableStateOf(false) }
     var deleteProfile by remember { mutableStateOf<ConnectionProfile?>(null) }
+    var confirmSecureReset by remember { mutableStateOf(false) }
     val context = LocalContext.current
+
+    if (confirmSecureReset) {
+        AlertDialog(
+            onDismissRequest = { confirmSecureReset = false },
+            title = { Text(stringResource(R.string.secure_store_reset_title)) },
+            text = { Text(stringResource(R.string.secure_store_reset_explanation)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmSecureReset = false
+                    vm.resetEncryptedConnections()
+                }) { Text(stringResource(R.string.secure_store_reset_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmSecureReset = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+        )
+    }
 
     deleteProfile?.let { profile ->
         AlertDialog(
@@ -112,8 +140,8 @@ fun ConnectScreen(
     LaunchedEffect(initialProfile) {
         vm.applyDeepLinkProfile(initialProfile)
     }
-    LaunchedEffect(Unit) {
-        vm.loadProviderOnboarding()
+    LaunchedEffect(secureStoreState is SecureConnectionStoreState.Available) {
+        if (secureStoreState is SecureConnectionStoreState.Available) vm.loadProviderOnboarding()
     }
 
     val draftUrl = remember(ui.baseUrl) { ui.baseUrl.trim().trimEnd('/').toHttpUrlOrNull() }
@@ -130,6 +158,23 @@ fun ConnectScreen(
                 "Privacy-respecting mobile client for Hermes. Credentials stay in the Android Keystore.",
                 style = MaterialTheme.typography.bodyMedium,
             )
+            if (secureStoreState !is SecureConnectionStoreState.Available) {
+                SecureStoreRecoveryPanel(
+                    state = secureStoreState,
+                    onRetry = vm::retrySecureStore,
+                    onCopyDiagnostics = { diagnostics ->
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(
+                            ClipData.newPlainText(
+                                context.getString(R.string.secure_store_diagnostics_label),
+                                diagnostics.copyText(),
+                            ),
+                        )
+                    },
+                    onReset = { confirmSecureReset = true },
+                )
+                return@ScreenScaffold
+            }
             if (draftUrl?.scheme == "http") {
                 Text(
                     "HTTP — local network traffic is unencrypted",
@@ -344,5 +389,51 @@ fun ConnectScreen(
                 Text("Continue without testing")
             }
         }
+    }
+}
+
+@Composable
+private fun SecureStoreRecoveryPanel(
+    state: SecureConnectionStoreState,
+    onRetry: () -> Unit,
+    onCopyDiagnostics: (SecureStoreDiagnostics) -> Unit,
+    onReset: () -> Unit,
+) {
+    val diagnostics = when (state) {
+        is SecureConnectionStoreState.Available -> return
+        is SecureConnectionStoreState.RecoverableCorruption -> state.diagnostics
+        is SecureConnectionStoreState.PermanentKeystoreLoss -> state.diagnostics
+    }
+    Text(
+        stringResource(
+            if (state is SecureConnectionStoreState.PermanentKeystoreLoss) {
+                R.string.secure_store_permanent_title
+            } else {
+                R.string.secure_store_corrupt_title
+            },
+        ),
+        style = MaterialTheme.typography.titleLarge,
+        color = MaterialTheme.colorScheme.error,
+    )
+    Text(
+        stringResource(
+            if (state is SecureConnectionStoreState.PermanentKeystoreLoss) {
+                R.string.secure_store_permanent_message
+            } else {
+                R.string.secure_store_corrupt_message
+            },
+        ),
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Text(diagnostics.copyText(), style = MaterialTheme.typography.bodySmall)
+    Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
+        Text(stringResource(R.string.secure_store_retry))
+    }
+    OutlinedButton(onClick = { onCopyDiagnostics(diagnostics) }, modifier = Modifier.fillMaxWidth()) {
+        Text(stringResource(R.string.secure_store_copy_diagnostics))
+    }
+    Text(stringResource(R.string.secure_store_reset_documentation), style = MaterialTheme.typography.bodySmall)
+    TextButton(onClick = onReset, modifier = Modifier.fillMaxWidth()) {
+        Text(stringResource(R.string.secure_store_reset_action))
     }
 }

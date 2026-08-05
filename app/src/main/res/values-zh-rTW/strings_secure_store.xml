@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="secure_store_corrupt_title">加密連線需要復原</string>
+    <string name="secure_store_corrupt_message">Talaria 無法安全讀取已儲存的連線資料。沒有刪除任何內容。請在重新啟動後重試，或複製不含機密的診斷資訊以尋求支援。</string>
+    <string name="secure_store_permanent_title">已失去 Android Keystore 存取權</string>
+    <string name="secure_store_permanent_message">裝置無法再解密已儲存的連線。沒有刪除任何內容。你可以在選擇重設前複製診斷資訊。</string>
+    <string name="secure_store_retry">重試</string>
+    <string name="secure_store_copy_diagnostics">複製診斷資訊</string>
+    <string name="secure_store_diagnostics_label">Talaria 安全儲存診斷</string>
+    <string name="secure_store_reset_documentation">重設只會刪除已儲存的 Hermes 連線及其加密憑證。設定、聊天快取和車載主機信任不會被刪除。你需要重新新增連線。</string>
+    <string name="secure_store_reset_action">重設加密連線…</string>
+    <string name="secure_store_reset_title">重設加密連線？</string>
+    <string name="secure_store_reset_explanation">這將從此裝置永久刪除所有已儲存的 Hermes 連線和憑證。不會刪除其他 Talaria 資料。此操作無法復原。</string>
+    <string name="secure_store_reset_confirm">重設連線</string>
+</resources>

@@ -22,6 +22,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.repo.ConnectionRepository
+import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStoreState
 import com.hermesgadget.talaria.core.network.CleartextPolicy
 import com.hermesgadget.talaria.core.network.ConnectionOrigin
 import com.hermesgadget.talaria.core.network.WsAuthHelper
@@ -94,6 +95,15 @@ class ConnectViewModel(
     val ui: StateFlow<ConnectUiState> = _ui.asStateFlow()
     val profiles: StateFlow<List<ConnectionProfile>> = repo.profiles
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val secureStoreState: StateFlow<SecureConnectionStoreState> = repo.secureStoreState
+
+    fun retrySecureStore() {
+        repo.retrySecureStore()
+    }
+
+    fun resetEncryptedConnections() {
+        repo.resetEncryptedConnections()
+    }
 
     fun update(transform: (ConnectUiState) -> ConnectUiState) {
         val before = _ui.value

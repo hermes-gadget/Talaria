@@ -18,6 +18,7 @@
 package com.hermesgadget.talaria.core.data.repo
 
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
+import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStoreState
 import com.hermesgadget.talaria.core.network.CleartextPolicy
 import com.hermesgadget.talaria.core.network.CleartextConsentPolicy
 import com.hermesgadget.talaria.core.network.ConnectionOrigin
@@ -47,6 +48,11 @@ class ConnectionRepository(
 ) {
     val profiles: StateFlow<List<ConnectionProfile>> = store.profiles
     val activeId: StateFlow<String?> = store.activeId
+    val secureStoreState: StateFlow<SecureConnectionStoreState> = store.state
+
+    fun retrySecureStore(): SecureConnectionStoreState = store.retry()
+
+    fun resetEncryptedConnections(): SecureConnectionStoreState = store.confirmedReset()
 
     fun active(): ConnectionProfile? = store.activeProfile()
 
