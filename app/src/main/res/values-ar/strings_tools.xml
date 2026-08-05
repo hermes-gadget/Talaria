@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tools_status_more_actions">مزيد من الإجراءات</string>
+    <string name="tools_status_refresh">تحديث</string>
+    <string name="tools_status_overview">نظرة عامة</string>
+    <string name="tools_status_gateway">البوابة</string>
+    <string name="tools_status_recent_sessions">الجلسات الأخيرة</string>
+    <string name="tools_status_unknown_value">غير معروف</string>
+    <string name="tools_status_computer_use">استخدام الكمبيوتر</string>
+    <string name="tools_status_computer_use_loading">جارٍ تحميل جاهزية استخدام الكمبيوتر…</string>
+    <string name="tools_status_computer_use_readiness">الجاهزية: %1$s</string>
+    <string name="tools_status_computer_use_ready">جاهز</string>
+    <string name="tools_status_computer_use_not_ready">غير جاهز</string>
+    <string name="tools_status_computer_use_unknown">الجاهزية غير معروفة</string>
+    <string name="tools_status_computer_use_platform">المنصة: %1$s</string>
+    <string name="tools_status_computer_use_driver">البرنامج التشغيلي: %1$s</string>
+    <string name="tools_status_computer_use_unsupported">استخدام الكمبيوتر غير مدعوم على هذا المضيف.</string>
+    <string name="tools_status_computer_use_driver_missing">برنامج cua-driver غير مثبت.</string>
+    <string name="tools_status_computer_use_doctor">فحص البرنامج التشغيلي</string>
+    <string name="tools_status_computer_use_grant">منح أذونات macOS</string>
+    <string name="tools_status_computer_use_granting">جارٍ طلب الأذونات…</string>
+    <string name="tools_status_computer_use_grant_started">بدأ طلب الإذن. وافق على مطالبات CuaDriver على المضيف، ثم حدّث.</string>
+    <string name="tools_status_computer_use_grant_unavailable">منح الأذونات متاح فقط على macOS. على Windows وLinux، تأتي الجاهزية من فحوصات صحة البرنامج التشغيلي عبر المنصات.</string>
+    <string name="tools_status_computer_use_grant_failed">تعذر طلب أذونات استخدام الكمبيوتر.</string>
+    <string name="tools_status_computer_use_unavailable">جاهزية استخدام الكمبيوتر غير متاحة.</string>
+    <string name="tools_terminal_backend_title">خلفية الطرفية</string>
+    <string name="tools_terminal_backend_loading">جارٍ تحميل خلفيات الطرفية…</string>
+    <string name="tools_terminal_backend_active">النشط: %1$s</string>
+    <string name="tools_terminal_backend_status">الحالة: %1$s</string>
+    <string name="tools_terminal_backend_selecting">جارٍ التحديد…</string>
+    <string name="tools_terminal_backend_retry">إعادة المحاولة</string>
+    <string name="tools_terminal_backend_error">تعذر تحميل خلفيات الطرفية.</string>
+    <string name="tools_terminal_backend_unknown">غير معروف</string>
+</resources>

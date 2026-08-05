@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_find_in_session">在会话中查找</string>
+        <plurals name="chat_search_matches">
+        <item quantity="other">%1$d 个匹配</item>
+    </plurals>
+    <string name="chat_close_search">关闭会话记录搜索</string>
+    <string name="chat_search_no_results">没有消息与此搜索匹配。</string>
+    <string name="chat_composer_suggestions">建议</string>
+    <string name="chat_known_agent_hermes">Hermes</string>
+    <string name="chat_known_participant_you">你</string>
+    <string name="chat_message_actions">消息操作</string>
+    <string name="chat_message_actions_title">消息操作</string>
+    <string name="chat_message_actions_body">选择要对“%1$s”执行的操作。</string>
+    <string name="chat_edit_message">编辑消息</string>
+    <string name="chat_branch_new_chat">在新聊天中分支</string>
+    <string name="chat_edit_message_title">编辑消息</string>
+    <string name="chat_edit_message_label">消息</string>
+    <string name="chat_message_edit_empty">消息不能为空</string>
+    <string name="chat_action_edit">正在打开编辑后的消息…</string>
+    <string name="chat_branch_stop_turn">分支前请先停止当前回合</string>
+    <string name="chat_branch_connection_error">聊天连接已不再活跃</string>
+    <string name="chat_branch_failed">无法分支此会话</string>
+    <string name="chat_branch_id_missing">Hermes 未返回新分支会话 ID</string>
+    <string name="chat_edited_branch_title">已编辑的分支</string>
+    <string name="chat_edit_branch_success">已在新的聊天中打开编辑后的消息</string>
+    <string name="chat_edit_branch_failed">无法打开编辑后的消息分支</string>
+</resources>

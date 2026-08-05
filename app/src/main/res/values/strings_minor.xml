@@ -1,25 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Strings owned by the minor feature wave. English only; locale files are translated by the i18n pass. -->
     <string name="minor_analytics_overview">Overview</string>
     <string name="minor_analytics_daily_usage">Daily usage</string>
     <string name="minor_analytics_per_model">Per-model analytics</string>
     <string name="minor_analytics_no_models">No model analytics for this window.</string>
-    <string name="minor_analytics_unknown_model">Unknown model</string>
-    <string name="minor_analytics_sessions">%1$d sessions</string>
+        <plurals name="minor_analytics_sessions">
+        <item quantity="one">%1$d session</item>
+        <item quantity="other">%1$d sessions</item>
+    </plurals>
     <string name="minor_analytics_input">Input %1$s</string>
     <string name="minor_analytics_output">Output %1$s</string>
     <string name="minor_analytics_cache">Cache %1$s</string>
     <string name="minor_analytics_cost">Cost %1$s</string>
-    <string name="minor_analytics_calls">%1$d API calls · %2$d tool calls</string>
+    <!-- Two independent counts (API + tool) cannot be expressed as a single plural. -->
+    <string name="minor_analytics_calls" tools:ignore="PluralsCandidate">%1$d API calls · %2$d tool calls</string>
     <string name="minor_analytics_connectivity">Connectivity</string>
-    <string name="minor_analytics_egress_unavailable">Egress status is unavailable.</string>
     <string name="minor_analytics_egress_empty">No egress status reported.</string>
 
     <string name="minor_voice_elevenlabs">ElevenLabs voices</string>
     <string name="minor_voice_elevenlabs_description">Available voices from the configured ElevenLabs account.</string>
     <string name="minor_voice_refresh_voices">Refresh voices</string>
-    <string name="minor_voice_loading_voices">Loading voices…</string>
     <string name="minor_voice_unavailable">ElevenLabs is not configured for this Hermes profile.</string>
     <string name="minor_voice_no_voices">No voices returned.</string>
     <string name="minor_voice_id">Voice ID: %1$s</string>

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="system_check_for_updates">التحقق من التحديثات</string>
+    <string name="system_apply_update">تطبيق التحديث</string>
+    <string name="system_drain_gateway">تصريف البوابة</string>
+    <string name="system_apply_update_title">تطبيق تحديث Hermes؟</string>
+    <string name="system_apply_update_message">اطلب من Hermes تحديث نفسه. قد يؤدي هذا إلى إعادة تشغيل البوابة الحالية أو استبدالها ولا يمكن التراجع عنه.</string>
+    <string name="system_apply_update_confirm">تطبيق التحديث</string>
+    <string name="system_drain_gateway_title">تصريف البوابة؟</string>
+    <string name="system_drain_gateway_message">إيقاف قبول عمل البوابة الجديد والسماح للعمل النشط بالانتهاء قبل إعادة التشغيل؟</string>
+    <string name="system_drain_gateway_confirm">تصريف</string>
+    <string name="system_update_apply_result">نتيجة التطبيق</string>
+    <string name="system_gateway_drain_result">نتيجة التصريف</string>
+    <string name="system_ops_depth_title">عمق العمليات</string>
+    <string name="system_ops_depth_description">افحص تخزين نقاط التحقق وشغّل تشخيصات صيانة Hermes المتقدمة.</string>
+    <string name="system_ops_refresh_checkpoints">تحديث نقاط التحقق</string>
+    <string name="system_ops_prune_checkpoints">تنظيف نقاط التحقق</string>
+    <string name="system_ops_checkpoints_loading">جارٍ تحميل نقاط التحقق…</string>
+    <string name="system_ops_config_migrate">ترحيل الإعداد</string>
+    <string name="system_ops_dump">تشغيل تفريغ الدعم</string>
+    <string name="system_ops_prompt_size">قياس حجم المطالبة</string>
+    <string name="system_ops_last_result">آخر عملية</string>
+    <string name="system_ops_prune_title">تنظيف نقاط التحقق؟</string>
+    <string name="system_ops_prune_message">حذف بيانات نقاط التحقق القديمة من مضيف Hermes؟ لا يمكن التراجع عن هذا.</string>
+    <string name="system_ops_prune_confirm">تنظيف</string>
+    <string name="system_ops_config_migrate_title">ترحيل إعداد Hermes؟</string>
+    <string name="system_ops_config_migrate_message">تشغيل ترحيل إعدادات المضيف. قد يؤدي هذا إلى تغيير ملفات إعداد Hermes.</string>
+    <string name="system_ops_config_migrate_confirm">ترحيل</string>
+    <string name="system_ops_dump_title">تشغيل تفريغ الدعم؟</string>
+    <string name="system_ops_dump_message">تشغيل تفريغ تشخيصي على مضيف Hermes. قد يستغرق ذلك وقتًا ويكتب بيانات تشخيصية.</string>
+    <string name="system_ops_dump_confirm">تشغيل التفريغ</string>
+    <string name="system_ops_prompt_size_title">قياس حجم المطالبة؟</string>
+    <string name="system_ops_prompt_size_message">بدء عملية تشخيص حجم مطالبة Hermes على المضيف؟</string>
+    <string name="system_ops_prompt_size_confirm">قياس</string>
+</resources>

@@ -50,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -260,7 +261,7 @@ private fun ProviderCard(
                         provider.name.ifBlank { provider.slug },
                         style = MaterialTheme.typography.titleSmall,
                     )
-                    val modelCount = stringResource(R.string.models_provider_count, provider.total_models)
+                    val modelCount = pluralStringResource(R.plurals.models_provider_count, provider.total_models, provider.total_models)
                     val notAuthenticated = stringResource(R.string.models_not_authenticated)
                     val details = buildList {
                         add(modelCount)

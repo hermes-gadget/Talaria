@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import android.annotation.SuppressLint
 
 /**
  * Multi-profile connection registry backed by EncryptedSharedPreferences + Android Keystore.
@@ -90,6 +91,7 @@ class SecureConnectionStore(context: Context) {
         ConnectionSnapshot.from(profile, readSecrets(profile.id))
     }
 
+    @SuppressLint("UseKtx") // KTX edit() cannot return the commit() result this check requires
     fun upsert(profile: ConnectionProfile, secrets: ConnectionSecrets? = null) = synchronized(mutationLock) {
         val persistedProfile = CleartextConsentMigration.normalizeCurrent(profile)
         val list = _profiles.value.toMutableList()
@@ -108,6 +110,7 @@ class SecureConnectionStore(context: Context) {
         if (_activeId.value != nextActiveId) _activeId.value = nextActiveId
     }
 
+    @SuppressLint("UseKtx") // KTX edit() cannot return the commit() result this check requires
     fun setActive(id: String) = synchronized(mutationLock) {
         check(_profiles.value.any { it.id == id }) { "Unknown Hermes connection" }
         check(prefs.edit().putString(KEY_ACTIVE, id).commit()) {
@@ -214,6 +217,7 @@ class SecureConnectionStore(context: Context) {
         upsert(active.copy(managementProfile = normalizeManagementProfile(profileName)))
     }
 
+    @SuppressLint("UseKtx") // KTX edit() cannot return the commit() result this check requires
     fun delete(id: String) = synchronized(mutationLock) {
         val nextProfiles = _profiles.value.filterNot { it.id == id }
         val nextActiveId = if (_activeId.value == id) nextProfiles.firstOrNull()?.id else _activeId.value
@@ -226,6 +230,7 @@ class SecureConnectionStore(context: Context) {
         _activeId.value = nextActiveId
     }
 
+    @SuppressLint("UseKtx") // KTX edit() cannot return the commit() result this check requires
     private fun loadProfiles(): List<ConnectionProfile> {
         val raw = prefs.getString(KEY_PROFILES, null) ?: return emptyList()
         val profiles = runCatching { json.decodeFromString<List<ConnectionProfile>>(raw) }

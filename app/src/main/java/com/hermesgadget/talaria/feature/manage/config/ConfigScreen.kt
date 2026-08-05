@@ -72,6 +72,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import androidx.compose.runtime.mutableLongStateOf
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -91,7 +92,7 @@ fun ConfigScreen() {
     var importText by remember { mutableStateOf<String?>(null) }
     var importing by remember { mutableStateOf(false) }
     var importJob by remember { mutableStateOf<Job?>(null) }
-    var importGeneration by remember { mutableStateOf(0L) }
+    var importGeneration by remember { mutableLongStateOf(0L) }
     var fieldDrafts by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var fieldErrors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
 

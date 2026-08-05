@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="messaging_onboarding_title">配对消息账户</string>
+    <string name="messaging_onboarding_subtitle">开始引导式设置、扫描代码或打开链接，然后应用账户。</string>
+    <string name="messaging_channels_title">已配置的频道</string>
+    <string name="messaging_pair_telegram">配对 Telegram</string>
+    <string name="messaging_pair_whatsapp">配对 WhatsApp</string>
+    <string name="messaging_telegram_instructions">创建 Telegram 机器人，在任何设备上打开设置链接，机器人就绪后返回此处。</string>
+    <string name="messaging_whatsapp_instructions">启动临时 WhatsApp 配对会话，在 WhatsApp 中扫描其二维码，然后应用已连接的账户。</string>
+    <string name="messaging_telegram_bot_name">机器人名称（可选）</string>
+    <string name="messaging_telegram_bot_name_hint">用作 Telegram 设置中的建议名称。</string>
+    <string name="messaging_telegram_waiting">正在等待 Telegram 设置…</string>
+    <string name="messaging_telegram_allowed_users">允许的 Telegram 用户 ID</string>
+    <string name="messaging_telegram_allowed_users_hint">输入以逗号分隔的数字 Telegram ID。</string>
+    <string name="messaging_whatsapp_waiting">正在等待 WhatsApp 二维码扫描…</string>
+    <string name="messaging_whatsapp_mode">WhatsApp 模式</string>
+    <string name="messaging_whatsapp_mode_bot">机器人</string>
+    <string name="messaging_whatsapp_mode_self_chat">自聊</string>
+    <string name="messaging_whatsapp_allowed_users">允许的 WhatsApp 用户</string>
+    <string name="messaging_whatsapp_allowed_users_hint">可选的电话号码，以逗号分隔。</string>
+    <string name="messaging_start_pairing">开始配对</string>
+    <string name="messaging_starting">正在开始配对…</string>
+    <string name="messaging_ready">可以应用</string>
+    <string name="messaging_applying">正在应用设置…</string>
+    <string name="messaging_applied">已应用</string>
+    <string name="messaging_cancelling">正在取消…</string>
+    <string name="messaging_cancel">取消设置</string>
+    <string name="messaging_apply_enable">应用并启用</string>
+    <string name="messaging_status">状态：%1$s</string>
+    <string name="messaging_pairing_id">配对 ID：%1$s</string>
+    <string name="messaging_expires_at">过期时间：%1$s</string>
+    <string name="messaging_deep_link">Telegram 深层链接</string>
+    <string name="messaging_qr_payload">QR 负载</string>
+    <string name="messaging_qr_payload_hint">使用相应的消息应用扫描此负载，或选择并复制它。</string>
+    <string name="messaging_open_link">打开深层链接</string>
+    <string name="messaging_suggested_username">建议的机器人：%1$s</string>
+    <string name="messaging_bot_username">机器人用户名：%1$s</string>
+    <string name="messaging_owner_user_id">Telegram 所有者 ID：%1$s</string>
+    <string name="messaging_whatsapp_account_name">WhatsApp 账户：%1$s</string>
+    <string name="messaging_whatsapp_account_phone">WhatsApp 电话：%1$s</string>
+    <string name="messaging_telegram_applied">Telegram 已启用。开始另一次设置以更改账户。</string>
+    <string name="messaging_whatsapp_applied">WhatsApp 已启用。开始另一次设置以更改账户。</string>
+    <string name="messaging_onboarding_failed">设置失败</string>
+    <string name="messaging_unexpected_status">意外的设置状态：%1$s</string>
+    <string name="messaging_request_failed">设置请求未完成。请重试。</string>
+</resources>

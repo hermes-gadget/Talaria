@@ -31,15 +31,10 @@
     <string name="shortcut_manage_long">Manage Hermes</string>
 
     <!-- Shared navigation and actions -->
-    <string name="nav_chat">Chat</string>
-    <string name="nav_activity">Activity</string>
-    <string name="nav_manage">Manage</string>
-    <string name="nav_you">You</string>
     <string name="common_retry">Retry</string>
     <string name="common_cancel">Cancel</string>
     <string name="common_save">Save</string>
     <string name="common_send">Send</string>
-    <string name="common_approve">Approve</string>
     <string name="common_deny">Deny</string>
     <string name="common_refresh">Refresh</string>
     <string name="common_new_agent">New agent</string>
@@ -67,7 +62,10 @@
     <string name="chat_status_live">Live · %1$s</string>
     <string name="chat_status_detail"> · %1$s</string>
     <string name="chat_status_yolo"> · ⚡yolo</string>
-    <string name="chat_status_tokens"> · %1$d tok</string>
+        <plurals name="chat_status_tokens">
+        <item quantity="one">· %1$d tok</item>
+        <item quantity="other">· %1$d tok</item>
+    </plurals>
     <string name="chat_status_cost"> · $%1$.4f</string>
     <string name="chat_status_disconnected">Disconnected · tap to reconnect</string>
     <string name="chat_status_recovering">Recovering · attempt %1$d/%2$d · retrying in %3$d s</string>
@@ -103,7 +101,6 @@
     <string name="chat_reading_view">Reading view</string>
     <string name="chat_session_actions">Session actions</string>
     <string name="chat_agent_activity">Agent activity</string>
-    <string name="chat_change_model">Change model</string>
     <string name="chat_steer_settings">Steer and trigger settings</string>
     <string name="chat_pip">Picture-in-picture</string>
     <string name="chat_steer_trigger">Steer / trigger</string>
@@ -117,7 +114,10 @@
     <string name="chat_attachment_staged">%1$s · staged</string>
     <string name="chat_attachment_retry">%1$s · retry</string>
     <string name="chat_remove_attachment">Remove %1$s</string>
-    <string name="chat_queued">%1$d queued</string>
+        <plurals name="chat_queued">
+        <item quantity="one">%1$d queued</item>
+        <item quantity="other">%1$d queued</item>
+    </plurals>
     <string name="chat_message_placeholder">Message Hermes…</string>
     <string name="chat_attach_image">Attach image</string>
     <string name="chat_dictate">Dictate</string>
@@ -126,7 +126,6 @@
     <string name="chat_action_rename">Saving session title…</string>
     <string name="chat_empty_reading">No messages yet — say hello to Hermes.</string>
     <string name="chat_empty_terminal">Waiting for terminal output…</string>
-    <string name="chat_rewind_message">Rewind to this message</string>
     <string name="chat_close_agent">Close %1$s</string>
     <string name="chat_new_agent">New agent</string>
     <string name="chat_working">Working…</string>
@@ -257,13 +256,4 @@ See PRIVACY.md in the repository for the full statement.</string>
     <string name="activity_filter_chat">Chat</string>
     <string name="activity_empty">No activity yet. Background sync will populate this feed.</string>
     <string name="activity_no_filter_matches">No events for this filter.</string>
-    <string name="connection_title">Connections</string>
-    <string name="connection_server_url">Server URL</string>
-    <string name="connection_token">Token</string>
-    <string name="connection_add_profile">Add connection</string>
-    <string name="connection_test">Test connection</string>
-    <string name="connection_connected">Connected</string>
-    <string name="connection_disconnected">Disconnected</string>
-    <string name="connection_no_profiles">No connections yet</string>
-    <string name="connection_save">Save connection</string>
 </resources>

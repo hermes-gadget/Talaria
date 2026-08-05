@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="system_check_for_updates">檢查更新</string>
+    <string name="system_apply_update">套用更新</string>
+    <string name="system_drain_gateway">排空閘道</string>
+    <string name="system_apply_update_title">套用 Hermes 更新？</string>
+    <string name="system_apply_update_message">請 Hermes 更新自身。這可能會重新啟動或取代正在執行的閘道，且無法復原。</string>
+    <string name="system_apply_update_confirm">套用更新</string>
+    <string name="system_drain_gateway_title">排空閘道？</string>
+    <string name="system_drain_gateway_message">停止接受新的閘道工作，讓啟用中的工作完成後再重新啟動？</string>
+    <string name="system_drain_gateway_confirm">排空</string>
+    <string name="system_update_apply_result">套用結果</string>
+    <string name="system_gateway_drain_result">排空結果</string>
+    <string name="system_ops_depth_title">維運深度</string>
+    <string name="system_ops_depth_description">檢查檢查點儲存並執行進階 Hermes 維護診斷。</string>
+    <string name="system_ops_refresh_checkpoints">重新整理檢查點</string>
+    <string name="system_ops_prune_checkpoints">清理檢查點</string>
+    <string name="system_ops_checkpoints_loading">正在載入檢查點…</string>
+    <string name="system_ops_config_migrate">遷移設定</string>
+    <string name="system_ops_dump">執行支援傾印</string>
+    <string name="system_ops_prompt_size">測量提示詞大小</string>
+    <string name="system_ops_last_result">上次操作</string>
+    <string name="system_ops_prune_title">清理檢查點？</string>
+    <string name="system_ops_prune_message">從 Hermes 主機刪除舊的檢查點資料？此操作無法復原。</string>
+    <string name="system_ops_prune_confirm">清理</string>
+    <string name="system_ops_config_migrate_title">遷移 Hermes 設定？</string>
+    <string name="system_ops_config_migrate_message">執行主機設定遷移。這可能會變更 Hermes 設定檔。</string>
+    <string name="system_ops_config_migrate_confirm">遷移</string>
+    <string name="system_ops_dump_title">執行支援傾印？</string>
+    <string name="system_ops_dump_message">在 Hermes 主機上執行診斷支援傾印。可能需要一些時間並寫入診斷資料。</string>
+    <string name="system_ops_dump_confirm">執行傾印</string>
+    <string name="system_ops_prompt_size_title">測量提示詞大小？</string>
+    <string name="system_ops_prompt_size_message">在主機上啟動 Hermes 提示詞大小診斷操作？</string>
+    <string name="system_ops_prompt_size_confirm">測量</string>
+</resources>

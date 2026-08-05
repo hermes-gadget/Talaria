@@ -112,9 +112,11 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -161,8 +163,10 @@ fun ChatScreen(
     var renameTarget by remember { mutableStateOf<ChatTab?>(null) }
     var monitorOpen by remember { mutableStateOf(false) }
     var sessionRailTab by remember { mutableStateOf(SessionTab.Chats) }
-    val config = LocalConfiguration.current
-    val isExpanded = config.screenWidthDp >= 600
+    val windowInfo = LocalWindowInfo.current
+    val isExpanded = with(LocalDensity.current) {
+        windowInfo.containerSize.width.toDp() >= 600.dp
+    }
 
     val context = LocalContext.current
     val microphonePermissionDenied = stringResource(R.string.chat_microphone_permission_denied)
@@ -259,7 +263,7 @@ fun ChatScreen(
                 }
                 if (active.yolo) liveStatus += stringResource(R.string.chat_status_yolo)
                 if (active.totalTokens != null) {
-                    liveStatus += stringResource(R.string.chat_status_tokens, active.totalTokens)
+                    liveStatus += pluralStringResource(R.plurals.chat_status_tokens, active.totalTokens.toInt(), active.totalTokens)
                 }
                 if (active.costUsd != null) {
                     liveStatus += stringResource(R.string.chat_status_cost, active.costUsd)
@@ -682,7 +686,7 @@ fun ChatScreen(
         }
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize()) {
         val openSessionIds = ui.tabs.mapNotNull { it.resumeSessionId ?: it.liveSessionId }.toSet()
         Row(Modifier.fillMaxSize()) {
             if (isExpanded) {
@@ -1127,7 +1131,7 @@ fun ChatScreen(
                                 modifier = Modifier.padding(end = 6.dp),
                             ) {
                                 Text(
-                                    stringResource(R.string.chat_queued, active.queuedPrompts.size),
+                                    pluralStringResource(R.plurals.chat_queued, active.queuedPrompts.size, active.queuedPrompts.size),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onTertiaryContainer,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
@@ -1245,8 +1249,9 @@ fun ChatScreen(
                         modifier = Modifier.weight(1f),
                     )
                     Text(
-                        stringResource(
-                            R.string.chat_search_matches,
+                        pluralStringResource(
+                            R.plurals.chat_search_matches,
+                            transcriptMatchCount(displayLines, ui.transcriptQuery),
                             transcriptMatchCount(displayLines, ui.transcriptQuery),
                         ),
                         style = MaterialTheme.typography.labelMedium,
@@ -1432,7 +1437,7 @@ fun ChatScreen(
         }
     }
         } // End Row
-    } // End BoxWithConstraints
+    } // End Box
 }
 
 /**

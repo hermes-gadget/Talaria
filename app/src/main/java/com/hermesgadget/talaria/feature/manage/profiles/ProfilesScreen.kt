@@ -62,6 +62,10 @@ import kotlinx.serialization.json.put
 
 @Composable
 fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
+    // Hoisted resource templates (callbacks are non-composable).
+    val profilesModelSavedTpl = stringResource(R.string.minor_profiles_model_saved)
+    val profilesTerminalOpenedTpl = stringResource(R.string.minor_profiles_terminal_opened)
+
     val container = TalariaApp.instance.container
     val repo = container.hermesRepository
     val connectionStore = container.connectionStore
@@ -283,7 +287,7 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
                                 )
                             }
                                 .onSuccess {
-                                    message = context.getString(R.string.minor_profiles_model_saved, target.name)
+                                    message = profilesModelSavedTpl.format(target.name)
                                     reload()
                                 }
                                 .onFailure { error = it.message }
@@ -462,10 +466,7 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
                                                         container.clientFactory.api().openProfileTerminal(p.name)
                                                     }
                                                         .onSuccess {
-                                                            message = context.getString(
-                                                                R.string.minor_profiles_terminal_opened,
-                                                                p.name,
-                                                            )
+                                                            message = profilesTerminalOpenedTpl.format(p.name)
                                                         }
                                                         .onFailure { error = it.message }
                                                 }

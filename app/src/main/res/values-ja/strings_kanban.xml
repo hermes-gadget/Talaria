@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="kanban_title">カンバン</string>
+    <string name="kanban_subtitle">ミッションボードとタスク</string>
+    <string name="kanban_board_section">ボード</string>
+    <string name="kanban_stats_section">ボード概要</string>
+    <string name="kanban_new_board">新しいボード</string>
+    <string name="kanban_board_slug">ボードスラッグ</string>
+    <string name="kanban_board_name">ボード名</string>
+    <string name="kanban_create_board">ボードを作成</string>
+    <string name="kanban_no_boards">ボードがありません</string>
+    <string name="kanban_no_stats">ボードの統計はありません。</string>
+        <plurals name="kanban_oldest_ready">
+        <item quantity="other">最古の準備完了タスク: %1$d 秒</item>
+    </plurals>
+    <string name="kanban_assignees">担当者</string>
+    <string name="kanban_active_workers">アクティブワーカー</string>
+    <string name="kanban_no_tasks">このボードにはタスクがありません。</string>
+    <string name="kanban_create_task">タスクを作成</string>
+    <string name="kanban_add_task">タスクを追加</string>
+    <string name="kanban_task_title">タイトル</string>
+    <string name="kanban_task_body">説明</string>
+    <string name="kanban_task_assignee">担当者 (任意)</string>
+    <string name="kanban_description">説明</string>
+    <string name="kanban_summary">最新のワーカーサマリー</string>
+    <string name="kanban_priority">優先度 %1$d</string>
+        <plurals name="kanban_comments_count">
+        <item quantity="other">コメント %1$d 件</item>
+    </plurals>
+    <string name="kanban_status_triage">トリアージ</string>
+    <string name="kanban_status_todo">未着手</string>
+    <string name="kanban_status_scheduled">予定済み</string>
+    <string name="kanban_status_ready">準備完了</string>
+    <string name="kanban_status_running">実行中</string>
+    <string name="kanban_status_blocked">ブロック中</string>
+    <string name="kanban_status_review">レビュー</string>
+    <string name="kanban_status_done">完了</string>
+    <string name="kanban_unknown">不明</string>
+    <string name="kanban_comments_section">コメント</string>
+    <string name="kanban_no_comments">まだコメントはありません。</string>
+    <string name="kanban_comment_hint">コメントを追加</string>
+    <string name="kanban_send_comment">コメント</string>
+    <string name="kanban_log_section">ワーカーログ</string>
+    <string name="kanban_no_log">このタスクのワーカーログはありません。</string>
+    <string name="kanban_log_truncated">表示されているログは切り詰められています。</string>
+    <string name="kanban_runs_section">実行</string>
+    <string name="kanban_no_runs">記録された実行はありません。</string>
+    <string name="kanban_inspect_run">調査</string>
+    <string name="kanban_terminate_run">終了</string>
+    <string name="kanban_run_detail">実行詳細</string>
+    <string name="kanban_delete_task">タスクを削除</string>
+    <string name="kanban_delete_task_title">タスクを削除しますか？</string>
+    <string name="kanban_delete_task_message">これによりタスクとその履歴が完全に削除されます。</string>
+    <string name="kanban_delete_task_confirm">削除</string>
+    <string name="kanban_error_generic">カンバンボードを読み込めませんでした。</string>
+</resources>

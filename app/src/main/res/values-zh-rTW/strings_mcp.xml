@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mcp_screen_title">MCP</string>
+    <string name="mcp_screen_subtitle">模型上下文協定伺服器</string>
+    <string name="mcp_refresh">重新整理</string>
+    <string name="mcp_tab_servers">伺服器</string>
+    <string name="mcp_tab_catalog">目錄</string>
+    <string name="mcp_add_server_section">新增 MCP 伺服器</string>
+    <string name="mcp_edit_server_section">編輯 MCP 伺服器：%1$s</string>
+    <string name="mcp_server_name_label">伺服器名稱</string>
+    <string name="mcp_command_label">命令 (stdio)</string>
+    <string name="mcp_url_label">URL (HTTP/SSE)</string>
+    <string name="mcp_transport_supporting">請僅提供命令或 URL 其中一項</string>
+    <string name="mcp_args_label">引數（每行一個）</string>
+    <string name="mcp_env_label">環境變數（KEY=value，每行一個）</string>
+    <string name="mcp_auth_none">無</string>
+    <string name="mcp_auth_header">標頭</string>
+    <string name="mcp_auth_oauth">OAuth</string>
+    <string name="mcp_bearer_token_label">Bearer 權杖</string>
+    <string name="mcp_bearer_token_keep">留空以保留現有權杖。</string>
+    <string name="mcp_add_action">新增伺服器</string>
+    <string name="mcp_save_changes">儲存變更</string>
+    <string name="mcp_cancel_edit">取消編輯</string>
+    <string name="mcp_duplicate_name">名為「%1$s」的伺服器已存在。</string>
+    <string name="mcp_add_success">已新增 %1$s</string>
+    <string name="mcp_update_success">已更新 %1$s</string>
+    <string name="mcp_add_failed">新增失敗</string>
+    <string name="mcp_update_failed">更新失敗</string>
+    <string name="mcp_configured_servers">已設定的伺服器</string>
+    <string name="mcp_no_servers">尚未設定 MCP 伺服器。</string>
+    <string name="mcp_not_available">—</string>
+    <string name="mcp_transport_summary">%1$s · %2$s</string>
+    <string name="mcp_args_summary">引數：%1$s</string>
+    <string name="mcp_env_summary">環境：%1$s</string>
+    <string name="mcp_auth_summary">驗證：%1$s</string>
+    <string name="mcp_tools_summary">工具：%1$s</string>
+    <string name="mcp_enabled">已啟用</string>
+    <string name="mcp_disabled">已停用</string>
+    <string name="mcp_server_actions">伺服器操作</string>
+    <string name="mcp_edit_action">編輯</string>
+    <string name="mcp_test_action">測試</string>
+    <string name="mcp_authenticate_action">驗證</string>
+    <string name="mcp_waiting_oauth">正在等待 OAuth…</string>
+    <string name="mcp_delete_action">刪除</string>
+    <string name="mcp_delete_title">刪除 MCP 伺服器？</string>
+    <string name="mcp_delete_message">從目前 Hermes 設定檔中移除「%1$s」？</string>
+    <string name="mcp_delete_confirm">刪除</string>
+    <string name="mcp_cancel">取消</string>
+    <string name="mcp_test_result">%1$s：%2$s</string>
+        <plurals name="mcp_oauth_authenticated">
+        <item quantity="other">%1$s 已驗證 · %2$d 個工具</item>
+    </plurals>
+    <string name="mcp_oauth_start_failed">OAuth 啟動失敗</string>
+    <string name="mcp_oauth_missing_url">OAuth 伺服器未提供授權 URL</string>
+    <string name="mcp_oauth_authorization_failed">OAuth 授權失敗</string>
+    <string name="mcp_install_title">安裝 %1$s？</string>
+    <string name="mcp_bootstrap">引導：%1$s</string>
+    <string name="mcp_installing">正在安裝…</string>
+    <string name="mcp_install_failed">安裝失敗</string>
+    <string name="mcp_install_success">已安裝並啟用 %1$s</string>
+    <string name="mcp_catalog_enabled">已啟用</string>
+    <string name="mcp_catalog_installed">已安裝</string>
+    <string name="mcp_catalog_available">可用</string>
+    <string name="mcp_catalog_requires">需要：%1$s</string>
+    <string name="mcp_catalog_review_install">檢視並安裝</string>
+</resources>

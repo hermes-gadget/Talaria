@@ -78,6 +78,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.util.Locale
+import androidx.core.net.toUri
 
 private val MCP_AUTH_MODES = setOf("none", "header", "oauth")
 private val MCP_EDITABLE_CONFIG_FIELDS = setOf(
@@ -96,6 +97,13 @@ fun McpScreen() {
     val repo = container.hermesRepository
     val api = container.clientFactory.api()
     val context = LocalContext.current
+    // Resource templates hoisted to composition (LocalContext.getString in
+    // non-composable callbacks would trip LocalContextGetResourceValueCall).
+    val mcpAddSuccessTpl = stringResource(R.string.mcp_add_success)
+    val mcpUpdateSuccessTpl = stringResource(R.string.mcp_update_success)
+    val mcpTestResultTpl = stringResource(R.string.mcp_test_result)
+    val mcpInstallSuccessTpl = stringResource(R.string.mcp_install_success)
+    val mcpEditServerSectionTpl = stringResource(R.string.mcp_edit_server_section)
     val uriHandler = LocalUriHandler.current
     val scope = rememberCoroutineScope()
 
@@ -196,8 +204,9 @@ fun McpScreen() {
             check(completed.status == "approved") {
                 completed.error ?: oauthAuthorizationFallback
             }
-            testResult = context.getString(
-                R.string.mcp_oauth_authenticated,
+            testResult = TalariaApp.instance.resources.getQuantityString(
+                R.plurals.mcp_oauth_authenticated,
+                completed.tools.size,
                 serverName,
                 completed.tools.size,
             )
@@ -205,11 +214,7 @@ fun McpScreen() {
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
-            testResult = context.getString(
-                R.string.mcp_test_result,
-                serverName,
-                failure.message ?: oauthAuthorizationFallback,
-            )
+            testResult = mcpTestResultTpl.format(serverName, failure.message ?: oauthAuthorizationFallback)
         } finally {
             authenticating = null
         }
@@ -268,7 +273,7 @@ fun McpScreen() {
                         auth = submittedAuth,
                         bearerToken = submittedBearerToken,
                     ).getOrThrow()
-                    testResult = context.getString(R.string.mcp_add_success, submittedName)
+                    testResult = mcpAddSuccessTpl.format(submittedName)
                 } else {
                     val rawConfig = api.getConfig()
                     val rawServers = (rawConfig["mcp_servers"] as? JsonObject)
@@ -317,7 +322,7 @@ fun McpScreen() {
                         },
                     )
                     repo.clearCache()
-                    testResult = context.getString(R.string.mcp_update_success, submittedName)
+                    testResult = mcpUpdateSuccessTpl.format(submittedName)
                 }
                 clearForm()
                 reload()
@@ -412,11 +417,7 @@ fun McpScreen() {
                         scope.launch {
                             repo.installMcpCatalogEntry(target.name, catalogEnv).fold(
                                 onSuccess = { status ->
-                                    testResult = status?.lines?.lastOrNull()
-                                        ?: context.getString(
-                                            R.string.mcp_install_success,
-                                            target.name,
-                                        )
+                                    testResult = status?.lines?.lastOrNull() ?: mcpInstallSuccessTpl.format(target.name)
                                     installTarget = null
                                     catalogEnv = emptyMap()
                                     catalogBusy = null
@@ -424,11 +425,7 @@ fun McpScreen() {
                                     reloadCatalog()
                                 },
                                 onFailure = { failure ->
-                                    testResult = context.getString(
-                                        R.string.mcp_test_result,
-                                        target.name,
-                                        failure.message ?: installFallback,
-                                    )
+                                    testResult = mcpTestResultTpl.format(target.name, failure.message ?: installFallback)
                                     catalogBusy = null
                                 },
                             )
@@ -491,9 +488,7 @@ fun McpScreen() {
                         )
                     }
                     if (tab == 0) {
-                        val formTitle = editTarget?.let {
-                            context.getString(R.string.mcp_edit_server_section, it.name)
-                        } ?: stringResource(R.string.mcp_add_server_section)
+                        val formTitle = editTarget?.let { mcpEditServerSectionTpl.format(it.name) } ?: stringResource(R.string.mcp_add_server_section)
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -665,18 +660,10 @@ fun McpScreen() {
                                                         scope.launch {
                                                             repo.testMcp(target.name)
                                                                 .onSuccess {
-                                                                    testResult = context.getString(
-                                                                        R.string.mcp_test_result,
-                                                                        target.name,
-                                                                        it.toString(),
-                                                                    )
+                                                                    testResult = mcpTestResultTpl.format(target.name, it.toString())
                                                                 }
                                                                 .onFailure {
-                                                                    testResult = context.getString(
-                                                                        R.string.mcp_test_result,
-                                                                        target.name,
-                                                                        it.message.orEmpty(),
-                                                                    )
+                                                                    testResult = mcpTestResultTpl.format(target.name, it.message.orEmpty())
                                                                 }
                                                         }
                                                     },
@@ -813,7 +800,7 @@ private fun parseMcpArgs(raw: String): List<String> =
  * endpoints used by local Hermes instances.
  */
 private fun validateMcpOAuthAuthorizationUrl(raw: String): android.net.Uri {
-    val uri = android.net.Uri.parse(raw)
+    val uri = raw.toUri()
     val scheme = uri.scheme?.lowercase(Locale.ROOT)
     val host = uri.host?.lowercase(Locale.ROOT)
     val hostForError = host ?: "<missing-host>"

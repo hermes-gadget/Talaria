@@ -116,10 +116,14 @@ android {
         unitTests.isIncludeAndroidResources = true
     }
     lint {
-        // Full lint (lintDebug/lintRelease) is fail-closed for NEW issues only.
-        // Pre-existing findings (mostly MissingTranslation for the four partial
-        // locale folders) are pinned in the baseline so the gate can be strict
-        // now and the debt cleared incrementally (see ROADMAP).
+        // Fail-closed gate. The baseline pins ONLY the 21 toolchain-version
+        // warnings (GradleDependency/AGP): core-ktx 1.19, lifecycle 2.11 and
+        // AGP 9.x require AGP 9.1 + compileSdk 37, so the project pins the
+        // last AGP-8.9-compatible versions (documented in libs.versions.toml).
+        // Everything else — including the 2026-08-04 debt (574
+        // MissingTranslation, 22 UnusedResources, 13 UseKtx, 12
+        // LocalContextGetResourceValueCall, 9 PluralsCandidate, misc) — was
+        // fixed for real; any new finding fails the build.
         baseline = file("lint-baseline.xml")
     }
 }

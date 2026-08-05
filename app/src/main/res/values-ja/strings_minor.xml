@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="minor_analytics_overview">概要</string>
+    <string name="minor_analytics_daily_usage">日次使用量</string>
+    <string name="minor_analytics_per_model">モデル別分析</string>
+    <string name="minor_analytics_no_models">この期間のモデル分析はありません。</string>
+        <plurals name="minor_analytics_sessions">
+        <item quantity="other">セッション %1$d 件</item>
+    </plurals>
+    <string name="minor_analytics_input">入力 %1$s</string>
+    <string name="minor_analytics_output">出力 %1$s</string>
+    <string name="minor_analytics_cache">キャッシュ %1$s</string>
+    <string name="minor_analytics_cost">コスト %1$s</string>
+    <string name="minor_analytics_calls">API 呼び出し %1$d 件 · ツール呼び出し %2$d 件</string>
+    <string name="minor_analytics_connectivity">接続性</string>
+    <string name="minor_analytics_egress_empty">エグレスステータスは報告されていません。</string>
+    <string name="minor_voice_elevenlabs">ElevenLabs の音声</string>
+    <string name="minor_voice_elevenlabs_description">設定済みの ElevenLabs アカウントで利用可能な音声。</string>
+    <string name="minor_voice_refresh_voices">音声を更新</string>
+    <string name="minor_voice_unavailable">この Hermes プロファイルには ElevenLabs が設定されていません。</string>
+    <string name="minor_voice_no_voices">音声は返されませんでした。</string>
+    <string name="minor_voice_id">音声 ID: %1$s</string>
+    <string name="minor_cron_create_section">ジョブを作成</string>
+    <string name="minor_cron_jobs_section">スケジュール済みジョブ</string>
+    <string name="minor_cron_blueprints_section">ブループリント</string>
+    <string name="minor_cron_fire_now">今すぐ実行</string>
+    <string name="minor_profiles_create_section">プロファイルを作成</string>
+    <string name="minor_profiles_list_section">プロファイル</string>
+    <string name="minor_profiles_sessions_section">プロファイルのセッション</string>
+    <string name="minor_profiles_refresh_sessions">セッションを更新</string>
+    <string name="minor_profiles_no_sessions">プロファイルのセッションが見つかりません。</string>
+    <string name="minor_profiles_session_active">アクティブ</string>
+    <string name="minor_profiles_set_model">モデルを設定</string>
+    <string name="minor_profiles_model_title">%1$s のモデル</string>
+    <string name="minor_profiles_provider">プロバイダー</string>
+    <string name="minor_profiles_model">モデル</string>
+    <string name="minor_profiles_save_model">モデルを保存</string>
+    <string name="minor_profiles_model_saved">%1$s のモデルを保存しました</string>
+    <string name="minor_profiles_open_terminal">ターミナルを開く</string>
+    <string name="minor_profiles_terminal_opened">%1$s のターミナルを要求しました</string>
+    <string name="minor_profiles_setup_command">セットアップコマンド</string>
+    <string name="minor_profiles_setup_command_title">セットアップコマンド · %1$s</string>
+    <string name="minor_profiles_setup_command_missing">セットアップコマンドは返されませんでした。</string>
+    <string name="minor_profiles_copy_command">コマンドをコピー</string>
+</resources>

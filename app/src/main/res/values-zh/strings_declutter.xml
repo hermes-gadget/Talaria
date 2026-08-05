@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="declutter_config_editor">编辑器</string>
+    <string name="declutter_config_import_export">导入和导出</string>
+    <string name="declutter_logs_filters">过滤器</string>
+</resources>

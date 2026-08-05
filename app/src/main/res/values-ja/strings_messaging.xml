@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="messaging_onboarding_title">メッセージングアカウントをペアリング</string>
+    <string name="messaging_onboarding_subtitle">ガイド付きセットアップを開始するか、コードをスキャンするかリンクを開いて、アカウントを適用します。</string>
+    <string name="messaging_channels_title">設定済みチャンネル</string>
+    <string name="messaging_pair_telegram">Telegram をペアリング</string>
+    <string name="messaging_pair_whatsapp">WhatsApp をペアリング</string>
+    <string name="messaging_telegram_instructions">Telegram ボットを作成し、任意のデバイスでセットアップリンクを開き、ボットの準備ができたらここに戻ってください。</string>
+    <string name="messaging_whatsapp_instructions">一時的な WhatsApp ペアリングセッションを開始し、WhatsApp で QR コードをスキャンして、接続したアカウントを適用します。</string>
+    <string name="messaging_telegram_bot_name">ボット名 (任意)</string>
+    <string name="messaging_telegram_bot_name_hint">Telegram セットアップでの推奨名として使用されます。</string>
+    <string name="messaging_telegram_waiting">Telegram のセットアップを待っています…</string>
+    <string name="messaging_telegram_allowed_users">許可された Telegram ユーザー ID</string>
+    <string name="messaging_telegram_allowed_users_hint">数値の Telegram ID をカンマ区切りで入力します。</string>
+    <string name="messaging_whatsapp_waiting">WhatsApp の QR スキャンを待っています…</string>
+    <string name="messaging_whatsapp_mode">WhatsApp モード</string>
+    <string name="messaging_whatsapp_mode_bot">ボット</string>
+    <string name="messaging_whatsapp_mode_self_chat">セルフチャット</string>
+    <string name="messaging_whatsapp_allowed_users">許可された WhatsApp ユーザー</string>
+    <string name="messaging_whatsapp_allowed_users_hint">任意の電話番号をカンマ区切りで入力します。</string>
+    <string name="messaging_start_pairing">ペアリングを開始</string>
+    <string name="messaging_starting">ペアリングを開始中…</string>
+    <string name="messaging_ready">適用準備完了</string>
+    <string name="messaging_applying">セットアップを適用中…</string>
+    <string name="messaging_applied">適用済み</string>
+    <string name="messaging_cancelling">キャンセル中…</string>
+    <string name="messaging_cancel">セットアップをキャンセル</string>
+    <string name="messaging_apply_enable">適用して有効化</string>
+    <string name="messaging_status">ステータス: %1$s</string>
+    <string name="messaging_pairing_id">ペアリング ID: %1$s</string>
+    <string name="messaging_expires_at">有効期限: %1$s</string>
+    <string name="messaging_deep_link">Telegram ディープリンク</string>
+    <string name="messaging_qr_payload">QR ペイロード</string>
+    <string name="messaging_qr_payload_hint">対応するメッセージングアプリでこのペイロードをスキャンするか、選択してコピーします。</string>
+    <string name="messaging_open_link">ディープリンクを開く</string>
+    <string name="messaging_suggested_username">推奨ボット: %1$s</string>
+    <string name="messaging_bot_username">ボットのユーザー名: %1$s</string>
+    <string name="messaging_owner_user_id">Telegram オーナー ID: %1$s</string>
+    <string name="messaging_whatsapp_account_name">WhatsApp アカウント: %1$s</string>
+    <string name="messaging_whatsapp_account_phone">WhatsApp 電話番号: %1$s</string>
+    <string name="messaging_telegram_applied">Telegram が有効です。アカウントを変更するには別のセットアップを開始してください。</string>
+    <string name="messaging_whatsapp_applied">WhatsApp が有効です。アカウントを変更するには別のセットアップを開始してください。</string>
+    <string name="messaging_onboarding_failed">オンボーディングに失敗しました</string>
+    <string name="messaging_unexpected_status">予期しないオンボーディングステータス: %1$s</string>
+    <string name="messaging_request_failed">セットアップリクエストが完了しませんでした。もう一度お試しください。</string>
+</resources>

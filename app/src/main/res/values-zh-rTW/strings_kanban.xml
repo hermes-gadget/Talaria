@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="kanban_title">看板</string>
+    <string name="kanban_subtitle">任務看板</string>
+    <string name="kanban_board_section">看板</string>
+    <string name="kanban_stats_section">看板總覽</string>
+    <string name="kanban_new_board">新增看板</string>
+    <string name="kanban_board_slug">看板代號</string>
+    <string name="kanban_board_name">看板名稱</string>
+    <string name="kanban_create_board">建立看板</string>
+    <string name="kanban_no_boards">沒有看板</string>
+    <string name="kanban_no_stats">沒有可用的看板統計。</string>
+        <plurals name="kanban_oldest_ready">
+        <item quantity="other">最早的待處理任務：%1$d 秒</item>
+    </plurals>
+    <string name="kanban_assignees">負責人</string>
+    <string name="kanban_active_workers">啟用中的工人</string>
+    <string name="kanban_no_tasks">此看板上沒有任務。</string>
+    <string name="kanban_create_task">建立任務</string>
+    <string name="kanban_add_task">新增任務</string>
+    <string name="kanban_task_title">標題</string>
+    <string name="kanban_task_body">說明</string>
+    <string name="kanban_task_assignee">負責人（選填）</string>
+    <string name="kanban_description">說明</string>
+    <string name="kanban_summary">最新工人摘要</string>
+    <string name="kanban_priority">優先順位 %1$d</string>
+        <plurals name="kanban_comments_count">
+        <item quantity="other">%1$d 則留言</item>
+    </plurals>
+    <string name="kanban_status_triage">分診</string>
+    <string name="kanban_status_todo">待辦</string>
+    <string name="kanban_status_scheduled">已排程</string>
+    <string name="kanban_status_ready">就緒</string>
+    <string name="kanban_status_running">執行中</string>
+    <string name="kanban_status_blocked">已阻塞</string>
+    <string name="kanban_status_review">審查中</string>
+    <string name="kanban_status_done">已完成</string>
+    <string name="kanban_unknown">未知</string>
+    <string name="kanban_comments_section">留言</string>
+    <string name="kanban_no_comments">尚無留言。</string>
+    <string name="kanban_comment_hint">新增留言</string>
+    <string name="kanban_send_comment">留言</string>
+    <string name="kanban_log_section">工人日誌</string>
+    <string name="kanban_no_log">此任務沒有可用的工人日誌。</string>
+    <string name="kanban_log_truncated">顯示的日誌已截斷。</string>
+    <string name="kanban_runs_section">執行紀錄</string>
+    <string name="kanban_no_runs">沒有記錄的執行。</string>
+    <string name="kanban_inspect_run">檢查</string>
+    <string name="kanban_terminate_run">終止</string>
+    <string name="kanban_run_detail">執行詳情</string>
+    <string name="kanban_delete_task">刪除任務</string>
+    <string name="kanban_delete_task_title">刪除任務？</string>
+    <string name="kanban_delete_task_message">這將永久刪除任務及其歷史記錄。</string>
+    <string name="kanban_delete_task_confirm">刪除</string>
+    <string name="kanban_error_generic">無法載入看板。</string>
+</resources>

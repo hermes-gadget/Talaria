@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="toolset_more_actions">その他の操作</string>
+    <string name="toolset_update">スキルハブを更新</string>
+    <string name="toolset_refresh">更新</string>
+    <string name="toolset_edit_content">コンテンツを編集</string>
+    <string name="toolset_uninstall">アンインストール</string>
+    <string name="toolset_skill_filters">スキルフィルター</string>
+    <string name="toolset_group_other">その他のツールセット</string>
+    <string name="toolset_configure">設定</string>
+    <string name="toolset_config_loading_title">ツールセット設定</string>
+    <string name="toolset_config_loading">%1$s を読み込み中…</string>
+    <string name="toolset_cancel">キャンセル</string>
+    <string name="toolset_config_error_title">ツールセット設定を読み込めませんでした</string>
+    <string name="toolset_retry">再試行</string>
+    <string name="toolset_config_title">%1$s を設定</string>
+    <string name="toolset_config_no_category">このツールセットには設定可能なプロバイダーフィールドがありません。</string>
+    <string name="toolset_config_no_providers">このツールセットで利用可能なプロバイダーはありません。</string>
+    <string name="toolset_provider_selected_title">%1$s · 選択済み</string>
+    <string name="toolset_provider_auth_required">追加のアカウント認証が必要です。</string>
+    <string name="toolset_environment_fields">環境フィールド</string>
+    <string name="toolset_saved">保存しました</string>
+    <string name="toolset_save_values">値を保存</string>
+    <string name="toolset_select_provider">プロバイダーを選択</string>
+    <string name="toolset_run_setup">セットアップを実行</string>
+    <string name="toolset_done">完了</string>
+    <string name="toolset_setup_confirm_title">セットアップを実行しますか？</string>
+    <string name="toolset_setup_confirm_message">これにより %1$s が Hermes ホストで実行され、ソフトウェアがインストールされる場合があります。続行しますか？</string>
+    <string name="toolset_model_section">モデル</string>
+    <string name="toolset_model_default">デフォルト: %1$s</string>
+</resources>

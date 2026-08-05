@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="system_check_for_updates">更新を確認</string>
+    <string name="system_apply_update">更新を適用</string>
+    <string name="system_drain_gateway">ゲートウェイをドレイン</string>
+    <string name="system_apply_update_title">Hermes の更新を適用しますか？</string>
+    <string name="system_apply_update_message">Hermes に自身の更新を依頼します。実行中のゲートウェイが再起動または置き換えられる可能性があり、元に戻せません。</string>
+    <string name="system_apply_update_confirm">更新を適用</string>
+    <string name="system_drain_gateway_title">ゲートウェイをドレインしますか？</string>
+    <string name="system_drain_gateway_message">新しいゲートウェイ作業の受け入れを停止し、再起動前にアクティブな作業を完了させますか？</string>
+    <string name="system_drain_gateway_confirm">ドレイン</string>
+    <string name="system_update_apply_result">適用結果</string>
+    <string name="system_gateway_drain_result">ドレイン結果</string>
+    <string name="system_ops_depth_title">オペレーション深度</string>
+    <string name="system_ops_depth_description">チェックポイントストレージを検査し、高度な Hermes メンテナンス診断を実行します。</string>
+    <string name="system_ops_refresh_checkpoints">チェックポイントを更新</string>
+    <string name="system_ops_prune_checkpoints">チェックポイントを整理</string>
+    <string name="system_ops_checkpoints_loading">チェックポイントを読み込み中…</string>
+    <string name="system_ops_config_migrate">設定を移行</string>
+    <string name="system_ops_dump">サポートダンプを実行</string>
+    <string name="system_ops_prompt_size">プロンプトサイズを測定</string>
+    <string name="system_ops_last_result">最後の操作</string>
+    <string name="system_ops_prune_title">チェックポイントを整理しますか？</string>
+    <string name="system_ops_prune_message">Hermes ホストから古いチェックポイントデータを削除しますか？この操作は元に戻せません。</string>
+    <string name="system_ops_prune_confirm">整理</string>
+    <string name="system_ops_config_migrate_title">Hermes 設定を移行しますか？</string>
+    <string name="system_ops_config_migrate_message">ホスト設定の移行を実行します。Hermes の設定ファイルが変更される可能性があります。</string>
+    <string name="system_ops_config_migrate_confirm">移行</string>
+    <string name="system_ops_dump_title">サポートダンプを実行しますか？</string>
+    <string name="system_ops_dump_message">Hermes ホストで診断用サポートダンプを実行します。時間がかかり、診断データを書き込む場合があります。</string>
+    <string name="system_ops_dump_confirm">ダンプを実行</string>
+    <string name="system_ops_prompt_size_title">プロンプトサイズを測定しますか？</string>
+    <string name="system_ops_prompt_size_message">ホストで Hermes のプロンプトサイズ診断操作を開始しますか？</string>
+    <string name="system_ops_prompt_size_confirm">測定</string>
+</resources>

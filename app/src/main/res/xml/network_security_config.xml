@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<network-security-config>
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
     <!--
         Release posture: system CAs only. Cleartext HTTP stays permitted in
         the base config because Talaria connects to user-configured
@@ -16,7 +16,8 @@
         For HTTPS hosts, per-profile TLS pinning (CertificatePinnerFactory)
         provides the hostile-network defense.
     -->
-    <base-config cleartextTrafficPermitted="true">
+    <!-- InsecureBaseConfiguration: intentional — see the policy comment above. -->
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>

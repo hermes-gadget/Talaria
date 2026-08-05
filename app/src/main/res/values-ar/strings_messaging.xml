@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="messaging_onboarding_title">إقران حساب مراسلة</string>
+    <string name="messaging_onboarding_subtitle">ابدأ إعدادًا موجّهًا، أو امسح الرمز أو افتح الرابط، ثم طبّق الحساب.</string>
+    <string name="messaging_channels_title">القنوات المكوّنة</string>
+    <string name="messaging_pair_telegram">إقران تيليجرام</string>
+    <string name="messaging_pair_whatsapp">إقران واتساب</string>
+    <string name="messaging_telegram_instructions">أنشئ بوت تيليجرام، وافتح رابط الإعداد على أي جهاز، ثم عُد إلى هنا عندما يكون البوت جاهزًا.</string>
+    <string name="messaging_whatsapp_instructions">ابدأ جلسة إقران واتساب مؤقتة، وامسح رمز QR في واتساب، وطبّق الحساب المتصل.</string>
+    <string name="messaging_telegram_bot_name">اسم البوت (اختياري)</string>
+    <string name="messaging_telegram_bot_name_hint">يُستخدم كاسم مقترح في إعداد تيليجرام.</string>
+    <string name="messaging_telegram_waiting">بانتظار إعداد تيليجرام…</string>
+    <string name="messaging_telegram_allowed_users">معرفات مستخدمي تيليجرام المسموح بها</string>
+    <string name="messaging_telegram_allowed_users_hint">أدخل معرفات تيليجرام الرقمية مفصولة بفواصل.</string>
+    <string name="messaging_whatsapp_waiting">بانتظار مسح رمز QR في واتساب…</string>
+    <string name="messaging_whatsapp_mode">وضع واتساب</string>
+    <string name="messaging_whatsapp_mode_bot">بوت</string>
+    <string name="messaging_whatsapp_mode_self_chat">محادثة ذاتية</string>
+    <string name="messaging_whatsapp_allowed_users">مستخدمو واتساب المسموح بهم</string>
+    <string name="messaging_whatsapp_allowed_users_hint">أرقام هواتف اختيارية مفصولة بفواصل.</string>
+    <string name="messaging_start_pairing">بدء الإقران</string>
+    <string name="messaging_starting">جارٍ بدء الإقران…</string>
+    <string name="messaging_ready">جاهز للتطبيق</string>
+    <string name="messaging_applying">جارٍ تطبيق الإعداد…</string>
+    <string name="messaging_applied">تم التطبيق</string>
+    <string name="messaging_cancelling">جارٍ الإلغاء…</string>
+    <string name="messaging_cancel">إلغاء الإعداد</string>
+    <string name="messaging_apply_enable">تطبيق وتفعيل</string>
+    <string name="messaging_status">الحالة: %1$s</string>
+    <string name="messaging_pairing_id">معرف الإقران: %1$s</string>
+    <string name="messaging_expires_at">ينتهي: %1$s</string>
+    <string name="messaging_deep_link">رابط تيليجرام العميق</string>
+    <string name="messaging_qr_payload">حمولة QR</string>
+    <string name="messaging_qr_payload_hint">امسح هذه الحمولة بتطبيق المراسلة المناسب، أو حددها وانسخها.</string>
+    <string name="messaging_open_link">فتح الرابط العميق</string>
+    <string name="messaging_suggested_username">البوت المقترح: %1$s</string>
+    <string name="messaging_bot_username">اسم مستخدم البوت: %1$s</string>
+    <string name="messaging_owner_user_id">معرف مالك تيليجرام: %1$s</string>
+    <string name="messaging_whatsapp_account_name">حساب واتساب: %1$s</string>
+    <string name="messaging_whatsapp_account_phone">هاتف واتساب: %1$s</string>
+    <string name="messaging_telegram_applied">تيليجرام مفعّل. ابدأ إعدادًا آخر لتغيير الحساب.</string>
+    <string name="messaging_whatsapp_applied">واتساب مفعّل. ابدأ إعدادًا آخر لتغيير الحساب.</string>
+    <string name="messaging_onboarding_failed">فشل الإعداد</string>
+    <string name="messaging_unexpected_status">حالة إعداد غير متوقعة: %1$s</string>
+    <string name="messaging_request_failed">لم يكتمل طلب الإعداد. حاول مرة أخرى.</string>
+</resources>

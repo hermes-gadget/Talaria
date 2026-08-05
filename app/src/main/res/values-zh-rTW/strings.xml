@@ -40,15 +40,10 @@
     <string name="manage_voice_subtitle">伺服器 STT/TTS 與聽寫</string>
     <string name="manage_voice_title">語音</string>
 
-    <string name="nav_chat">聊天</string>
-    <string name="nav_activity">活動</string>
-    <string name="nav_manage">管理</string>
-    <string name="nav_you">我的</string>
     <string name="common_retry">重試</string>
     <string name="common_cancel">取消</string>
     <string name="common_save">儲存</string>
     <string name="common_send">傳送</string>
-    <string name="common_approve">核准</string>
     <string name="common_deny">拒絕</string>
     <string name="common_refresh">重新整理</string>
     <string name="common_new_agent">新增代理程式</string>
@@ -75,7 +70,9 @@
     <string name="chat_status_live">線上 · %1$s</string>
     <string name="chat_status_detail"> · %1$s</string>
     <string name="chat_status_yolo"> · ⚡YOLO</string>
-    <string name="chat_status_tokens"> · %1$d 個權杖</string>
+        <plurals name="chat_status_tokens">
+        <item quantity="other">· %1$d tok</item>
+    </plurals>
     <string name="chat_status_cost"> · $%1$.4f</string>
     <string name="chat_status_disconnected">已中斷連線 · 點選以重新連線</string>
     <string name="chat_choices">選項：%1$s</string>
@@ -105,7 +102,6 @@
     <string name="chat_reading_view">閱讀檢視</string>
     <string name="chat_session_actions">工作階段操作</string>
     <string name="chat_agent_activity">代理程式活動</string>
-    <string name="chat_change_model">變更模型</string>
     <string name="chat_steer_settings">引導與觸發設定</string>
     <string name="chat_pip">子母畫面</string>
     <string name="chat_steer_trigger">引導 / 觸發</string>
@@ -119,7 +115,9 @@
     <string name="chat_attachment_staged">%1$s · 已暫存</string>
     <string name="chat_attachment_retry">%1$s · 重試</string>
     <string name="chat_remove_attachment">移除 %1$s</string>
-    <string name="chat_queued">已排入 %1$d 則</string>
+        <plurals name="chat_queued">
+        <item quantity="other">%1$d 個排隊中</item>
+    </plurals>
     <string name="chat_message_placeholder">傳送訊息給 Hermes…</string>
     <string name="chat_attach_image">附加圖片</string>
     <string name="chat_dictate">聽寫</string>
@@ -128,7 +126,6 @@
     <string name="chat_action_rename">正在儲存工作階段標題…</string>
     <string name="chat_empty_reading">尚無訊息 — 向 Hermes 打個招呼吧。</string>
     <string name="chat_empty_terminal">正在等待終端機輸出…</string>
-    <string name="chat_rewind_message">回復到此訊息</string>
     <string name="chat_close_agent">關閉 %1$s</string>
     <string name="chat_new_agent">新增代理程式</string>
     <string name="chat_working">處理中…</string>
@@ -243,13 +240,13 @@
     <string name="activity_filter_chat">聊天</string>
     <string name="activity_empty">尚無活動。背景同步會填入此動態。</string>
     <string name="activity_no_filter_matches">此篩選條件沒有事件。</string>
-    <string name="connection_title">連線</string>
-    <string name="connection_server_url">伺服器 URL</string>
-    <string name="connection_token">權杖</string>
-    <string name="connection_add_profile">新增連線</string>
-    <string name="connection_test">測試連線</string>
-    <string name="connection_connected">已連線</string>
-    <string name="connection_disconnected">已中斷連線</string>
-    <string name="connection_no_profiles">尚無連線</string>
-    <string name="connection_save">儲存連線</string>
+    <string name="notif_channel_conversations">車載對話</string>
+    <string name="chat_status_recovering">正在復原 · 嘗試 %1$d/%2$d · %3$d 秒後重試</string>
+    <string name="chat_status_reconciled">已重新連線 · 對話記錄已重新整理</string>
+    <string name="chat_status_retry">已中斷連線 · 可重試</string>
+    <string name="chat_approval_choice_button">核准：%1$s</string>
+    <string name="chat_approval_confirm">確認 %1$s</string>
+    <string name="chat_approval_broad_warning">%1$s 授予持久權限。請確認以繼續。</string>
+    <string name="manage_car_hosts_title">車載主機</string>
+    <string name="manage_car_hosts_subtitle">憑證註冊與存取</string>
 </resources>

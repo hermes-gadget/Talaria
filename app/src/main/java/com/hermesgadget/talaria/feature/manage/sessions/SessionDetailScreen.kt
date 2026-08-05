@@ -73,6 +73,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import androidx.core.net.toUri
 
 @Composable
 fun SessionDetailScreen(sessionId: String, onDeleted: (() -> Unit)? = null) {
@@ -121,7 +122,7 @@ fun SessionDetailScreen(sessionId: String, onDeleted: (() -> Unit)? = null) {
             context.startActivity(
                 Intent(
                     Intent.ACTION_VIEW,
-                    Uri.parse("talaria://session/${Uri.encode(result.sessionId)}"),
+                    "talaria://session/${Uri.encode(result.sessionId)}".toUri(),
                 ),
             )
         } else {

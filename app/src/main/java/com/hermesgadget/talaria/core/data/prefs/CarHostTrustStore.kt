@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import android.annotation.SuppressLint
 
 /** A car host is trusted only as an exact package and current signing-certificate pair. */
 @Serializable
@@ -235,6 +236,7 @@ class CarHostTrustStore internal constructor(
 
     private fun List<CarHostTrustRecord>.upsert(record: CarHostTrustRecord): List<CarHostTrustRecord> =
         filterNot { it.identity.packageName == record.identity.packageName } + record
+    @SuppressLint("UseKtx") // KTX edit() cannot return the commit() result this check requires
 
     private fun mutate(transform: (CarHostTrustState) -> CarHostTrustState) {
         val changed = synchronized(this) {

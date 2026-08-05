@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="toolset_more_actions">更多操作</string>
+    <string name="toolset_update">更新技能中心</string>
+    <string name="toolset_refresh">重新整理</string>
+    <string name="toolset_edit_content">編輯內容</string>
+    <string name="toolset_uninstall">解除安裝</string>
+    <string name="toolset_skill_filters">技能篩選器</string>
+    <string name="toolset_group_other">其他工具集</string>
+    <string name="toolset_configure">設定</string>
+    <string name="toolset_config_loading_title">工具集設定</string>
+    <string name="toolset_config_loading">正在載入 %1$s…</string>
+    <string name="toolset_cancel">取消</string>
+    <string name="toolset_config_error_title">無法載入工具集設定</string>
+    <string name="toolset_retry">重試</string>
+    <string name="toolset_config_title">設定 %1$s</string>
+    <string name="toolset_config_no_category">此工具集沒有可設定的提供方欄位。</string>
+    <string name="toolset_config_no_providers">此工具集沒有可用的提供方。</string>
+    <string name="toolset_provider_selected_title">%1$s · 已選取</string>
+    <string name="toolset_provider_auth_required">需要額外的帳戶驗證。</string>
+    <string name="toolset_environment_fields">環境欄位</string>
+    <string name="toolset_saved">已儲存</string>
+    <string name="toolset_save_values">儲存值</string>
+    <string name="toolset_select_provider">選擇提供方</string>
+    <string name="toolset_run_setup">執行設定</string>
+    <string name="toolset_done">完成</string>
+    <string name="toolset_setup_confirm_title">執行設定？</string>
+    <string name="toolset_setup_confirm_message">這將在 Hermes 主機上執行 %1$s，並可能安裝軟體。繼續嗎？</string>
+    <string name="toolset_model_section">模型</string>
+    <string name="toolset_model_default">預設：%1$s</string>
+</resources>

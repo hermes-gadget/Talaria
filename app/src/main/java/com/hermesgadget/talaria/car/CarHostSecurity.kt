@@ -25,6 +25,7 @@ import com.hermesgadget.talaria.core.data.prefs.CarHostIdentity
 import com.hermesgadget.talaria.core.data.prefs.CarHostTrustRecord
 import com.hermesgadget.talaria.core.data.prefs.CarHostTrustStore
 import java.security.MessageDigest
+import android.annotation.SuppressLint
 
 /**
  * The exact package/certificate pairs shipped by androidx.car.app:app.
@@ -34,6 +35,7 @@ import java.security.MessageDigest
  * resource keeps Talaria aligned when that allowlist changes in a future bump.
  */
 object AndroidxKnownCarHosts {
+    @SuppressLint("PrivateResource") // Intentional: tracks the androidx allowlist (see header comment).
     fun identities(context: Context): Set<CarHostIdentity> = context.resources
         .getStringArray(CarAppR.array.hosts_allowlist_sample)
         .mapNotNull { entry ->
@@ -116,6 +118,7 @@ object CarHostTrustPolicy {
 
 /** Creates the AndroidX handshake validator without weakening release builds. */
 object CarHostValidatorFactory {
+    @SuppressLint("PrivateResource") // Intentional: androidx host allowlist, same provenance as above.
     fun create(
         context: Context,
         debugBuild: Boolean,

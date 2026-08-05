@@ -2,26 +2,28 @@
 # notes in app/build.gradle.kts when updating the Android/Compose stack.
 
 [versions]
-agp = "8.9.1"
+agp = "8.9.3"
 kotlin = "2.1.20"
 ksp = "2.1.20-1.0.32"
 
 # Compose BOM used by the Material 3 and adaptive UI dependencies.
 compose-bom = "2026.06.01"
-core-ktx = "1.17.0"
+# core 1.19 / lifecycle 2.11 require compileSdk 37 + AGP 9.1 (verified
+# 2026-08-04); pinned at the AGP-8.9-compatible max until the toolchain moves.
+core-ktx = "1.18.0"
 lifecycle = "2.10.0"
-activity = "1.12.4"
-navigation = "2.9.3"
+activity = "1.13.0"
+navigation = "2.9.8"
 material = "1.14.0"
 coroutines = "1.10.1"
 serialization = "1.8.0"
 okhttp = "4.12.0"
 retrofit = "2.11.0"
 retrofit-serialization = "1.0.0"
-room = "2.6.1"
-security-crypto = "1.1.0-alpha06"
-work = "2.10.0"
-browser = "1.8.0"
+room = "2.8.4"
+security-crypto = "1.1.0"
+work = "2.11.2"
+browser = "1.10.0"
 glance = "1.1.1"
 
 # Android Auto / Automotive OS template library.
@@ -32,10 +34,10 @@ coroutines-test = "1.10.1"
 mockk = "1.13.17"
 mockwebserver = "4.12.0"
 robolectric = "4.14.1"
-androidx-test-core = "1.6.1"
+androidx-test-core = "1.7.0"
 arch-core-testing = "2.2.0"
-androidx-test-junit = "1.2.1"
-espresso = "3.6.1"
+androidx-test-junit = "1.3.0"
+espresso = "3.7.0"
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

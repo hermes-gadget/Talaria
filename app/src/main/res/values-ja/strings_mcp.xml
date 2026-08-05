@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mcp_screen_title">MCP</string>
+    <string name="mcp_screen_subtitle">Model Context Protocol サーバー</string>
+    <string name="mcp_refresh">更新</string>
+    <string name="mcp_tab_servers">サーバー</string>
+    <string name="mcp_tab_catalog">カタログ</string>
+    <string name="mcp_add_server_section">MCP サーバーを追加</string>
+    <string name="mcp_edit_server_section">MCP サーバーを編集: %1$s</string>
+    <string name="mcp_server_name_label">サーバー名</string>
+    <string name="mcp_command_label">コマンド (stdio)</string>
+    <string name="mcp_url_label">URL (HTTP/SSE)</string>
+    <string name="mcp_transport_supporting">コマンドまたは URL のいずれか一方を指定してください</string>
+    <string name="mcp_args_label">引数 (1行に1つ)</string>
+    <string name="mcp_env_label">環境変数 (KEY=value、1行に1つ)</string>
+    <string name="mcp_auth_none">なし</string>
+    <string name="mcp_auth_header">ヘッダー</string>
+    <string name="mcp_auth_oauth">OAuth</string>
+    <string name="mcp_bearer_token_label">ベアラートークン</string>
+    <string name="mcp_bearer_token_keep">空欄のままにすると既存のトークンが保持されます。</string>
+    <string name="mcp_add_action">サーバーを追加</string>
+    <string name="mcp_save_changes">変更を保存</string>
+    <string name="mcp_cancel_edit">編集をキャンセル</string>
+    <string name="mcp_duplicate_name">「%1$s」という名前のサーバーはすでに存在します。</string>
+    <string name="mcp_add_success">%1$s を追加しました</string>
+    <string name="mcp_update_success">%1$s を更新しました</string>
+    <string name="mcp_add_failed">追加に失敗しました</string>
+    <string name="mcp_update_failed">更新に失敗しました</string>
+    <string name="mcp_configured_servers">設定済みサーバー</string>
+    <string name="mcp_no_servers">MCP サーバーは設定されていません。</string>
+    <string name="mcp_not_available">—</string>
+    <string name="mcp_transport_summary">%1$s · %2$s</string>
+    <string name="mcp_args_summary">引数: %1$s</string>
+    <string name="mcp_env_summary">環境: %1$s</string>
+    <string name="mcp_auth_summary">認証: %1$s</string>
+    <string name="mcp_tools_summary">ツール: %1$s</string>
+    <string name="mcp_enabled">有効</string>
+    <string name="mcp_disabled">無効</string>
+    <string name="mcp_server_actions">サーバー操作</string>
+    <string name="mcp_edit_action">編集</string>
+    <string name="mcp_test_action">テスト</string>
+    <string name="mcp_authenticate_action">認証</string>
+    <string name="mcp_waiting_oauth">OAuth を待っています…</string>
+    <string name="mcp_delete_action">削除</string>
+    <string name="mcp_delete_title">MCP サーバーを削除しますか？</string>
+    <string name="mcp_delete_message">アクティブな Hermes プロファイルから「%1$s」を削除しますか？</string>
+    <string name="mcp_delete_confirm">删除</string>
+    <string name="mcp_cancel">キャンセル</string>
+    <string name="mcp_test_result">%1$s: %2$s</string>
+        <plurals name="mcp_oauth_authenticated">
+        <item quantity="other">%1$s を認証しました · ツール %2$d 件</item>
+    </plurals>
+    <string name="mcp_oauth_start_failed">OAuth の開始に失敗しました</string>
+    <string name="mcp_oauth_missing_url">OAuth サーバーが認可 URL を提供しませんでした</string>
+    <string name="mcp_oauth_authorization_failed">OAuth 認可に失敗しました</string>
+    <string name="mcp_install_title">%1$s をインストールしますか？</string>
+    <string name="mcp_bootstrap">ブートストラップ: %1$s</string>
+    <string name="mcp_installing">インストール中…</string>
+    <string name="mcp_install_failed">インストールに失敗しました</string>
+    <string name="mcp_install_success">%1$s をインストールして有効にしました</string>
+    <string name="mcp_catalog_enabled">有効</string>
+    <string name="mcp_catalog_installed">インストール済み</string>
+    <string name="mcp_catalog_available">利用可能</string>
+    <string name="mcp_catalog_requires">必要: %1$s</string>
+    <string name="mcp_catalog_review_install">確認してインストール</string>
+</resources>

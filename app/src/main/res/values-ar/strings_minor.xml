@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="minor_analytics_overview">نظرة عامة</string>
+    <string name="minor_analytics_daily_usage">الاستخدام اليومي</string>
+    <string name="minor_analytics_per_model">تحليلات لكل نموذج</string>
+    <string name="minor_analytics_no_models">لا توجد تحليلات نماذج لهذه الفترة.</string>
+        <plurals name="minor_analytics_sessions">
+        <item quantity="one">%1$d جلسة</item>
+        <item quantity="two">%1$d جلستان</item>
+        <item quantity="few">%1$d جلسات</item>
+        <item quantity="many">%1$d جلسة</item>
+        <item quantity="other">%1$d جلسة</item>
+        <item quantity="zero">%1$d جلسة</item>
+    </plurals>
+    <string name="minor_analytics_input">الإدخال %1$s</string>
+    <string name="minor_analytics_output">الإخراج %1$s</string>
+    <string name="minor_analytics_cache">الذاكرة المؤقتة %1$s</string>
+    <string name="minor_analytics_cost">التكلفة %1$s</string>
+    <string name="minor_analytics_calls">%1$d استدعاء API · %2$d استدعاء أداة</string>
+    <string name="minor_analytics_connectivity">الاتصال</string>
+    <string name="minor_analytics_egress_empty">لم يتم الإبلاغ عن حالة خروج.</string>
+    <string name="minor_voice_elevenlabs">أصوات ElevenLabs</string>
+    <string name="minor_voice_elevenlabs_description">الأصوات المتاحة من حساب ElevenLabs المكوّن.</string>
+    <string name="minor_voice_refresh_voices">تحديث الأصوات</string>
+    <string name="minor_voice_unavailable">ElevenLabs غير مكوّن لملف Hermes هذا.</string>
+    <string name="minor_voice_no_voices">لم يتم إرجاع أي أصوات.</string>
+    <string name="minor_voice_id">معرف الصوت: %1$s</string>
+    <string name="minor_cron_create_section">إنشاء مهمة</string>
+    <string name="minor_cron_jobs_section">المهام المجدولة</string>
+    <string name="minor_cron_blueprints_section">الخطط</string>
+    <string name="minor_cron_fire_now">تشغيل الآن</string>
+    <string name="minor_profiles_create_section">إنشاء ملف</string>
+    <string name="minor_profiles_list_section">الملفات</string>
+    <string name="minor_profiles_sessions_section">جلسات الملف</string>
+    <string name="minor_profiles_refresh_sessions">تحديث الجلسات</string>
+    <string name="minor_profiles_no_sessions">لم يتم العثور على جلسات للملف.</string>
+    <string name="minor_profiles_session_active">نشط</string>
+    <string name="minor_profiles_set_model">تعيين النموذج</string>
+    <string name="minor_profiles_model_title">نموذج %1$s</string>
+    <string name="minor_profiles_provider">الموفّر</string>
+    <string name="minor_profiles_model">النموذج</string>
+    <string name="minor_profiles_save_model">حفظ النموذج</string>
+    <string name="minor_profiles_model_saved">تم حفظ نموذج %1$s</string>
+    <string name="minor_profiles_open_terminal">فتح الطرفية</string>
+    <string name="minor_profiles_terminal_opened">تم طلب الطرفية لـ %1$s</string>
+    <string name="minor_profiles_setup_command">أمر الإعداد</string>
+    <string name="minor_profiles_setup_command_title">أمر الإعداد · %1$s</string>
+    <string name="minor_profiles_setup_command_missing">لم يتم إرجاع أي أمر إعداد.</string>
+    <string name="minor_profiles_copy_command">نسخ الأمر</string>
+</resources>

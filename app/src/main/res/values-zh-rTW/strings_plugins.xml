@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="plugins_title">外掛程式</string>
+    <string name="plugins_subtitle">儀表板擴充和代理外掛程式</string>
+    <string name="plugins_dashboard_section">儀表板外掛程式</string>
+    <string name="plugins_agents_section">代理外掛程式</string>
+    <string name="plugins_install_section">安裝代理外掛程式</string>
+    <string name="plugins_providers_section">執行階段提供方</string>
+    <string name="plugins_install_hint">從存放庫或 URL 安裝外掛程式，然後選擇 Hermes 是否應啟用它。</string>
+    <string name="plugins_install_identifier">存放庫或 URL</string>
+    <string name="plugins_install_force">強制重新安裝</string>
+    <string name="plugins_install_enable">安裝後啟用</string>
+    <string name="plugins_install_button">安裝外掛程式</string>
+    <string name="plugins_rescan">重新掃描</string>
+    <string name="plugins_version">版本 %1$s</string>
+    <string name="plugins_auth_required">需要驗證：%1$s</string>
+    <string name="plugins_update">更新</string>
+    <string name="plugins_delete">移除</string>
+    <string name="plugins_delete_title">移除外掛程式？</string>
+    <string name="plugins_delete_message">從此 Hermes 主機移除 %1$s？</string>
+    <string name="plugins_delete_confirm">移除</string>
+    <string name="plugins_memory_provider">記憶提供方</string>
+    <string name="plugins_context_engine">上下文引擎</string>
+    <string name="plugins_provider_default">內建預設</string>
+    <string name="plugins_save_providers">儲存提供方</string>
+    <string name="plugins_no_dashboard_plugins">沒有可用的儀表板外掛程式。</string>
+    <string name="plugins_no_agent_plugins">未安裝代理外掛程式。</string>
+    <string name="plugins_no_provider_options">未報告額外的提供方選項。</string>
+    <string name="plugins_error_generic">無法載入外掛程式介面。</string>
+</resources>

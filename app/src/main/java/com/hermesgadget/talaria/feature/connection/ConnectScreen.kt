@@ -58,6 +58,7 @@ import com.hermesgadget.talaria.domain.model.AuthMode
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import androidx.core.net.toUri
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -266,7 +267,7 @@ fun ConnectScreen(
                         vm.startOidcLogin(
                             openBrowser = { url ->
                                 CustomTabsIntent.Builder().build()
-                                    .launchUrl(context, android.net.Uri.parse(url))
+                                    .launchUrl(context, url.toUri())
                             },
                             onSuccess = onConnected,
                         )
@@ -308,7 +309,7 @@ fun ConnectScreen(
                 vm = vm,
                 openBrowser = { url ->
                     CustomTabsIntent.Builder().build()
-                        .launchUrl(context, android.net.Uri.parse(url))
+                        .launchUrl(context, url.toUri())
                 },
             )
             if (profiles.isNotEmpty()) {

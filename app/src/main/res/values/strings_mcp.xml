@@ -50,10 +50,12 @@
     <string name="mcp_delete_confirm">Delete</string>
     <string name="mcp_cancel">Cancel</string>
     <string name="mcp_test_result">%1$s: %2$s</string>
-    <string name="mcp_oauth_authenticated">%1$s authenticated · %2$d tools</string>
+        <plurals name="mcp_oauth_authenticated">
+        <item quantity="one">%1$s authenticated · %2$d tool</item>
+        <item quantity="other">%1$s authenticated · %2$d tools</item>
+    </plurals>
     <string name="mcp_oauth_start_failed">OAuth failed to start</string>
     <string name="mcp_oauth_missing_url">OAuth server did not provide an authorization URL</string>
-    <string name="mcp_oauth_unsafe_url">OAuth returned an unsafe browser URL</string>
     <string name="mcp_oauth_authorization_failed">OAuth authorization failed</string>
 
     <string name="mcp_install_title">Install %1$s?</string>

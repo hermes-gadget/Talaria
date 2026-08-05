@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tools_status_more_actions">更多操作</string>
+    <string name="tools_status_refresh">刷新</string>
+    <string name="tools_status_overview">概览</string>
+    <string name="tools_status_gateway">网关</string>
+    <string name="tools_status_recent_sessions">最近会话</string>
+    <string name="tools_status_unknown_value">未知</string>
+    <string name="tools_status_computer_use">计算机使用</string>
+    <string name="tools_status_computer_use_loading">正在加载计算机使用就绪状态…</string>
+    <string name="tools_status_computer_use_readiness">就绪状态：%1$s</string>
+    <string name="tools_status_computer_use_ready">就绪</string>
+    <string name="tools_status_computer_use_not_ready">未就绪</string>
+    <string name="tools_status_computer_use_unknown">就绪状态未知</string>
+    <string name="tools_status_computer_use_platform">平台：%1$s</string>
+    <string name="tools_status_computer_use_driver">驱动程序：%1$s</string>
+    <string name="tools_status_computer_use_unsupported">此主机不支持计算机使用。</string>
+    <string name="tools_status_computer_use_driver_missing">未安装 cua-driver。</string>
+    <string name="tools_status_computer_use_doctor">驱动程序诊断</string>
+    <string name="tools_status_computer_use_grant">授予 macOS 权限</string>
+    <string name="tools_status_computer_use_granting">正在请求权限…</string>
+    <string name="tools_status_computer_use_grant_started">权限请求已开始。请在主机上批准 CuaDriver 提示，然后刷新。</string>
+    <string name="tools_status_computer_use_grant_unavailable">权限授予仅在 macOS 上可用。在 Windows 和 Linux 上，就绪状态来自跨平台驱动程序健康检查。</string>
+    <string name="tools_status_computer_use_grant_failed">无法请求计算机使用权限。</string>
+    <string name="tools_status_computer_use_unavailable">计算机使用就绪状态不可用。</string>
+    <string name="tools_terminal_backend_title">终端后端</string>
+    <string name="tools_terminal_backend_loading">正在加载终端后端…</string>
+    <string name="tools_terminal_backend_active">当前：%1$s</string>
+    <string name="tools_terminal_backend_status">状态：%1$s</string>
+    <string name="tools_terminal_backend_selecting">正在选择…</string>
+    <string name="tools_terminal_backend_retry">重试</string>
+    <string name="tools_terminal_backend_error">无法加载终端后端。</string>
+    <string name="tools_terminal_backend_unknown">未知</string>
+</resources>

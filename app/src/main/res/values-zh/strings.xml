@@ -40,15 +40,10 @@
     <string name="manage_voice_subtitle">服务器 STT/TTS 与听写</string>
     <string name="manage_voice_title">语音</string>
 
-    <string name="nav_chat">聊天</string>
-    <string name="nav_activity">活动</string>
-    <string name="nav_manage">管理</string>
-    <string name="nav_you">我的</string>
     <string name="common_retry">重试</string>
     <string name="common_cancel">取消</string>
     <string name="common_save">保存</string>
     <string name="common_send">发送</string>
-    <string name="common_approve">批准</string>
     <string name="common_deny">拒绝</string>
     <string name="common_refresh">刷新</string>
     <string name="common_new_agent">新建代理</string>
@@ -75,7 +70,9 @@
     <string name="chat_status_live">在线 · %1$s</string>
     <string name="chat_status_detail"> · %1$s</string>
     <string name="chat_status_yolo"> · ⚡YOLO</string>
-    <string name="chat_status_tokens"> · %1$d 个令牌</string>
+        <plurals name="chat_status_tokens">
+        <item quantity="other">· %1$d tok</item>
+    </plurals>
     <string name="chat_status_cost"> · $%1$.4f</string>
     <string name="chat_status_disconnected">已断开 · 点击重新连接</string>
     <string name="chat_choices">选项：%1$s</string>
@@ -105,7 +102,6 @@
     <string name="chat_reading_view">阅读视图</string>
     <string name="chat_session_actions">会话操作</string>
     <string name="chat_agent_activity">代理活动</string>
-    <string name="chat_change_model">更换模型</string>
     <string name="chat_steer_settings">引导与触发设置</string>
     <string name="chat_pip">画中画</string>
     <string name="chat_steer_trigger">引导 / 触发</string>
@@ -119,7 +115,9 @@
     <string name="chat_attachment_staged">%1$s · 已暂存</string>
     <string name="chat_attachment_retry">%1$s · 重试</string>
     <string name="chat_remove_attachment">移除 %1$s</string>
-    <string name="chat_queued">排队 %1$d 条</string>
+        <plurals name="chat_queued">
+        <item quantity="other">%1$d 个排队中</item>
+    </plurals>
     <string name="chat_message_placeholder">给 Hermes 发消息…</string>
     <string name="chat_attach_image">附加图片</string>
     <string name="chat_dictate">听写</string>
@@ -128,7 +126,6 @@
     <string name="chat_action_rename">正在保存会话标题…</string>
     <string name="chat_empty_reading">还没有消息 — 向 Hermes 打个招呼吧。</string>
     <string name="chat_empty_terminal">正在等待终端输出…</string>
-    <string name="chat_rewind_message">回退到此消息</string>
     <string name="chat_close_agent">关闭 %1$s</string>
     <string name="chat_new_agent">新建代理</string>
     <string name="chat_working">处理中…</string>
@@ -243,13 +240,13 @@
     <string name="activity_filter_chat">聊天</string>
     <string name="activity_empty">还没有活动。后台同步会填充此动态。</string>
     <string name="activity_no_filter_matches">此筛选条件没有事件。</string>
-    <string name="connection_title">连接</string>
-    <string name="connection_server_url">服务器 URL</string>
-    <string name="connection_token">令牌</string>
-    <string name="connection_add_profile">添加连接</string>
-    <string name="connection_test">测试连接</string>
-    <string name="connection_connected">已连接</string>
-    <string name="connection_disconnected">已断开</string>
-    <string name="connection_no_profiles">还没有连接</string>
-    <string name="connection_save">保存连接</string>
+    <string name="notif_channel_conversations">车载会话</string>
+    <string name="chat_status_recovering">正在恢复 · 尝试 %1$d/%2$d · %3$d 秒后重试</string>
+    <string name="chat_status_reconciled">已重新连接 · 会话记录已刷新</string>
+    <string name="chat_status_retry">已断开 · 可以重试</string>
+    <string name="chat_approval_choice_button">批准：%1$s</string>
+    <string name="chat_approval_confirm">确认 %1$s</string>
+    <string name="chat_approval_broad_warning">%1$s 授予持久权限。请确认以继续。</string>
+    <string name="manage_car_hosts_title">车载主机</string>
+    <string name="manage_car_hosts_subtitle">证书注册与访问</string>
 </resources>

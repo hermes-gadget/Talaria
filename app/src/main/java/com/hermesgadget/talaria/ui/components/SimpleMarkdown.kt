@@ -50,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.withStyle
+import androidx.core.net.toUri
 
 private const val LINK_TAG = "talaria-markdown-link"
 
@@ -107,7 +108,7 @@ fun SimpleMarkdownText(
 }
 
 private fun openMarkdownUrl(context: android.content.Context, url: String) {
-    val uri = runCatching { Uri.parse(url.trim()) }.getOrNull() ?: return
+    val uri = runCatching { url.trim().toUri() }.getOrNull() ?: return
     if (uri.scheme !in setOf("http", "https", "mailto")) return
     runCatching {
         context.startActivity(Intent(Intent.ACTION_VIEW, uri))

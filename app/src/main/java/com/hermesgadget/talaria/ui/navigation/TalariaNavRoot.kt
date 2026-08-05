@@ -92,6 +92,7 @@ import com.hermesgadget.talaria.feature.terminal.TerminalScreen
 import com.hermesgadget.talaria.feature.you.YouScreen
 import com.hermesgadget.talaria.domain.model.scopeId
 import kotlinx.coroutines.flow.first
+import androidx.core.net.toUri
 
 private const val FILES_PATH_ARGUMENT = "path"
 private const val FILES_WITH_PATH_ROUTE = "files?path={path}"
@@ -108,7 +109,7 @@ private data class PendingDeepLink(
 )
 
 private fun parseDeepLinkDestination(raw: String): PendingDeepLinkDestination? {
-    val uri = runCatching { Uri.parse(raw) }.getOrNull()
+    val uri = runCatching { raw.toUri() }.getOrNull()
     if (
         uri?.scheme?.equals("talaria", ignoreCase = true) == true &&
         uri?.host?.equals("voice", ignoreCase = true) == true &&

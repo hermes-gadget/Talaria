@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="minor_analytics_overview">概览</string>
+    <string name="minor_analytics_daily_usage">每日用量</string>
+    <string name="minor_analytics_per_model">按模型分析</string>
+    <string name="minor_analytics_no_models">此时间段内没有模型分析。</string>
+        <plurals name="minor_analytics_sessions">
+        <item quantity="other">%1$d 个会话</item>
+    </plurals>
+    <string name="minor_analytics_input">输入 %1$s</string>
+    <string name="minor_analytics_output">输出 %1$s</string>
+    <string name="minor_analytics_cache">缓存 %1$s</string>
+    <string name="minor_analytics_cost">成本 %1$s</string>
+    <string name="minor_analytics_calls">%1$d 次 API 调用 · %2$d 次工具调用</string>
+    <string name="minor_analytics_connectivity">连接状态</string>
+    <string name="minor_analytics_egress_empty">未报告出口状态。</string>
+    <string name="minor_voice_elevenlabs">ElevenLabs 语音</string>
+    <string name="minor_voice_elevenlabs_description">来自已配置 ElevenLabs 账户的可用语音。</string>
+    <string name="minor_voice_refresh_voices">刷新语音</string>
+    <string name="minor_voice_unavailable">此 Hermes 配置文件未配置 ElevenLabs。</string>
+    <string name="minor_voice_no_voices">未返回任何语音。</string>
+    <string name="minor_voice_id">语音 ID：%1$s</string>
+    <string name="minor_cron_create_section">创建任务</string>
+    <string name="minor_cron_jobs_section">计划任务</string>
+    <string name="minor_cron_blueprints_section">蓝图</string>
+    <string name="minor_cron_fire_now">立即执行</string>
+    <string name="minor_profiles_create_section">创建配置文件</string>
+    <string name="minor_profiles_list_section">配置文件</string>
+    <string name="minor_profiles_sessions_section">配置文件会话</string>
+    <string name="minor_profiles_refresh_sessions">刷新会话</string>
+    <string name="minor_profiles_no_sessions">未找到配置文件会话。</string>
+    <string name="minor_profiles_session_active">活跃</string>
+    <string name="minor_profiles_set_model">设置模型</string>
+    <string name="minor_profiles_model_title">%1$s 的模型</string>
+    <string name="minor_profiles_provider">提供方</string>
+    <string name="minor_profiles_model">模型</string>
+    <string name="minor_profiles_save_model">保存模型</string>
+    <string name="minor_profiles_model_saved">已保存 %1$s 的模型</string>
+    <string name="minor_profiles_open_terminal">打开终端</string>
+    <string name="minor_profiles_terminal_opened">已为 %1$s 请求终端</string>
+    <string name="minor_profiles_setup_command">设置命令</string>
+    <string name="minor_profiles_setup_command_title">设置命令 · %1$s</string>
+    <string name="minor_profiles_setup_command_missing">未返回设置命令。</string>
+    <string name="minor_profiles_copy_command">复制命令</string>
+</resources>

@@ -40,15 +40,10 @@
     <string name="manage_voice_subtitle">تحويل الكلام إلى نص ونطقه على الخادم والإملاء</string>
     <string name="manage_voice_title">الصوت</string>
 
-    <string name="nav_chat">الدردشة</string>
-    <string name="nav_activity">النشاط</string>
-    <string name="nav_manage">الإدارة</string>
-    <string name="nav_you">حسابي</string>
     <string name="common_retry">إعادة المحاولة</string>
     <string name="common_cancel">إلغاء</string>
     <string name="common_save">حفظ</string>
     <string name="common_send">إرسال</string>
-    <string name="common_approve">موافقة</string>
     <string name="common_deny">رفض</string>
     <string name="common_refresh">تحديث</string>
     <string name="common_new_agent">وكيل جديد</string>
@@ -75,7 +70,14 @@
     <string name="chat_status_live">مباشر · %1$s</string>
     <string name="chat_status_detail"> · %1$s</string>
     <string name="chat_status_yolo"> · ⚡YOLO</string>
-    <string name="chat_status_tokens"> · %1$d رمزًا</string>
+        <plurals name="chat_status_tokens">
+        <item quantity="one">· %1$d رمز</item>
+        <item quantity="two">· %1$d رمزين</item>
+        <item quantity="few">· %1$d رموز</item>
+        <item quantity="many">· %1$d رمزًا</item>
+        <item quantity="other">· %1$d رمزًا</item>
+        <item quantity="zero">· %1$d رمز</item>
+    </plurals>
     <string name="chat_status_cost"> · $%1$.4f</string>
     <string name="chat_status_disconnected">غير متصل · اضغط لإعادة الاتصال</string>
     <string name="chat_choices">الخيارات: %1$s</string>
@@ -105,7 +107,6 @@
     <string name="chat_reading_view">عرض القراءة</string>
     <string name="chat_session_actions">إجراءات الجلسة</string>
     <string name="chat_agent_activity">نشاط الوكيل</string>
-    <string name="chat_change_model">تغيير النموذج</string>
     <string name="chat_steer_settings">إعدادات التوجيه والمشغّل</string>
     <string name="chat_pip">صورة داخل صورة</string>
     <string name="chat_steer_trigger">التوجيه / المشغّل</string>
@@ -119,7 +120,14 @@
     <string name="chat_attachment_staged">%1$s · مُجهّز</string>
     <string name="chat_attachment_retry">%1$s · إعادة المحاولة</string>
     <string name="chat_remove_attachment">إزالة %1$s</string>
-    <string name="chat_queued">%1$d قيد الانتظار</string>
+        <plurals name="chat_queued">
+        <item quantity="one">%1$d في الانتظار</item>
+        <item quantity="two">%1$d في الانتظار</item>
+        <item quantity="few">%1$d في الانتظار</item>
+        <item quantity="many">%1$d في الانتظار</item>
+        <item quantity="other">%1$d في الانتظار</item>
+        <item quantity="zero">%1$d في الانتظار</item>
+    </plurals>
     <string name="chat_message_placeholder">أرسل رسالة إلى Hermes…</string>
     <string name="chat_attach_image">إرفاق صورة</string>
     <string name="chat_dictate">إملاء</string>
@@ -128,7 +136,6 @@
     <string name="chat_action_rename">جارٍ حفظ عنوان الجلسة…</string>
     <string name="chat_empty_reading">لا توجد رسائل بعد — ألقِ التحية على Hermes.</string>
     <string name="chat_empty_terminal">بانتظار مخرجات الطرفية…</string>
-    <string name="chat_rewind_message">الرجوع إلى هذه الرسالة</string>
     <string name="chat_close_agent">إغلاق %1$s</string>
     <string name="chat_new_agent">وكيل جديد</string>
     <string name="chat_working">جارٍ العمل…</string>
@@ -243,13 +250,13 @@
     <string name="activity_filter_chat">الدردشة</string>
     <string name="activity_empty">لا يوجد نشاط بعد. ستملأ المزامنة في الخلفية هذا الموجز.</string>
     <string name="activity_no_filter_matches">لا توجد أحداث لهذا الفلتر.</string>
-    <string name="connection_title">الاتصالات</string>
-    <string name="connection_server_url">عنوان الخادم</string>
-    <string name="connection_token">الرمز</string>
-    <string name="connection_add_profile">إضافة اتصال</string>
-    <string name="connection_test">اختبار الاتصال</string>
-    <string name="connection_connected">متصل</string>
-    <string name="connection_disconnected">غير متصل</string>
-    <string name="connection_no_profiles">لا توجد اتصالات بعد</string>
-    <string name="connection_save">حفظ الاتصال</string>
+    <string name="notif_channel_conversations">محادثات السيارة</string>
+    <string name="chat_status_recovering">جارٍ الاستعادة · المحاولة %1$d/%2$d · إعادة المحاولة خلال %3$d ث</string>
+    <string name="chat_status_reconciled">أُعيد الاتصال · تحديث النص</string>
+    <string name="chat_status_retry">غير متصل · يمكن إعادة المحاولة</string>
+    <string name="chat_approval_choice_button">موافقة: %1$s</string>
+    <string name="chat_approval_confirm">تأكيد %1$s</string>
+    <string name="chat_approval_broad_warning">%1$s يمنح صلاحية دائمة. أكّد للمتابعة.</string>
+    <string name="manage_car_hosts_title">مضيفو السيارة</string>
+    <string name="manage_car_hosts_subtitle">تسجيل الشهادات والوصول</string>
 </resources>

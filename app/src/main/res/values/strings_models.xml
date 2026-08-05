@@ -11,7 +11,10 @@
     <string name="models_cancel">Cancel</string>
 
     <string name="models_providers_section">Providers &amp; models</string>
-    <string name="models_provider_count">%1$d models</string>
+        <plurals name="models_provider_count">
+        <item quantity="one">%1$d model</item>
+        <item quantity="other">%1$d models</item>
+    </plurals>
     <string name="models_not_authenticated">not authenticated</string>
     <string name="models_current">current</string>
     <string name="models_not_set">not set</string>

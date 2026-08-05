@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="toolset_more_actions">مزيد من الإجراءات</string>
+    <string name="toolset_update">تحديث مركز المهارات</string>
+    <string name="toolset_refresh">تحديث</string>
+    <string name="toolset_edit_content">تعديل المحتوى</string>
+    <string name="toolset_uninstall">إلغاء التثبيت</string>
+    <string name="toolset_skill_filters">فلاتر المهارات</string>
+    <string name="toolset_group_other">مجموعات أدوات أخرى</string>
+    <string name="toolset_configure">إعداد</string>
+    <string name="toolset_config_loading_title">إعداد مجموعة الأدوات</string>
+    <string name="toolset_config_loading">جارٍ تحميل %1$s…</string>
+    <string name="toolset_cancel">إلغاء</string>
+    <string name="toolset_config_error_title">تعذر تحميل إعداد مجموعة الأدوات</string>
+    <string name="toolset_retry">إعادة المحاولة</string>
+    <string name="toolset_config_title">إعداد %1$s</string>
+    <string name="toolset_config_no_category">لا يحتوي هذا المجموعة على حقول موفّر قابلة للإعداد.</string>
+    <string name="toolset_config_no_providers">لا تتوفر موفّرون لهذه المجموعة.</string>
+    <string name="toolset_provider_selected_title">%1$s · محدد</string>
+    <string name="toolset_provider_auth_required">مطلوب مصادقة حساب إضافية.</string>
+    <string name="toolset_environment_fields">حقول البيئة</string>
+    <string name="toolset_saved">تم الحفظ</string>
+    <string name="toolset_save_values">حفظ القيم</string>
+    <string name="toolset_select_provider">تحديد الموفّر</string>
+    <string name="toolset_run_setup">تشغيل الإعداد</string>
+    <string name="toolset_done">تم</string>
+    <string name="toolset_setup_confirm_title">تشغيل الإعداد؟</string>
+    <string name="toolset_setup_confirm_message">يؤدي هذا إلى تشغيل %1$s على مضيف Hermes وقد يثبّت برامج. متابعة؟</string>
+    <string name="toolset_model_section">النموذج</string>
+    <string name="toolset_model_default">الافتراضي: %1$s</string>
+</resources>

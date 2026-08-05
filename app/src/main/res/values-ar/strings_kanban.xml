@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="kanban_title">كانبان</string>
+    <string name="kanban_subtitle">لوحة المهام والمهام</string>
+    <string name="kanban_board_section">اللوحة</string>
+    <string name="kanban_stats_section">نظرة عامة على اللوحة</string>
+    <string name="kanban_new_board">لوحة جديدة</string>
+    <string name="kanban_board_slug">معرّف اللوحة</string>
+    <string name="kanban_board_name">اسم اللوحة</string>
+    <string name="kanban_create_board">إنشاء لوحة</string>
+    <string name="kanban_no_boards">لا توجد لوحات</string>
+    <string name="kanban_no_stats">لا تتوفر إحصائيات اللوحة.</string>
+        <plurals name="kanban_oldest_ready">
+        <item quantity="one">أقدم مهمة جاهزة: %1$d ثانية</item>
+        <item quantity="two">أقدم مهمة جاهزة: %1$d ثانيتين</item>
+        <item quantity="few">أقدم مهمة جاهزة: %1$d ثوانٍ</item>
+        <item quantity="many">أقدم مهمة جاهزة: %1$d ثانية</item>
+        <item quantity="other">أقدم مهمة جاهزة: %1$d ثانية</item>
+        <item quantity="zero">أقدم مهمة جاهزة: %1$d ثانية</item>
+    </plurals>
+    <string name="kanban_assignees">المسؤولون</string>
+    <string name="kanban_active_workers">العمال النشطون</string>
+    <string name="kanban_no_tasks">لا توجد مهام في هذه اللوحة.</string>
+    <string name="kanban_create_task">إنشاء مهمة</string>
+    <string name="kanban_add_task">إضافة مهمة</string>
+    <string name="kanban_task_title">العنوان</string>
+    <string name="kanban_task_body">الوصف</string>
+    <string name="kanban_task_assignee">المسؤول (اختياري)</string>
+    <string name="kanban_description">الوصف</string>
+    <string name="kanban_summary">أحدث ملخص للعامل</string>
+    <string name="kanban_priority">الأولوية %1$d</string>
+        <plurals name="kanban_comments_count">
+        <item quantity="one">%1$d تعليق</item>
+        <item quantity="two">%1$d تعليقان</item>
+        <item quantity="few">%1$d تعليقات</item>
+        <item quantity="many">%1$d تعليقًا</item>
+        <item quantity="other">%1$d تعليقًا</item>
+        <item quantity="zero">%1$d تعليق</item>
+    </plurals>
+    <string name="kanban_status_triage">فرز</string>
+    <string name="kanban_status_todo">مطلوب</string>
+    <string name="kanban_status_scheduled">مجدول</string>
+    <string name="kanban_status_ready">جاهز</string>
+    <string name="kanban_status_running">قيد التشغيل</string>
+    <string name="kanban_status_blocked">محظور</string>
+    <string name="kanban_status_review">مراجعة</string>
+    <string name="kanban_status_done">مكتمل</string>
+    <string name="kanban_unknown">غير معروف</string>
+    <string name="kanban_comments_section">التعليقات</string>
+    <string name="kanban_no_comments">لا توجد تعليقات بعد.</string>
+    <string name="kanban_comment_hint">إضافة تعليق</string>
+    <string name="kanban_send_comment">تعليق</string>
+    <string name="kanban_log_section">سجل العامل</string>
+    <string name="kanban_no_log">لا يتوفر سجل عامل لهذه المهمة.</string>
+    <string name="kanban_log_truncated">السجل المعروض مبتور.</string>
+    <string name="kanban_runs_section">عمليات التشغيل</string>
+    <string name="kanban_no_runs">لا توجد عمليات تشغيل مسجلة.</string>
+    <string name="kanban_inspect_run">فحص</string>
+    <string name="kanban_terminate_run">إنهاء</string>
+    <string name="kanban_run_detail">تفاصيل التشغيل</string>
+    <string name="kanban_delete_task">حذف المهمة</string>
+    <string name="kanban_delete_task_title">حذف المهمة؟</string>
+    <string name="kanban_delete_task_message">يؤدي هذا إلى إزالة المهمة وتاريخها نهائيًا.</string>
+    <string name="kanban_delete_task_confirm">حذف</string>
+    <string name="kanban_error_generic">تعذر تحميل لوحة كانبان.</string>
+</resources>

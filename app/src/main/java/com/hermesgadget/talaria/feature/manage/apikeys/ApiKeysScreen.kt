@@ -51,6 +51,7 @@ import com.hermesgadget.talaria.domain.model.EnvVarInfo
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import com.hermesgadget.talaria.ui.components.UnsavedChangesGuard
 import kotlinx.coroutines.launch
+import androidx.core.net.toUri
 
 @Composable
 fun ApiKeysScreen() {
@@ -174,7 +175,7 @@ fun ApiKeysScreen() {
                             }
                             info.url?.takeIf { it.isNotBlank() }?.let { url ->
                                 TextButton(onClick = {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
                                 }) { Text("Signup / docs") }
                             }
                             TextButton(onClick = {

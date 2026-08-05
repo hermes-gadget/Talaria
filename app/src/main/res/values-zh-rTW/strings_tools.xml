@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tools_status_more_actions">更多操作</string>
+    <string name="tools_status_refresh">重新整理</string>
+    <string name="tools_status_overview">總覽</string>
+    <string name="tools_status_gateway">閘道</string>
+    <string name="tools_status_recent_sessions">最近對話</string>
+    <string name="tools_status_unknown_value">未知</string>
+    <string name="tools_status_computer_use">電腦使用</string>
+    <string name="tools_status_computer_use_loading">正在載入電腦使用就緒狀態…</string>
+    <string name="tools_status_computer_use_readiness">就緒狀態：%1$s</string>
+    <string name="tools_status_computer_use_ready">就緒</string>
+    <string name="tools_status_computer_use_not_ready">未就緒</string>
+    <string name="tools_status_computer_use_unknown">就緒狀態未知</string>
+    <string name="tools_status_computer_use_platform">平台：%1$s</string>
+    <string name="tools_status_computer_use_driver">驅動程式：%1$s</string>
+    <string name="tools_status_computer_use_unsupported">此主機不支援電腦使用。</string>
+    <string name="tools_status_computer_use_driver_missing">未安裝 cua-driver。</string>
+    <string name="tools_status_computer_use_doctor">驅動程式診斷</string>
+    <string name="tools_status_computer_use_grant">授予 macOS 權限</string>
+    <string name="tools_status_computer_use_granting">正在請求權限…</string>
+    <string name="tools_status_computer_use_grant_started">權限請求已開始。請在主機上核准 CuaDriver 提示，然後重新整理。</string>
+    <string name="tools_status_computer_use_grant_unavailable">權限授予僅在 macOS 上可用。在 Windows 和 Linux 上，就緒狀態來自跨平台驅動程式健康狀態檢查。</string>
+    <string name="tools_status_computer_use_grant_failed">無法請求電腦使用權限。</string>
+    <string name="tools_status_computer_use_unavailable">電腦使用就緒狀態無法使用。</string>
+    <string name="tools_terminal_backend_title">終端機後端</string>
+    <string name="tools_terminal_backend_loading">正在載入終端機後端…</string>
+    <string name="tools_terminal_backend_active">目前：%1$s</string>
+    <string name="tools_terminal_backend_status">狀態：%1$s</string>
+    <string name="tools_terminal_backend_selecting">正在選擇…</string>
+    <string name="tools_terminal_backend_retry">重試</string>
+    <string name="tools_terminal_backend_error">無法載入終端機後端。</string>
+    <string name="tools_terminal_backend_unknown">未知</string>
+</resources>

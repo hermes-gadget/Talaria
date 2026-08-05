@@ -21,6 +21,7 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.LocaleList
 import java.util.Locale
+import android.annotation.SuppressLint
 
 /** The app-supported locale overrides shown in You > Language. */
 enum class AppLocale(val languageTag: String?) {
@@ -81,6 +82,7 @@ class LocaleManager(private val settingsStore: SettingsStore) {
 
     companion object {
         /** Wrap a pre-33 context so resources follow the persisted app override. */
+@SuppressLint("AppBundleLocaleChanges") // Sideloaded (GitHub/Obtainium): all locales ship in the APK; no Play Core splits.
         fun wrap(context: Context): Context {
             val locale = AppLocale.fromLanguageTag(SettingsStore(context).localeTag)
             if (locale == AppLocale.SYSTEM) return context

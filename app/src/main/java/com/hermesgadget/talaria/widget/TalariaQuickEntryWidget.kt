@@ -44,6 +44,7 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import com.hermesgadget.talaria.MainActivity
+import androidx.core.net.toUri
 
 /** The two launcher-safe actions exposed by the quick-entry widget. */
 object QuickEntryWidgetIntents {
@@ -56,7 +57,7 @@ object QuickEntryWidgetIntents {
 
     private fun deepLink(uri: String, packageName: String?): Intent = Intent(
         Intent.ACTION_VIEW,
-        Uri.parse(uri),
+        uri.toUri(),
     ).apply {
         packageName?.let { targetPackage ->
             // MainActivity's legacy intent filter predates the Voice host. Keep

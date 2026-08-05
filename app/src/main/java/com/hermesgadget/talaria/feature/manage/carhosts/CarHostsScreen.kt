@@ -52,6 +52,8 @@ import com.hermesgadget.talaria.core.data.prefs.displayFingerprint
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import java.text.DateFormat
 import java.util.Date
+import androidx.compose.ui.res.stringResource
+import android.annotation.SuppressLint
 
 private data class CarHostRow(
     val identity: CarHostIdentity,
@@ -60,6 +62,7 @@ private data class CarHostRow(
 )
 
 /** Handset-only, explicit management for certificate-bound car-host trust. */
+@SuppressLint("PrivateResource") // Intentional: car library version string for the enrolled-hosts note.
 @Composable
 fun CarHostsScreen() {
     val context = LocalContext.current
@@ -236,10 +239,7 @@ fun CarHostsScreen() {
             }
 
             item {
-                val version = remember(context) {
-                    runCatching { context.getString(CarAppR.string.car_app_library_version) }
-                        .getOrDefault("unknown")
-                }
+                val version = stringResource(CarAppR.string.car_app_library_version)
                 Text(
                     "Built-in entries come from androidx.car.app:app $version hosts_allowlist_sample.",
                     style = MaterialTheme.typography.bodySmall,

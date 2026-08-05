@@ -11,7 +11,10 @@
     <string name="kanban_create_board">Create board</string>
     <string name="kanban_no_boards">No boards</string>
     <string name="kanban_no_stats">No board statistics are available.</string>
-    <string name="kanban_oldest_ready">Oldest ready task: %1$d seconds</string>
+        <plurals name="kanban_oldest_ready">
+        <item quantity="one">Oldest ready task: %1$d second</item>
+        <item quantity="other">Oldest ready task: %1$d seconds</item>
+    </plurals>
     <string name="kanban_assignees">Assignees</string>
     <string name="kanban_active_workers">Active workers</string>
     <string name="kanban_no_tasks">No tasks on this board.</string>
@@ -20,12 +23,13 @@
     <string name="kanban_task_title">Title</string>
     <string name="kanban_task_body">Description</string>
     <string name="kanban_task_assignee">Assignee (optional)</string>
-    <string name="kanban_task_detail">Task detail</string>
     <string name="kanban_description">Description</string>
     <string name="kanban_summary">Latest worker summary</string>
     <string name="kanban_priority">Priority %1$d</string>
-    <string name="kanban_comments_count">%1$d comments</string>
-    <string name="kanban_status">Status</string>
+        <plurals name="kanban_comments_count">
+        <item quantity="one">%1$d comment</item>
+        <item quantity="other">%1$d comments</item>
+    </plurals>
     <string name="kanban_status_triage">Triage</string>
     <string name="kanban_status_todo">To do</string>
     <string name="kanban_status_scheduled">Scheduled</string>

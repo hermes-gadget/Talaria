@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="declutter_config_editor">المحرر</string>
+    <string name="declutter_config_import_export">استيراد وتصدير</string>
+    <string name="declutter_logs_filters">الفلاتر</string>
+</resources>

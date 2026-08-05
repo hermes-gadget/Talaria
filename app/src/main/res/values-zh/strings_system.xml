@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="system_check_for_updates">检查更新</string>
+    <string name="system_apply_update">应用更新</string>
+    <string name="system_drain_gateway">排空网关</string>
+    <string name="system_apply_update_title">应用 Hermes 更新？</string>
+    <string name="system_apply_update_message">请 Hermes 更新自身。这可能会重启或替换正在运行的网关，且无法撤销。</string>
+    <string name="system_apply_update_confirm">应用更新</string>
+    <string name="system_drain_gateway_title">排空网关？</string>
+    <string name="system_drain_gateway_message">停止接受新的网关工作，让活动工作完成后再重启？</string>
+    <string name="system_drain_gateway_confirm">排空</string>
+    <string name="system_update_apply_result">应用结果</string>
+    <string name="system_gateway_drain_result">排空结果</string>
+    <string name="system_ops_depth_title">运维深度</string>
+    <string name="system_ops_depth_description">检查检查点存储并运行高级 Hermes 维护诊断。</string>
+    <string name="system_ops_refresh_checkpoints">刷新检查点</string>
+    <string name="system_ops_prune_checkpoints">清理检查点</string>
+    <string name="system_ops_checkpoints_loading">正在加载检查点…</string>
+    <string name="system_ops_config_migrate">迁移配置</string>
+    <string name="system_ops_dump">运行支持转储</string>
+    <string name="system_ops_prompt_size">测量提示词大小</string>
+    <string name="system_ops_last_result">上次操作</string>
+    <string name="system_ops_prune_title">清理检查点？</string>
+    <string name="system_ops_prune_message">从 Hermes 主机删除旧的检查点数据？此操作无法撤销。</string>
+    <string name="system_ops_prune_confirm">清理</string>
+    <string name="system_ops_config_migrate_title">迁移 Hermes 配置？</string>
+    <string name="system_ops_config_migrate_message">运行主机配置迁移。这可能会更改 Hermes 配置文件。</string>
+    <string name="system_ops_config_migrate_confirm">迁移</string>
+    <string name="system_ops_dump_title">运行支持转储？</string>
+    <string name="system_ops_dump_message">在 Hermes 主机上运行诊断支持转储。可能需要一些时间并写入诊断数据。</string>
+    <string name="system_ops_dump_confirm">运行转储</string>
+    <string name="system_ops_prompt_size_title">测量提示词大小？</string>
+    <string name="system_ops_prompt_size_message">在主机上启动 Hermes 提示词大小诊断操作？</string>
+    <string name="system_ops_prompt_size_confirm">测量</string>
+</resources>

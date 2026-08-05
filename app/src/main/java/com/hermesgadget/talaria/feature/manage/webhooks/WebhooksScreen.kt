@@ -57,6 +57,7 @@ import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import android.os.Build
 
 /** Copies [text] to the system clipboard with a toast confirmation. */
 private fun copyToClipboard(context: Context, label: String, text: String) {
@@ -71,8 +72,10 @@ private const val SENSITIVE_CLIPBOARD_CLEAR_DELAY_MS = 15_000L
 private fun copySensitiveToClipboard(context: Context, label: String, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     val clip = ClipData.newPlainText(label, text)
-    clip.description.extras = PersistableBundle().apply {
-        putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+    if (Build.VERSION.SDK_INT >= 33) {
+        clip.description.extras = PersistableBundle().apply {
+            putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+        }
     }
     clipboard.setPrimaryClip(clip)
     Toast.makeText(context, "$label copied", Toast.LENGTH_SHORT).show()

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="declutter_config_editor">エディター</string>
+    <string name="declutter_config_import_export">インポートとエクスポート</string>
+    <string name="declutter_logs_filters">フィルター</string>
+</resources>

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="plugins_title">プラグイン</string>
+    <string name="plugins_subtitle">ダッシュボード拡張とエージェントプラグイン</string>
+    <string name="plugins_dashboard_section">ダッシュボードプラグイン</string>
+    <string name="plugins_agents_section">エージェントプラグイン</string>
+    <string name="plugins_install_section">エージェントプラグインをインストール</string>
+    <string name="plugins_providers_section">ランタイムプロバイダー</string>
+    <string name="plugins_install_hint">リポジトリまたは URL からプラグインをインストールし、Hermes が有効にするかどうかを選択します。</string>
+    <string name="plugins_install_identifier">リポジトリまたは URL</string>
+    <string name="plugins_install_force">強制的に再インストール</string>
+    <string name="plugins_install_enable">インストール後に有効化</string>
+    <string name="plugins_install_button">プラグインをインストール</string>
+    <string name="plugins_rescan">再スキャン</string>
+    <string name="plugins_version">バージョン %1$s</string>
+    <string name="plugins_auth_required">認証が必要: %1$s</string>
+    <string name="plugins_update">更新</string>
+    <string name="plugins_delete">削除</string>
+    <string name="plugins_delete_title">プラグインを削除しますか？</string>
+    <string name="plugins_delete_message">この Hermes ホストから %1$s を削除しますか？</string>
+    <string name="plugins_delete_confirm">削除</string>
+    <string name="plugins_memory_provider">メモリープロバイダー</string>
+    <string name="plugins_context_engine">コンテキストエンジン</string>
+    <string name="plugins_provider_default">組み込みデフォルト</string>
+    <string name="plugins_save_providers">プロバイダーを保存</string>
+    <string name="plugins_no_dashboard_plugins">ダッシュボードプラグインはありません。</string>
+    <string name="plugins_no_agent_plugins">エージェントプラグインはインストールされていません。</string>
+    <string name="plugins_no_provider_options">追加のプロバイダーオプションは報告されていません。</string>
+    <string name="plugins_error_generic">プラグインサーフェスを読み込めませんでした。</string>
+</resources>

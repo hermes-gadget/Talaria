@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_find_in_session">بحث في الجلسة</string>
+        <plurals name="chat_search_matches">
+        <item quantity="one">%1$d نتيجة</item>
+        <item quantity="two">%1$d نتيجتان</item>
+        <item quantity="few">%1$d نتائج</item>
+        <item quantity="many">%1$d نتيجة</item>
+        <item quantity="other">%1$d نتيجة</item>
+        <item quantity="zero">%1$d نتيجة</item>
+    </plurals>
+    <string name="chat_close_search">إغلاق البحث في النص</string>
+    <string name="chat_search_no_results">لا توجد رسائل تطابق هذا البحث.</string>
+    <string name="chat_composer_suggestions">اقتراحات</string>
+    <string name="chat_known_agent_hermes">هيرميس</string>
+    <string name="chat_known_participant_you">أنت</string>
+    <string name="chat_message_actions">إجراءات الرسالة</string>
+    <string name="chat_message_actions_title">إجراءات الرسالة</string>
+    <string name="chat_message_actions_body">اختر ما تريد فعله بـ"%1$s".</string>
+    <string name="chat_edit_message">تعديل الرسالة</string>
+    <string name="chat_branch_new_chat">تفرع في محادثة جديدة</string>
+    <string name="chat_edit_message_title">تعديل الرسالة</string>
+    <string name="chat_edit_message_label">الرسالة</string>
+    <string name="chat_message_edit_empty">لا يمكن أن تكون الرسالة فارغة</string>
+    <string name="chat_action_edit">جارٍ فتح الرسالة المعدلة…</string>
+    <string name="chat_branch_stop_turn">أوقف الدور الحالي قبل التفرع</string>
+    <string name="chat_branch_connection_error">اتصال المحادثة لم يعد نشطًا</string>
+    <string name="chat_branch_failed">تعذر تفرع هذه الجلسة</string>
+    <string name="chat_branch_id_missing">لم يُرجع هيرميس معرف الجلسة الجديدة</string>
+    <string name="chat_edited_branch_title">فرع معدَّل</string>
+    <string name="chat_edit_branch_success">تم فتح الرسالة المعدلة في محادثة جديدة</string>
+    <string name="chat_edit_branch_failed">تعذر فتح فرع رسالة معدلة</string>
+</resources>

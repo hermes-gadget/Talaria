@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tools_status_more_actions">その他の操作</string>
+    <string name="tools_status_refresh">更新</string>
+    <string name="tools_status_overview">概要</string>
+    <string name="tools_status_gateway">ゲートウェイ</string>
+    <string name="tools_status_recent_sessions">最近のセッション</string>
+    <string name="tools_status_unknown_value">不明</string>
+    <string name="tools_status_computer_use">コンピューター使用</string>
+    <string name="tools_status_computer_use_loading">コンピューター使用の準備状況を読み込み中…</string>
+    <string name="tools_status_computer_use_readiness">準備状況: %1$s</string>
+    <string name="tools_status_computer_use_ready">準備完了</string>
+    <string name="tools_status_computer_use_not_ready">未準備</string>
+    <string name="tools_status_computer_use_unknown">準備状況不明</string>
+    <string name="tools_status_computer_use_platform">プラットフォーム: %1$s</string>
+    <string name="tools_status_computer_use_driver">ドライバー: %1$s</string>
+    <string name="tools_status_computer_use_unsupported">このホストではコンピューター使用はサポートされていません。</string>
+    <string name="tools_status_computer_use_driver_missing">cua-driver がインストールされていません。</string>
+    <string name="tools_status_computer_use_doctor">ドライバードクター</string>
+    <string name="tools_status_computer_use_grant">macOS のアクセス許可を付与</string>
+    <string name="tools_status_computer_use_granting">アクセス許可を要求中…</string>
+    <string name="tools_status_computer_use_grant_started">アクセス許可の要求を開始しました。ホストで CuaDriver のプロンプトを承認してから更新してください。</string>
+    <string name="tools_status_computer_use_grant_unavailable">アクセス許可の付与は macOS でのみ利用できます。Windows と Linux では、準備状況はクロスプラットフォームのドライバーヘルスチェックから得られます。</string>
+    <string name="tools_status_computer_use_grant_failed">コンピューター使用のアクセス許可を要求できませんでした。</string>
+    <string name="tools_status_computer_use_unavailable">コンピューター使用の準備状況は利用できません。</string>
+    <string name="tools_terminal_backend_title">ターミナルバックエンド</string>
+    <string name="tools_terminal_backend_loading">ターミナルバックエンドを読み込み中…</string>
+    <string name="tools_terminal_backend_active">アクティブ: %1$s</string>
+    <string name="tools_terminal_backend_status">ステータス: %1$s</string>
+    <string name="tools_terminal_backend_selecting">選択中…</string>
+    <string name="tools_terminal_backend_retry">再試行</string>
+    <string name="tools_terminal_backend_error">ターミナルバックエンドを読み込めませんでした。</string>
+    <string name="tools_terminal_backend_unknown">不明</string>
+</resources>
