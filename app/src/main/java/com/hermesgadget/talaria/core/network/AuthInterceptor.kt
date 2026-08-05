@@ -49,8 +49,8 @@ class AuthInterceptor(
         when (snapshot.authMode) {
             AuthMode.SESSION_TOKEN -> snapshot.sessionToken
                 ?.takeIf { it.isNotBlank() && request.header(SESSION_HEADER) == null }
-                ?.let {
-                req.header(SESSION_HEADER, it)
+                ?.let { raw ->
+                req.header(SESSION_HEADER, sanitizeToken(raw))
             }
             AuthMode.BASIC -> {
                 if (!isPasswordBootstrapPath(request.url.encodedPath)) {
@@ -58,17 +58,17 @@ class AuthInterceptor(
                 }
                 snapshot.sessionToken
                     ?.takeIf { it.isNotBlank() && request.header(SESSION_HEADER) == null }
-                    ?.let {
-                    req.header(SESSION_HEADER, it)
+                    ?.let { raw ->
+                    req.header(SESSION_HEADER, sanitizeToken(raw))
                 }
             }
             AuthMode.BEARER -> snapshot.bearerToken?.takeIf { it.isNotBlank() }?.let {
-                req.header("Authorization", "Bearer $it")
+                req.header("Authorization", "Bearer ${sanitizeToken(it)}")
             }
             AuthMode.OIDC_BROWSER -> {
                 oidcTokenRefresher(snapshot)?.let {
                     oidcToken = it
-                    req.header("Authorization", "Bearer $it")
+                    req.header("Authorization", "Bearer ${sanitizeToken(it)}")
                 }
             }
             // NONE is intentionally credential-free. A retained token must not
@@ -100,6 +100,22 @@ class AuthInterceptor(
 
     companion object {
         const val SESSION_HEADER = "X-Hermes-Session-Token"
+
+        /**
+         * Strips characters that OkHttp rejects in header values (CR, LF, NUL,
+         * other C0 controls) and trims surrounding whitespace. Pasted tokens
+         * frequently carry a trailing newline; without this, [Interceptor]s
+         * throw IllegalArgumentException on the OkHttp dispatcher thread, which
+         * crashes the process (the app's coroutine try/catch cannot see it).
+         */
+        fun sanitizeToken(value: String): String {
+            val stripped = buildString(value.length) {
+                for (ch in value) {
+                    if (ch.code >= 0x20 && ch.code != 0x7f) append(ch)
+                }
+            }
+            return stripped.trim()
+        }
 
         private fun isPasswordBootstrapPath(path: String): Boolean =
             path == "/api/status" ||

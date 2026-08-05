@@ -21,6 +21,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.hermesgadget.talaria.core.network.AuthInterceptor
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.JsonConfig
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
@@ -258,7 +259,7 @@ class SecureConnectionStore internal constructor(
     }
 
     fun updateSessionToken(id: String, token: String) = synchronized(mutationLock) {
-        val trimmed = token.trim()
+        val trimmed = AuthInterceptor.sanitizeToken(token)
         if (trimmed.isEmpty()) return
         val profile = _profiles.value.find { it.id == id } ?: return
         val prev = readSecretsSafely(id, profile) ?: return
@@ -429,7 +430,23 @@ class SecureConnectionStore internal constructor(
             }
             return ConnectionSecrets()
         }
-        return json.decodeFromString(raw)
+        return json.decodeFromString<ConnectionSecrets>(raw).let { decoded ->
+            // Heal a token that was persisted with control characters (e.g. a
+            // pasted trailing newline): OkHttp rejects those in header values
+            // and the resulting dispatcher-thread crash used to be a launch
+            // crash loop until the profile was cleared.
+            val sanitized = decoded.sessionToken
+                ?.let { AuthInterceptor.sanitizeToken(it) }
+                ?.takeIf { it.isNotBlank() }
+            val sanitizedBearer = decoded.bearerToken
+                ?.let { AuthInterceptor.sanitizeToken(it) }
+                ?.takeIf { it.isNotBlank() }
+            if (sanitized == decoded.sessionToken && sanitizedBearer == decoded.bearerToken) {
+                decoded
+            } else {
+                decoded.copy(sessionToken = sanitized, bearerToken = sanitizedBearer)
+            }
+        }
     }
 
     private fun requireAvailablePrefs(): SharedPreferences = prefs

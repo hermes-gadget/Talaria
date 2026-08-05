@@ -60,6 +60,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStoreState
 import com.hermesgadget.talaria.core.data.prefs.SecureStoreDiagnostics
+import com.hermesgadget.talaria.core.network.AuthInterceptor
 import com.hermesgadget.talaria.core.network.ConnectionOrigin
 import com.hermesgadget.talaria.domain.model.AuthMode
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
@@ -233,8 +234,14 @@ fun ConnectScreen(
             if (ui.authMode == AuthMode.SESSION_TOKEN || ui.authMode == AuthMode.NONE) {
                 OutlinedTextField(
                     value = ui.sessionToken,
-                    onValueChange = { v -> vm.update { it.copy(sessionToken = v) } },
+                    onValueChange = { v ->
+                        // Strip control characters immediately so a pasted
+                        // multi-line token can never be persisted (OkHttp
+                        // rejects them in header values).
+                        vm.update { it.copy(sessionToken = AuthInterceptor.sanitizeToken(v)) }
+                    },
                     label = { Text("Session token") },
+                    singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),

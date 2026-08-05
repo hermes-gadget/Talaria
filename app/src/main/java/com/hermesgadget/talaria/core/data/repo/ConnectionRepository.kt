@@ -123,7 +123,8 @@ class ConnectionRepository(
         val secrets = when (authMode) {
             AuthMode.NONE -> ConnectionSecrets()
             AuthMode.SESSION_TOKEN -> ConnectionSecrets(
-                sessionToken = sessionToken?.takeIf { it.isNotBlank() }
+                sessionToken = sessionToken?.let { AuthInterceptor.sanitizeToken(it) }
+                    ?.takeIf { it.isNotBlank() }
                     ?: retained.sessionToken?.takeIf { keepSessionToken },
             )
             AuthMode.BASIC -> ConnectionSecrets(
@@ -131,7 +132,8 @@ class ConnectionRepository(
                     ?: retained.password?.takeIf { keepPassword },
             )
             AuthMode.BEARER -> ConnectionSecrets(
-                bearerToken = bearerToken?.takeIf { it.isNotBlank() }
+                bearerToken = bearerToken?.let { AuthInterceptor.sanitizeToken(it) }
+                    ?.takeIf { it.isNotBlank() }
                     ?: retained.bearerToken?.takeIf { keepBearerToken },
             )
             AuthMode.OIDC_BROWSER -> ConnectionSecrets(
@@ -257,7 +259,7 @@ class ConnectionRepository(
                         .build()
                     val request = Request.Builder()
                         .url(url)
-                        .header(AuthInterceptor.SESSION_HEADER, currentToken)
+                        .header(AuthInterceptor.SESSION_HEADER, AuthInterceptor.sanitizeToken(currentToken))
                         .get()
                         .build()
                     clientFactory.okHttp(bound).newCall(request).execute().use { response ->
