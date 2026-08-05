@@ -2,16 +2,16 @@
 # notes in app/build.gradle.kts when updating the Android/Compose stack.
 
 [versions]
-agp = "8.9.3"
-kotlin = "2.1.20"
-ksp = "2.1.20-1.0.32"
+agp = "9.1.1"
+kotlin = "2.3.0"
+ksp = "2.3.11"
 
 # Compose BOM used by the Material 3 and adaptive UI dependencies.
 compose-bom = "2026.06.01"
-# core 1.19 / lifecycle 2.11 require compileSdk 37 + AGP 9.1 (verified
-# 2026-08-04); pinned at the AGP-8.9-compatible max until the toolchain moves.
-core-ktx = "1.18.0"
-lifecycle = "2.10.0"
+# AGP 9.1 + compileSdk 37 toolchain (2026-08-05): built-in Kotlin 2.3.0,
+# Gradle 9.3.1. core 1.19 / lifecycle 2.11 unlocked by the toolchain move.
+core-ktx = "1.19.0"
+lifecycle = "2.11.0"
 activity = "1.13.0"
 navigation = "2.9.8"
 material = "1.14.0"
@@ -41,7 +41,6 @@ espresso = "3.7.0"
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

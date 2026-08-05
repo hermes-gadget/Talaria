@@ -379,8 +379,7 @@ class ArtifactsViewModel(
         artifactLoadJob?.cancel()
         cancelPreview()
         shareJob?.cancel()
-        super.onCleared()
-    }
+            }
 
     private fun previewDirectory(): File = previewDirectoryOverride
         ?: runCatching { File(TalariaApp.instance.cacheDir, "artifact-previews") }

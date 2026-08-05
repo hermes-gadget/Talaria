@@ -427,8 +427,7 @@ class MemoryViewModel(
     override fun onCleared() {
         oauthJobs.values.forEach { it.cancel() }
         oauthJobs.clear()
-        super.onCleared()
-    }
+            }
 
     companion object {
         fun factory() = object : ViewModelProvider.Factory {

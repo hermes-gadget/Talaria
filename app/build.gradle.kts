@@ -2,7 +2,6 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
@@ -35,15 +34,15 @@ val useCiSigning =
 
 android {
     namespace = "com.hermesgadget.talaria"
-    // AGP 8.9.x supports up to compileSdk 36; keep aligned with Material3 / activity 1.12.x
-    compileSdk = 36
+    // AGP 9.1.x supports up to API 37; core-ktx 1.19 / lifecycle 2.11 need it.
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.hermesgadget.talaria"
         // 29+ required by androidx.car.app:app-automotive (Android Auto car apps);
         // Android 9 (API 28) reached EOL in 2022.
         minSdk = 29
-        targetSdk = 36
+        targetSdk = 37
         versionCode = talariaVersionCode
         versionName = talariaVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -100,9 +99,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    // Built-in Kotlin (AGP 9): jvmTarget follows compileOptions.targetCompatibility
+    // (17) by default — no kotlinOptions DSL needed.
     buildFeatures {
         compose = true
         buildConfig = true
@@ -116,15 +114,16 @@ android {
         unitTests.isIncludeAndroidResources = true
     }
     lint {
-        // Fail-closed gate. The baseline pins ONLY the 21 toolchain-version
-        // warnings (GradleDependency/AGP): core-ktx 1.19, lifecycle 2.11 and
-        // AGP 9.x require AGP 9.1 + compileSdk 37, so the project pins the
-        // last AGP-8.9-compatible versions (documented in libs.versions.toml).
-        // Everything else — including the 2026-08-04 debt (574
-        // MissingTranslation, 22 UnusedResources, 13 UseKtx, 12
-        // LocalContextGetResourceValueCall, 9 PluralsCandidate, misc) — was
-        // fixed for real; any new finding fails the build.
-        baseline = file("lint-baseline.xml")
+        // Fail-closed gate. The AGP-8.9 toolchain baseline (21 pins) was
+        // deleted with the AGP 9.1 + compileSdk 37 migration (2026-08-05);
+        // any REAL lint finding now fails the build — expect ZERO issues.
+        // Version-available checks are informational (a newer release always
+        // exists); the toolchain is pinned deliberately in libs.versions.toml.
+        disable += setOf(
+            "NewerVersionAvailable",
+            "AndroidGradlePluginVersion",
+            "GradleDependency",
+        )
     }
 }
 

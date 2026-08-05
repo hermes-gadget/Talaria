@@ -3433,8 +3433,7 @@ class ChatViewModel(
             claimedSessions.clear()
         }
         clearPendingImages()
-        super.onCleared()
-    }
+            }
 
     companion object {
         private const val LIVE_UPDATES_DELAYED_STATUS = "Live updates delayed; reconciling…"

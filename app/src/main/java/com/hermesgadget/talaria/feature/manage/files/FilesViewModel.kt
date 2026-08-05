@@ -884,8 +884,7 @@ class FilesViewModel(
         downloadJob?.cancel()
         saveJob?.cancel()
         deleteOwnedDownload()
-        super.onCleared()
-    }
+            }
 
     companion object {
         fun factory() = object : ViewModelProvider.Factory {

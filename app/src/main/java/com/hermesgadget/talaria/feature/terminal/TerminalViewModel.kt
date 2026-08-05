@@ -336,8 +336,7 @@ class TerminalViewModel(
         explicitlyDisconnected = true
         connectionGeneration += 1
         closeTransport()
-        super.onCleared()
-    }
+            }
 
     companion object {
         fun factory() = object : ViewModelProvider.Factory {

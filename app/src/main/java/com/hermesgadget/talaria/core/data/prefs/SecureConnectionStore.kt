@@ -89,6 +89,9 @@ private class AndroidSecureConnectionStorage(context: Context) : SecureConnectio
     }
 
     override fun confirmedReset(): Boolean {
+        // Explicit commit() + result check: reset durability is critical and the
+        // KTX edit{} extension discards the commit result (returns Unit).
+        @SuppressLint("UseKtx")
         if (!recovery.edit().putBoolean(KEY_RESET_IN_PROGRESS, true).commit()) return false
         return finishInterruptedReset()
     }
@@ -100,6 +103,7 @@ private class AndroidSecureConnectionStorage(context: Context) : SecureConnectio
         // Do not delete AndroidX's legacy default master key: sibling encrypted stores may use it.
         // A dedicated alias makes recovery from a permanently invalidated legacy key connection-scoped.
         deleteDedicatedResetKey()
+        @SuppressLint("UseKtx")
         return recovery.edit()
             .putString(KEY_ACTIVE_ALIAS, RESET_MASTER_KEY_ALIAS)
             .remove(KEY_RESET_IN_PROGRESS)

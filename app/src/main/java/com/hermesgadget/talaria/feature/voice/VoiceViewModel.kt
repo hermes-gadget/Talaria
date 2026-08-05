@@ -442,8 +442,7 @@ class VoiceViewModel(
         fallbackJob?.cancel()
         recorder.cancel()
         audioPlayer.close()
-        super.onCleared()
-    }
+            }
 
     private fun openApiPaths(root: JsonObject): Set<String> =
         root["paths"]?.jsonObject?.keys.orEmpty()

@@ -82,6 +82,9 @@ fun ConnectScreen(
     var deleteProfile by remember { mutableStateOf<ConnectionProfile?>(null) }
     var confirmSecureReset by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    // Hoisted out of the onCopyDiagnostics lambda: LocalContext reads at
+    // callback time don't track Configuration changes (lint LocalContextGetResourceValueCall).
+    val secureStoreDiagnosticsLabel = stringResource(R.string.secure_store_diagnostics_label)
 
     if (confirmSecureReset) {
         AlertDialog(
@@ -166,7 +169,7 @@ fun ConnectScreen(
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         clipboard.setPrimaryClip(
                             ClipData.newPlainText(
-                                context.getString(R.string.secure_store_diagnostics_label),
+                                secureStoreDiagnosticsLabel,
                                 diagnostics.copyText(),
                             ),
                         )

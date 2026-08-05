@@ -878,8 +878,7 @@ class SystemViewModel(
         backupJob?.cancel()
         debugShareGeneration += 1
         debugShareJob?.cancel()
-        super.onCleared()
-    }
+            }
 
     companion object {
         fun factory() = object : ViewModelProvider.Factory {

@@ -582,8 +582,7 @@ class ChannelsViewModel(
     override fun onCleared() {
         pollJobs.values.forEach { it.cancel() }
         pollJobs.clear()
-        super.onCleared()
-    }
+            }
 
     companion object {
         fun factory() = object : ViewModelProvider.Factory {
