@@ -125,7 +125,7 @@ object CarConversationNotifier {
             .build()
 
         val notification = NotificationCompat.Builder(context, NotificationChannels.CONVERSATIONS)
-            .setSmallIcon(R.drawable.ic_launcher_monochrome)
+            .setSmallIcon(R.drawable.ic_notification_small)
             .setContentTitle(title)
             .setContentText(conversation.messages.lastOrNull()?.content?.trim() ?: "Tap to open conversation")
             .setStyle(style)
