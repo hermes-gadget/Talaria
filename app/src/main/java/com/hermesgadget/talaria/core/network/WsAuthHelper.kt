@@ -99,6 +99,18 @@ class WsAuthHelper(
                             snapshot,
                             connectionStore.snapshotFor(snapshot.connectionId),
                         )
+                        // Keep the REST path in lockstep with the WS path. REST
+                        // auth uses the STORED token while WS uses this freshly
+                        // discovered one; without syncing, a stored token that no
+                        // longer matches the dashboard's process token makes every
+                        // REST call 401 (empty rail, transcripts never load) while
+                        // the PTY still connects — the app looks Live but chats
+                        // never update. Sync is idempotent and best-effort.
+                        if (current != snapshot.sessionToken) {
+                            runCatching {
+                                connectionStore.updateSessionToken(snapshot.connectionId, current)
+                            }
+                        }
                         return@withLock "token=$current"
                     }
                 }
