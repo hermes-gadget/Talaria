@@ -33,6 +33,7 @@ import com.hermesgadget.talaria.feature.manage.files.MAX_SHARE_FILE_BYTES
 import com.hermesgadget.talaria.feature.manage.files.ShareFileManager
 import com.hermesgadget.talaria.core.util.suspendResult
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -131,6 +132,10 @@ class ArtifactsViewModel(
     private val shareRequestBuilder: (suspend (ArtifactRecord) -> ArtifactShareRequest)? = null,
     private val shareFileManager: ShareFileManager? = null,
     private val previewDirectoryOverride: File? = null,
+    /** Injectable so unit tests can drive extraction/preview work deterministically. */
+    private val defaultDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    /** Injectable so unit tests can drive file/image IO deterministically. */
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
     private val _ui = MutableStateFlow(ArtifactsUiState())
     val ui: StateFlow<ArtifactsUiState> = _ui.asStateFlow()
@@ -235,12 +240,13 @@ class ArtifactsViewModel(
                         val file = readDataUrl(artifact.path)
                         val bounded = boundedDataUrl(file.dataUrl, file.byteSize)
                         val decoded = decodeDataUrl(bounded)
-                        val prepared = withContext(Dispatchers.IO) {
+                        val prepared = withContext(ioDispatcher) {
                             BoundedImage.prepareBytes(
                                 bytes = decoded.bytes,
                                 outputDirectory = previewDirectory(),
                                 displayName = artifact.label,
                                 maxSourceBytes = MAX_ARTIFACT_PREVIEW_BYTES,
+                                dispatcher = ioDispatcher,
                             )
                         }
                         if (!isCurrentPreview(generation, artifact)) {
@@ -335,7 +341,7 @@ class ArtifactsViewModel(
                     loadMessages(session.id).getOrNull()?.let { messages ->
                         // The transcript is owned only by this short-lived task;
                         // extraction returns bounded records before the task ends.
-                        withContext(Dispatchers.Default) {
+                        withContext(defaultDispatcher) {
                             extractArtifacts(session, messages)
                         }
                     }.orEmpty()
@@ -347,7 +353,7 @@ class ArtifactsViewModel(
                 currentCoroutineContext().ensureActive()
                 accumulator.addAll(request.await())
             }
-            val sorted = withContext(Dispatchers.Default) { accumulator.sorted() }
+            val sorted = withContext(defaultDispatcher) { accumulator.sorted() }
             cachedArtifactRevision = revision
             cachedArtifacts = sorted
             sorted
@@ -405,7 +411,7 @@ class ArtifactsViewModel(
             .sortedWith(compareByDescending<ArtifactRecord> { it.timestamp.orEmpty() }.thenBy { it.path })
     }
 
-    private suspend fun prepareShare(artifact: ArtifactRecord): ArtifactShareRequest = withContext(Dispatchers.IO) {
+    private suspend fun prepareShare(artifact: ArtifactRecord): ArtifactShareRequest = withContext(ioDispatcher) {
         val app = TalariaApp.instance
         val safeName = artifact.label
             .replace(Regex("[^A-Za-z0-9._-]+"), "_")

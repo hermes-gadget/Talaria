@@ -10,6 +10,8 @@ import com.hermesgadget.talaria.domain.model.SessionSummary
 import com.hermesgadget.talaria.domain.model.SessionsPage
 import com.hermesgadget.talaria.util.MainDispatcherRule
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -44,7 +46,8 @@ class ArtifactsViewModelTest {
                     timestamp = "200",
                 ),
             ),
-        )
+                scope = this,
+            )
         advanceUntilIdle()
 
         val ready = vm.ui.value.load as ArtifactLoadState.Ready
@@ -58,7 +61,8 @@ class ArtifactsViewModelTest {
             messages = listOf(
                 SessionMessage(role = "assistant", content = "/tmp/a.png /tmp/b.txt /tmp/c.zip"),
             ),
-        )
+                scope = this,
+            )
         advanceUntilIdle()
 
         vm.setPage(4)
@@ -86,7 +90,8 @@ class ArtifactsViewModelTest {
                     ),
                 )
             },
-        )
+                scope = this,
+            )
         advanceUntilIdle()
 
         vm.openPreview(artifact)
@@ -116,7 +121,8 @@ class ArtifactsViewModelTest {
                     byteSize = 68,
                 )
             },
-        )
+                scope = this,
+            )
         advanceUntilIdle()
 
         vm.openPreview(artifact)
@@ -135,7 +141,8 @@ class ArtifactsViewModelTest {
         val vm = viewModel(
             messages = emptyList(),
             readText = { Result.failure(IllegalStateException("read failed")) },
-        )
+                scope = this,
+            )
         advanceUntilIdle()
 
         vm.openPreview(artifact(ArtifactKind.TEXT, "/tmp/notes.md"))
@@ -157,7 +164,8 @@ class ArtifactsViewModelTest {
         val vm = viewModel(
             messages = emptyList(),
             shareRequestBuilder = { request },
-        )
+                scope = this,
+            )
         advanceUntilIdle()
 
         vm.share(artifact)
@@ -176,6 +184,8 @@ class ArtifactsViewModelTest {
             loadMessages = { Result.success(emptyList()) },
             readText = { Result.success(FsTextFile(path = it)) },
             readDataUrl = { FsDataUrl(path = it) },
+            defaultDispatcher = StandardTestDispatcher(testScheduler),
+            ioDispatcher = StandardTestDispatcher(testScheduler),
         )
         advanceUntilIdle()
 
@@ -190,6 +200,8 @@ class ArtifactsViewModelTest {
             loadMessages = { Result.success(emptyList()) },
             readText = { Result.success(FsTextFile(path = it)) },
             readDataUrl = { FsDataUrl(path = it) },
+            defaultDispatcher = StandardTestDispatcher(testScheduler),
+            ioDispatcher = StandardTestDispatcher(testScheduler),
         )
         advanceUntilIdle()
 
@@ -216,6 +228,8 @@ class ArtifactsViewModelTest {
             readText = { Result.success(FsTextFile(path = it)) },
             readDataUrl = { FsDataUrl(path = it) },
             previewDirectoryOverride = File(System.getProperty("java.io.tmpdir"), "talaria-artifact-test"),
+            defaultDispatcher = StandardTestDispatcher(testScheduler),
+            ioDispatcher = StandardTestDispatcher(testScheduler),
         )
         advanceUntilIdle()
 
@@ -233,6 +247,7 @@ class ArtifactsViewModelTest {
         readText: suspend (String) -> Result<FsTextFile> = { Result.success(FsTextFile(path = it)) },
         readDataUrl: suspend (String) -> FsDataUrl = { FsDataUrl(path = it) },
         shareRequestBuilder: (suspend (ArtifactRecord) -> ArtifactShareRequest)? = null,
+        scope: TestScope,
     ) = ArtifactsViewModel(
         loadSessions = {
             Result.success(
@@ -251,6 +266,11 @@ class ArtifactsViewModelTest {
         readDataUrl = readDataUrl,
         shareRequestBuilder = shareRequestBuilder,
         previewDirectoryOverride = File(System.getProperty("java.io.tmpdir"), "talaria-artifact-test"),
+        // Drive every extraction/preview hop on the test scheduler so
+        // advanceUntilIdle() actually drains it (real Default/IO dispatchers
+        // are not controlled by runTest).
+        defaultDispatcher = StandardTestDispatcher(scope.testScheduler),
+        ioDispatcher = StandardTestDispatcher(scope.testScheduler),
     )
 
     private fun artifact(kind: ArtifactKind, path: String) = ArtifactRecord(

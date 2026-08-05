@@ -15,6 +15,7 @@ import java.io.FileOutputStream
 import java.io.FilterOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -77,7 +78,8 @@ internal object BoundedImage {
         outputDirectory: File,
         displayName: String?,
         maxSourceBytes: Long = MAX_SOURCE_BYTES,
-    ): PreparedImage = withContext(Dispatchers.IO) {
+        dispatcher: CoroutineDispatcher = Dispatchers.IO,
+    ): PreparedImage = withContext(dispatcher) {
         require(bytes.isNotEmpty()) { "Image is empty" }
         require(bytes.size.toLong() <= maxSourceBytes) { "Image is larger than the allowed limit" }
         outputDirectory.mkdirs()
