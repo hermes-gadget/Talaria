@@ -18,9 +18,19 @@
 package com.hermesgadget.talaria.core.data.db
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "cached_sessions", primaryKeys = ["connectionId", "id"])
+@Entity(
+    tableName = "cached_sessions",
+    primaryKeys = ["connectionId", "id"],
+    indices = [
+        Index(
+            name = "index_cached_sessions_connectionId_updatedAt",
+            value = ["connectionId", "updatedAt"],
+        ),
+    ],
+)
 data class CachedSessionEntity(
     val id: String,
     val connectionId: String,
@@ -34,7 +44,16 @@ data class CachedSessionEntity(
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
-@Entity(tableName = "cached_messages", primaryKeys = ["connectionId", "key"])
+@Entity(
+    tableName = "cached_messages",
+    primaryKeys = ["connectionId", "key"],
+    indices = [
+        Index(
+            name = "index_cached_messages_connectionId_sessionId_ordinal",
+            value = ["connectionId", "sessionId", "ordinal"],
+        ),
+    ],
+)
 data class CachedMessageEntity(
     val key: String,
     val sessionId: String,
@@ -45,7 +64,15 @@ data class CachedMessageEntity(
     val ordinal: Int,
 )
 
-@Entity(tableName = "activity_events")
+@Entity(
+    tableName = "activity_events",
+    indices = [
+        Index(
+            name = "index_activity_events_connectionId_createdAt_id",
+            value = ["connectionId", "createdAt", "id"],
+        ),
+    ],
+)
 data class ActivityEventEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val connectionId: String,

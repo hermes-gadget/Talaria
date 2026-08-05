@@ -51,7 +51,10 @@ class AppContainer(context: Context) {
         appContext,
         TalariaDatabase::class.java,
         "talaria.db",
-    ).addMigrations(TalariaDatabase.MIGRATION_1_2).build()
+    ).addMigrations(
+        TalariaDatabase.MIGRATION_1_2,
+        TalariaDatabase.MIGRATION_2_3,
+    ).build()
 
     val clientFactory = HermesClientFactory(connectionStore, settingsStore)
     val nativeOidcLogin = NativeOidcLogin(clientFactory, connectionStore)

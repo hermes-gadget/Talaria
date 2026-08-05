@@ -2939,7 +2939,11 @@ class ChatViewModel(
         runtime.transcriptDirty = true
         runtime.transcriptDirtySessionId = sessionId ?: runtime.transcriptDirtySessionId
         eventsHealthy?.let { runtime.eventsHealthy = it }
-        if (chatLifecycleStarted && _ui.value.activeTabId == tabId) {
+        if (TranscriptSyncPolicy.shouldEmitRefreshSignal(
+                lifecycleStarted = chatLifecycleStarted,
+                activeTab = _ui.value.activeTabId == tabId,
+            )
+        ) {
             transcriptSignals.tryEmit(tabId)
         }
     }

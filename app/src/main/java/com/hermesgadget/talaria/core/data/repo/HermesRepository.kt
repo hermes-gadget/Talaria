@@ -178,47 +178,58 @@ class HermesRepository(
         limit: Int = 50,
     ): Result<List<SessionSummary>> {
         val operation = captureOperation()
-        val snapshot = operation.snapshot
         return withContext(Dispatchers.IO) {
             suspendResult {
-            val (list, complete) = fetchSessionsForReconciliation(
-                operation = operation,
-                source = source,
-                limit = limit,
-            )
-            val cid = snapshot.scopeId
-            val rows = list.map {
-                CachedSessionEntity(
-                    id = it.id,
-                    connectionId = cid,
-                    title = it.title,
-                    source = it.source,
-                    model = it.model,
-                    preview = it.preview,
-                    messageCount = it.message_count,
-                    lastActive = it.last_active,
-                    json = json.encodeToString(it),
+                reconcileSessions(
+                    operation = operation,
+                    source = source,
+                    limit = limit,
                 )
             }
-            val cached = db.sessions().getAll(cid)
-            val cachedById = cached.associateBy { it.id }
-            val deleteIds = if (source == null && complete) {
-                SessionReconciliation.staleSessionIds(
-                    cachedIds = cachedById.keys,
-                    serverIds = rows.map { it.id }.toSet(),
-                ).toList()
-            } else {
-                emptyList()
-            }
-            val changedRows = SessionReconciliation.changedRows(cachedById, rows)
-            // No Room call at all when the server page is semantically equal.
-            if (deleteIds.isNotEmpty() || changedRows.isNotEmpty()) {
-                db.sessions().reconcile(cid, deleteIds, changedRows)
-            }
-            deleteIds.forEach { pruneTranscriptSession(snapshot, it) }
-            list
-            }
         }
+    }
+
+    private suspend fun reconcileSessions(
+        operation: BoundOperation,
+        source: String?,
+        limit: Int,
+    ): List<SessionSummary> {
+        val (list, complete) = fetchSessionsForReconciliation(
+            operation = operation,
+            source = source,
+            limit = limit,
+        )
+        val snapshot = operation.snapshot
+        val cid = snapshot.scopeId
+        val rows = list.map {
+            CachedSessionEntity(
+                id = it.id,
+                connectionId = cid,
+                title = it.title,
+                source = it.source,
+                model = it.model,
+                preview = it.preview,
+                messageCount = it.message_count,
+                lastActive = it.last_active,
+                json = json.encodeToString(it),
+            )
+        }
+        val cachedById = db.sessions().getAll(cid).associateBy { it.id }
+        val deleteIds = if (source == null && complete) {
+            SessionReconciliation.staleSessionIds(
+                cachedIds = cachedById.keys,
+                serverIds = rows.map { it.id }.toSet(),
+            ).toList()
+        } else {
+            emptyList()
+        }
+        val changedRows = SessionReconciliation.changedRows(cachedById, rows)
+        // No Room call at all when the server page is semantically equal.
+        if (deleteIds.isNotEmpty() || changedRows.isNotEmpty()) {
+            db.reconcileSessionCache(cid, deleteIds, changedRows)
+        }
+        deleteIds.forEach { pruneTranscriptSession(snapshot, it) }
+        return list
     }
 
     private suspend fun fetchSessionsForReconciliation(
@@ -716,7 +727,10 @@ class HermesRepository(
     }
 
     suspend fun deleteSession(id: String) = withBoundOperation { operation ->
-        operation.api.deleteSession(id)
+        operation.api.deleteSession(id, profile = operation.snapshot.managementProfile)
+        db.deleteSessionCache(operation.snapshot.scopeId, id)
+        pruneTranscriptSession(operation.snapshot, id)
+        invalidate(operation.snapshot, "sessions")
         Unit
     }
 
@@ -725,7 +739,16 @@ class HermesRepository(
     }
 
     suspend fun pruneSessions(): Result<JsonElement> = withBoundOperation { operation ->
-        operation.api.pruneSessions(buildJsonObject {})
+        val result = operation.api.pruneSessions(
+            buildJsonObject {},
+            profile = operation.snapshot.managementProfile,
+        )
+        // The prune endpoint returns a count, not a complete id list. Re-read
+        // the authoritative session set before reporting success so stale
+        // cached transcripts are removed in the same reconciliation boundary.
+        reconcileSessions(operation, source = null, limit = 50)
+        invalidate(operation.snapshot, "sessions")
+        result
     }
 
     suspend fun getModelInfo(): Result<ModelInfo> = withBoundOperation { operation ->

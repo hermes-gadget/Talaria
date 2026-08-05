@@ -24,6 +24,8 @@ import androidx.room.Query
 import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
+private const val DELETE_BATCH_SIZE = 500
+
 @Dao
 interface SessionDao {
     @Query("SELECT * FROM cached_sessions WHERE connectionId = :connectionId ORDER BY updatedAt DESC")
@@ -39,9 +41,20 @@ interface SessionDao {
     suspend fun clear(connectionId: String)
 
     @Query("DELETE FROM cached_sessions WHERE connectionId = :connectionId AND id IN (:ids)")
-    suspend fun deleteByIds(connectionId: String, ids: List<String>)
+    suspend fun deleteByIdsBatch(connectionId: String, ids: List<String>)
 
-    /** Atomically prune server-deleted sessions and write changed rows. */
+    /** Keep Room's bind-variable usage bounded for an authoritative full prune. */
+    suspend fun deleteByIds(connectionId: String, ids: List<String>) {
+        ids.chunked(DELETE_BATCH_SIZE).forEach { batch ->
+            deleteByIdsBatch(connectionId, batch)
+        }
+    }
+
+    /**
+     * Metadata-only transaction retained for DAO callers; repository
+     * reconciliation uses [TalariaDatabase.reconcileSessionCache] so message
+     * rows are deleted in the same cross-DAO transaction.
+     */
     @Transaction
     suspend fun reconcile(
         connectionId: String,
@@ -66,6 +79,16 @@ interface MessageDao {
 
     @Query("DELETE FROM cached_messages WHERE connectionId = :connectionId AND sessionId = :sessionId")
     suspend fun clearSession(connectionId: String, sessionId: String)
+
+    @Query("DELETE FROM cached_messages WHERE connectionId = :connectionId AND sessionId IN (:sessionIds)")
+    suspend fun deleteBySessionIdsBatch(connectionId: String, sessionIds: List<String>)
+
+    /** Delete transcript rows in bounded batches; SQLite has a finite bind limit. */
+    suspend fun deleteBySessionIds(connectionId: String, sessionIds: List<String>) {
+        sessionIds.chunked(DELETE_BATCH_SIZE).forEach { batch ->
+            deleteBySessionIdsBatch(connectionId, batch)
+        }
+    }
 
     /** Atomic full-transcript replace: no window where readers see half-old/half-new rows. */
     @Transaction

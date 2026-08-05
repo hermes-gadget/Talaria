@@ -6,11 +6,15 @@
 package com.hermesgadget.talaria.feature.chat
 
 import com.hermesgadget.talaria.core.network.HermesSideEvent
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class TranscriptSyncPolicyTest {
     @Test
     fun `completion is scoped while session changes also refresh the registry`() {
@@ -78,4 +82,38 @@ class TranscriptSyncPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `five tabs keep inactive work quiet and resume emits one active scoped refresh`() =
+        runTest(StandardTestDispatcher()) {
+            val tabs = (1..5).map { "tab-$it" }
+            val activeTab = tabs[2]
+
+            assertTrue(
+                tabs.all { tab ->
+                    !TranscriptSyncPolicy.shouldRunFallback(
+                        lifecycleStarted = false,
+                        activeTab = tab == activeTab,
+                        visible = false,
+                        working = true,
+                        eventsHealthy = false,
+                    )
+                },
+            )
+            assertEquals(
+                listOf(activeTab),
+                tabs.filter {
+                    TranscriptSyncPolicy.shouldEmitRefreshSignal(
+                        lifecycleStarted = true,
+                        activeTab = it == activeTab,
+                    )
+                },
+            )
+            assertFalse(
+                TranscriptSyncPolicy.shouldEmitRefreshSignal(
+                    lifecycleStarted = false,
+                    activeTab = true,
+                ),
+            )
+        }
 }

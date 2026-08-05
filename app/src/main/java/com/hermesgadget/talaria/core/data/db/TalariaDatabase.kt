@@ -20,6 +20,7 @@ package com.hermesgadget.talaria.core.data.db
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
+import androidx.room.withTransaction
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
@@ -29,7 +30,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ActivityEventEntity::class,
         ChatDraftEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class TalariaDatabase : RoomDatabase() {
@@ -37,6 +38,33 @@ abstract class TalariaDatabase : RoomDatabase() {
     abstract fun messages(): MessageDao
     abstract fun activity(): ActivityDao
     abstract fun drafts(): DraftDao
+
+    /**
+     * Reconcile session metadata and transcripts as one unit. A server list is
+     * authoritative only when both tables agree, so a failed delete/upsert
+     * rolls back the whole cache mutation.
+     */
+    suspend fun reconcileSessionCache(
+        connectionId: String,
+        deleteIds: List<String>,
+        upserts: List<CachedSessionEntity>,
+    ) {
+        withTransaction {
+            if (deleteIds.isNotEmpty()) {
+                sessions().deleteByIds(connectionId, deleteIds)
+                messages().deleteBySessionIds(connectionId, deleteIds)
+            }
+            if (upserts.isNotEmpty()) sessions().upsertAll(upserts)
+        }
+    }
+
+    suspend fun deleteSessionCache(connectionId: String, sessionId: String) {
+        reconcileSessionCache(
+            connectionId = connectionId,
+            deleteIds = listOf(sessionId),
+            upserts = emptyList(),
+        )
+    }
 
     companion object {
         /**
@@ -99,6 +127,27 @@ abstract class TalariaDatabase : RoomDatabase() {
                     """.trimIndent(),
                 )
                 db.execSQL("DROP TABLE cached_messages_v1")
+            }
+        }
+
+        /** Add the query-shaping indices without rebuilding or discarding data. */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_cached_sessions_connectionId_updatedAt` " +
+                        "ON `cached_sessions` (`connectionId`, `updatedAt`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_cached_messages_connectionId_sessionId_ordinal` " +
+                        "ON `cached_messages` (`connectionId`, `sessionId`, `ordinal`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_activity_events_connectionId_createdAt_id` " +
+                        "ON `activity_events` (`connectionId`, `createdAt`, `id`)"
+                )
             }
         }
     }

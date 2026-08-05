@@ -70,6 +70,10 @@ internal object TranscriptSyncPolicy {
         eventsHealthy: Boolean,
     ): Boolean = lifecycleStarted && activeTab && visible && working && !eventsHealthy
 
+    /** Dirty signals are retained for inactive tabs and emitted only when scoped to the active tab. */
+    fun shouldEmitRefreshSignal(lifecycleStarted: Boolean, activeTab: Boolean): Boolean =
+        lifecycleStarted && activeTab
+
     fun nextFallbackDelay(previousDelayMs: Long, refreshSucceeded: Boolean): Long {
         val previous = previousDelayMs.coerceIn(IMMEDIATE_FALLBACK_DELAY_MS, MAX_FALLBACK_DELAY_MS)
         val next = if (previous <= IMMEDIATE_FALLBACK_DELAY_MS) {
