@@ -67,6 +67,84 @@ interface SessionDao {
 }
 
 @Dao
+interface SessionOrganizationDao {
+    @Query(
+        "SELECT * FROM local_session_collections " +
+            "WHERE connectionId = :connectionId ORDER BY kind ASC, name COLLATE NOCASE ASC",
+    )
+    fun observeCollections(connectionId: String): Flow<List<LocalSessionCollectionEntity>>
+
+    @Query("SELECT * FROM local_session_collections WHERE connectionId = :connectionId ORDER BY kind ASC, name COLLATE NOCASE ASC")
+    suspend fun getCollections(connectionId: String): List<LocalSessionCollectionEntity>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertCollection(collection: LocalSessionCollectionEntity): Long
+
+    @Query("DELETE FROM local_session_collection_links WHERE connectionId = :connectionId AND collectionId = :collectionId")
+    suspend fun deleteLinksForCollection(connectionId: String, collectionId: Long)
+
+    @Query(
+        "UPDATE saved_session_filters SET labelId = NULL, groupId = NULL " +
+            "WHERE connectionId = :connectionId AND (labelId = :collectionId OR groupId = :collectionId)",
+    )
+    suspend fun clearFilterCollectionReferences(connectionId: String, collectionId: Long)
+
+    @Query("DELETE FROM local_session_collections WHERE connectionId = :connectionId AND id = :collectionId")
+    suspend fun deleteCollectionRow(connectionId: String, collectionId: Long)
+
+    @Transaction
+    suspend fun deleteCollection(connectionId: String, collectionId: Long) {
+        deleteLinksForCollection(connectionId, collectionId)
+        clearFilterCollectionReferences(connectionId, collectionId)
+        deleteCollectionRow(connectionId, collectionId)
+    }
+
+    @Query("SELECT * FROM local_session_collection_links WHERE connectionId = :connectionId")
+    fun observeCollectionLinks(connectionId: String): Flow<List<LocalSessionCollectionLinkEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun addCollectionLink(link: LocalSessionCollectionLinkEntity)
+
+    @Query(
+        "DELETE FROM local_session_collection_links " +
+            "WHERE connectionId = :connectionId AND sessionId = :sessionId AND collectionId = :collectionId",
+    )
+    suspend fun deleteCollectionLink(connectionId: String, sessionId: String, collectionId: Long)
+
+    @Query("SELECT * FROM local_session_favorites WHERE connectionId = :connectionId")
+    fun observeFavorites(connectionId: String): Flow<List<LocalSessionFavoriteEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun addFavorite(favorite: LocalSessionFavoriteEntity)
+
+    @Query("DELETE FROM local_session_favorites WHERE connectionId = :connectionId AND sessionId = :sessionId")
+    suspend fun deleteFavorite(connectionId: String, sessionId: String)
+
+    @Query("SELECT * FROM saved_session_filters WHERE connectionId = :connectionId ORDER BY updatedAt DESC, id DESC")
+    fun observeSavedFilters(connectionId: String): Flow<List<SavedSessionFilterEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSavedFilter(filter: SavedSessionFilterEntity): Long
+
+    @Query("DELETE FROM saved_session_filters WHERE connectionId = :connectionId AND id = :filterId")
+    suspend fun deleteSavedFilter(connectionId: String, filterId: Long)
+
+    @Query("DELETE FROM local_session_collection_links WHERE connectionId = :connectionId AND sessionId IN (:sessionIds)")
+    suspend fun deleteCollectionLinksForSessionsBatch(connectionId: String, sessionIds: List<String>)
+
+    @Query("DELETE FROM local_session_favorites WHERE connectionId = :connectionId AND sessionId IN (:sessionIds)")
+    suspend fun deleteFavoritesForSessionsBatch(connectionId: String, sessionIds: List<String>)
+
+    /** Remove local metadata only for rows deleted from this exact profile scope. */
+    suspend fun deleteSessions(connectionId: String, sessionIds: List<String>) {
+        sessionIds.chunked(DELETE_BATCH_SIZE).forEach { batch ->
+            deleteCollectionLinksForSessionsBatch(connectionId, batch)
+            deleteFavoritesForSessionsBatch(connectionId, batch)
+        }
+    }
+}
+
+@Dao
 interface MessageDao {
     @Query("SELECT * FROM cached_messages WHERE connectionId = :connectionId AND sessionId = :sessionId ORDER BY ordinal ASC")
     fun observeMessages(connectionId: String, sessionId: String): Flow<List<CachedMessageEntity>>

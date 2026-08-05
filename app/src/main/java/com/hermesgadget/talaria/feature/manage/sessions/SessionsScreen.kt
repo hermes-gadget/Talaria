@@ -76,13 +76,18 @@ fun SessionsScreen(
     onOpen: (String) -> Unit,
     onResume: (String) -> Unit,
     adminVm: SessionAdminViewModel = viewModel(factory = SessionAdminViewModel.factory()),
+    organizationVm: SessionOrganizationViewModel = viewModel(
+        factory = SessionOrganizationViewModel.factory(),
+    ),
 ) {
     val repo = TalariaApp.instance.container.hermesRepository
     val context = LocalContext.current
     val spacing = LocalSpacing.current
     val scope = rememberCoroutineScope()
     val adminUi by adminVm.ui.collectAsStateWithLifecycle()
+    val organizationUi by organizationVm.ui.collectAsStateWithLifecycle()
     var tab by remember { mutableStateOf(SessionTab.Chats) }
+    var organizationFilter by remember { mutableStateOf<SessionOrganizationFilter>(SessionOrganizationFilter.All) }
     var sourceFilter by remember { mutableStateOf("") }
     var sourceExpanded by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
@@ -95,6 +100,7 @@ fun SessionsScreen(
     var confirmEmptyDelete by remember { mutableStateOf(false) }
     var deleteSession by remember { mutableStateOf<SessionSummary?>(null) }
     var compactSession by remember { mutableStateOf<SessionSummary?>(null) }
+    var organizeSessionId by remember { mutableStateOf<String?>(null) }
     var actionsExpanded by remember { mutableStateOf(false) }
     var reloadNonce by remember { mutableIntStateOf(0) }
     var requestGeneration by remember { mutableIntStateOf(0) }
@@ -174,6 +180,34 @@ fun SessionsScreen(
         }
     }
 
+    val adminContent = (adminUi as? SessionAdminUiState.Content)?.value
+    val organization = organizationUi.organization
+    LaunchedEffect(organization.savedFilters) {
+        if (organizationFilter is SessionOrganizationFilter.Saved &&
+            organization.savedFilters.none { it.id == (organizationFilter as SessionOrganizationFilter.Saved).id }
+        ) {
+            organizationFilter = SessionOrganizationFilter.All
+        }
+    }
+    val localVisibleSessions = sessions.filter { session ->
+        SessionFilters.matchesOrganizationFilter(
+            session = session,
+            filter = organizationFilter,
+            pinnedIds = adminContent?.pinnedIds.orEmpty(),
+            organization = organization,
+        )
+    }
+    val visibleSessions = SessionFilters.prioritizePinned(
+        localVisibleSessions,
+        adminContent?.pinnedIds.orEmpty(),
+    )
+    val hasActiveBulkFilter = tab != SessionTab.All ||
+        sourceFilter.isNotBlank() || query.isNotBlank() ||
+        organizationFilter != SessionOrganizationFilter.All
+    LaunchedEffect(visibleSessions.map { it.id }.toSet()) {
+        adminVm.retainSelection(visibleSessions.map { it.id })
+    }
+
     if (confirmPrune) {
         AlertDialog(
             onDismissRequest = { confirmPrune = false },
@@ -197,6 +231,20 @@ fun SessionsScreen(
         )
     }
 
+    organizeSessionId?.let { sessionId ->
+        SessionOrganizationDialog(
+            sessionId = sessionId,
+            organization = organizationUi.organization,
+            enabled = !organizationUi.busy,
+            onDismiss = { organizeSessionId = null },
+            onToggleFavorite = { organizationVm.toggleFavorite(sessionId) },
+            onToggleCollection = { collectionId, assigned ->
+                organizationVm.setCollectionMembership(sessionId, collectionId, assigned)
+            },
+            onCreateCollection = organizationVm::createCollection,
+        )
+    }
+
     if (confirmBulkDelete) {
         val selectedCount = (adminUi as? SessionAdminUiState.Content)?.value?.selectedIds?.size ?: 0
         AlertDialog(
@@ -210,7 +258,7 @@ fun SessionsScreen(
                     // acknowledged (adminVm.bulkDeleteSelected -> loadSnapshot);
                     // reloading here races the async delete and can resurrect
                     // the just-deleted rows in the UI.
-                    adminVm.bulkDeleteSelected()
+                    adminVm.bulkDeleteSelected(visibleSessions.map { it.id })
                 }) { Text("Delete") }
             },
             dismissButton = { TextButton(onClick = { confirmBulkDelete = false }) { Text("Cancel") } },
@@ -275,8 +323,6 @@ fun SessionsScreen(
         )
     }
 
-    val adminContent = (adminUi as? SessionAdminUiState.Content)?.value
-    val visibleSessions = SessionFilters.prioritizePinned(sessions, adminContent?.pinnedIds.orEmpty())
     ScreenScaffold(
         stringResource(R.string.sessions_title),
         stringResource(R.string.sessions_subtitle),
@@ -294,6 +340,7 @@ fun SessionsScreen(
                 ) {
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.sessions_import)) },
+                        enabled = !hasActiveBulkFilter,
                         onClick = {
                             actionsExpanded = false
                             importFileLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
@@ -309,6 +356,7 @@ fun SessionsScreen(
                     )
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.sessions_prune)) },
+                        enabled = !hasActiveBulkFilter,
                         onClick = {
                             actionsExpanded = false
                             confirmPrune = true
@@ -325,12 +373,13 @@ fun SessionsScreen(
             adminContent?.message?.let { Text(it, color = MaterialTheme.colorScheme.secondary) }
             importMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             CollapsibleSection(stringResource(R.string.sessions_overview), collapsible = true) {
-                adminContent?.stats?.let { StatsCards(it) }
+                adminContent?.stats?.let { StatsCards(it, filtered = hasActiveBulkFilter) }
             }
             CollapsibleSection(stringResource(R.string.sessions_administration), collapsible = true) {
                 AdminActions(
                     admin = adminContent,
                     visibleIds = visibleSessions.map { it.id },
+                    filtered = hasActiveBulkFilter,
                     onSelectAll = { adminVm.selectAll(visibleSessions.map { it.id }) },
                     onClearSelection = adminVm::clearSelection,
                     onBulkDelete = { confirmBulkDelete = true },
@@ -370,6 +419,37 @@ fun SessionsScreen(
                         }
                     }
                 }
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    LocalBadge()
+                    FilterChip(
+                        selected = organizationFilter == SessionOrganizationFilter.All,
+                        onClick = { organizationFilter = SessionOrganizationFilter.All },
+                        label = { Text(stringResource(R.string.sessions_tab_all)) },
+                    )
+                    FilterChip(
+                        selected = organizationFilter == SessionOrganizationFilter.Pinned,
+                        onClick = { organizationFilter = SessionOrganizationFilter.Pinned },
+                        label = { Text(stringResource(R.string.sessions_pinned)) },
+                    )
+                    FilterChip(
+                        selected = organizationFilter == SessionOrganizationFilter.Favorites,
+                        onClick = { organizationFilter = SessionOrganizationFilter.Favorites },
+                        label = { Text(stringResource(R.string.sessions_favorites)) },
+                    )
+                    organization.savedFilters.forEach { savedFilter ->
+                        FilterChip(
+                            selected = organizationFilter == SessionOrganizationFilter.Saved(savedFilter.id),
+                            onClick = {
+                                organizationFilter = SessionOrganizationFilter.Saved(savedFilter.id)
+                            },
+                            label = { Text(savedFilter.name) },
+                        )
+                    }
+                }
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
@@ -395,6 +475,7 @@ fun SessionsScreen(
                 )
             }
             message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            organizationUi.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             LazyColumn(modifier = Modifier.weight(1f, fill = true)) {
                 items(visibleSessions, key = { it.id }) { session ->
                     val selected = adminContent?.selectedIds?.contains(session.id) == true
@@ -431,6 +512,7 @@ fun SessionsScreen(
                                 Text(
                                     listOfNotNull(
                                         session.source,
+                                        session.platform,
                                         session.model,
                                         session.message_count?.let { "$it msgs" },
                                         formatHermesTimestamp(session.last_active),
@@ -441,6 +523,10 @@ fun SessionsScreen(
                                 session.preview?.takeIf { it.isNotBlank() }?.let {
                                     Text(it.take(120), style = MaterialTheme.typography.bodySmall)
                                 }
+                                SessionLocalBadges(
+                                    sessionId = session.id,
+                                    organization = organization,
+                                )
                             }
                             SessionOverflowMenu(
                                 pinned = session.id in adminContent?.pinnedIds.orEmpty(),
@@ -448,6 +534,7 @@ fun SessionsScreen(
                                 onResume = { onResume(session.id) },
                                 onOpen = { onOpen(session.id) },
                                 onTogglePin = { adminVm.togglePinned(session.id) },
+                                onOrganize = { organizeSessionId = session.id },
                                 onCompact = { compactSession = session },
                                 onDelete = { deleteSession = session },
                             )
@@ -466,6 +553,7 @@ private fun SessionOverflowMenu(
     onResume: () -> Unit,
     onOpen: () -> Unit,
     onTogglePin: () -> Unit,
+    onOrganize: () -> Unit,
     onCompact: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -481,6 +569,10 @@ private fun SessionOverflowMenu(
             )
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.sessions_organize_local)) },
+                onClick = { expanded = false; onOrganize() },
+            )
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.sessions_resume)) },
                 onClick = { expanded = false; onResume() },
@@ -517,7 +609,7 @@ private fun sessionTabLabel(tab: SessionTab): String = stringResource(
 )
 
 @Composable
-private fun StatsCards(stats: SessionStats) {
+private fun StatsCards(stats: SessionStats, filtered: Boolean) {
     Row(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -546,12 +638,20 @@ private fun StatsCards(stats: SessionStats) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+    if (filtered) {
+        Text(
+            stringResource(R.string.sessions_stats_server_wide),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 @Composable
 private fun AdminActions(
     admin: SessionAdminContent?,
     visibleIds: List<String>,
+    filtered: Boolean,
     onSelectAll: () -> Unit,
     onClearSelection: () -> Unit,
     onBulkDelete: () -> Unit,
@@ -559,6 +659,13 @@ private fun AdminActions(
 ) {
     if (admin == null) return
     val selectedCount = admin.selectedIds.size
+    if (filtered) {
+        Text(
+            stringResource(R.string.sessions_bulk_filtered_notice),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.secondary,
+        )
+    }
     Row(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -572,7 +679,10 @@ private fun AdminActions(
         TextButton(onClick = onBulkDelete, enabled = selectedCount > 0 && !admin.busy) {
             Text(stringResource(R.string.sessions_delete_selected, selectedCount))
         }
-        TextButton(onClick = onDeleteEmpty, enabled = (admin.emptyCount ?: 0) > 0 && !admin.busy) {
+        TextButton(
+            onClick = onDeleteEmpty,
+            enabled = !filtered && (admin.emptyCount ?: 0) > 0 && !admin.busy,
+        ) {
             Text(stringResource(R.string.sessions_delete_empty, admin.emptyCount ?: 0))
         }
     }

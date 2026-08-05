@@ -212,6 +212,7 @@ class HermesRepository(
                 messageCount = it.message_count,
                 lastActive = it.last_active,
                 json = json.encodeToString(it),
+                platform = it.platform,
             )
         }
         val cachedById = db.sessions().getAll(cid).associateBy { it.id }

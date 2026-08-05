@@ -73,6 +73,7 @@ import com.hermesgadget.talaria.feature.manage.profiles.ProfilesScreen
 import com.hermesgadget.talaria.feature.manage.review.ReviewScreen
 import com.hermesgadget.talaria.feature.manage.sessions.SessionDetailScreen
 import com.hermesgadget.talaria.feature.manage.sessions.SessionsScreen
+import com.hermesgadget.talaria.feature.manage.sessions.SavedFiltersScreen
 import com.hermesgadget.talaria.feature.manage.skills.SkillsScreen
 import com.hermesgadget.talaria.feature.manage.status.StatusScreen
 import com.hermesgadget.talaria.feature.manage.curator.CuratorScreen
@@ -380,6 +381,7 @@ fun TalariaNavRoot(
                         onResume = { navController.navigate(Routes.chat(it)) },
                     )
                 }
+                composable(Routes.SAVED_FILTERS) { SavedFiltersScreen() }
                 composable(
                     Routes.SESSION_DETAIL,
                     arguments = listOf(navArgument("id") { type = NavType.StringType }),

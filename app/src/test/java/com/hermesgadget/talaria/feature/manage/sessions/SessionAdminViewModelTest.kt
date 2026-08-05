@@ -70,6 +70,20 @@ class SessionAdminViewModelTest {
     }
 
     @Test
+    fun bulkDeleteIntersectsTheVisibleFilterBeforeCallingHermes() = runTest {
+        val gateway = FakeSessionAdminGateway()
+        val vm = viewModel(gateway)
+        advanceUntilIdle()
+
+        vm.setSelected("visible", true)
+        vm.setSelected("hidden", true)
+        vm.bulkDeleteSelected(visibleIds = listOf("visible"))
+        advanceUntilIdle()
+
+        assertEquals(setOf("visible"), gateway.bulkDeletedIds)
+    }
+
+    @Test
     fun emptyDeleteRefreshesWithDeletedCount() = runTest {
         val gateway = FakeSessionAdminGateway()
         val vm = viewModel(gateway)
