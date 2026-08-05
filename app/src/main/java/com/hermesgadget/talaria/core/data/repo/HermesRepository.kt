@@ -44,6 +44,8 @@ import com.hermesgadget.talaria.domain.model.MessagingPlatform
 import com.hermesgadget.talaria.domain.model.ModelInfo
 import com.hermesgadget.talaria.domain.model.ModelOption
 import com.hermesgadget.talaria.domain.model.ModelProvider
+import com.hermesgadget.talaria.domain.model.OpsActionResponse
+import com.hermesgadget.talaria.domain.model.OpsBackupRequest
 import com.hermesgadget.talaria.domain.model.PairingResponse
 import com.hermesgadget.talaria.domain.model.ProfileInfo
 import com.hermesgadget.talaria.domain.model.SessionMessage
@@ -73,6 +75,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import okhttp3.ResponseBody
 
 class HermesRepository(
     private val clientFactory: HermesClientFactory,
@@ -108,13 +111,34 @@ class HermesRepository(
     // Read-through cache so flipping between Manage menus is instant. Only the
     // "open once, browse" surfaces route through it; live pollers (Status) and
     // security-sensitive reads (pairing) fetch fresh every time.
-    private val cache = ResponseCache()
+    private val cache = ResponseCache(
+        maxEntries = 64,
+        maxWeight = 8L * 1024L * 1024L,
+    )
     /** Last successful server fingerprint per connection/profile/session. */
-    private val transcriptFingerprints = mutableMapOf<String, TranscriptFingerprint>()
-    private val transcriptFingerprintLock = Any()
+    private val transcriptFingerprints = ResponseCache(
+        maxEntries = 128,
+        maxWeight = 256L * 1024L,
+    )
 
     /** Drop all cached responses (call on profile / management-scope change). */
-    fun clearCache() = cache.clear()
+    fun clearCache() {
+        cache.clear()
+        transcriptFingerprints.clear()
+    }
+
+    private fun pruneTranscriptSession(snapshot: ConnectionSnapshot, sessionId: String) {
+        transcriptFingerprints.invalidateWhere { key ->
+            key.startsWith("${snapshot.connectionId}|") && key.endsWith("|$sessionId")
+        }
+    }
+
+    private fun pruneTranscriptProfile(profileName: String) {
+        transcriptFingerprints.invalidateWhere { key ->
+            key.substringAfter('|', missingDelimiterValue = "")
+                .substringBefore('|') == profileName
+        }
+    }
 
     private fun invalidate(snapshot: ConnectionSnapshot, vararg keys: String) {
         keys.forEach { cache.invalidate("${snapshot.scopeId}:$it") }
@@ -136,6 +160,7 @@ class HermesRepository(
         const val DEFAULT_CACHE_TTL_MS = 20_000L
         // Schema/defaults are effectively static for a gateway lifetime.
         const val STATIC_CACHE_TTL_MS = 300_000L
+        const val TRANSCRIPT_FINGERPRINT_TTL_MS = 5L * 60L * 1000L
     }
 
     fun observeSessions(): Flow<List<CachedSessionEntity>> = db.sessions().observeSessions(connId())
@@ -190,6 +215,7 @@ class HermesRepository(
             if (deleteIds.isNotEmpty() || changedRows.isNotEmpty()) {
                 db.sessions().reconcile(cid, deleteIds, changedRows)
             }
+            deleteIds.forEach { pruneTranscriptSession(snapshot, it) }
             list
             }
         }
@@ -326,9 +352,10 @@ class HermesRepository(
                     .getSessionMessages(sessionId, profile = profile)
                 val fingerprint = TranscriptFingerprintFactory.from(response)
                 val key = "${snapshot.connectionId}|$profile|$sessionId"
-                val previous = synchronized(transcriptFingerprintLock) {
-                    transcriptFingerprints[key]
-                }
+                val previous = transcriptFingerprints.peek(
+                    key,
+                    TRANSCRIPT_FINGERPRINT_TTL_MS,
+                ) as? TranscriptFingerprint
                 val contentChanged = TranscriptFingerprintFactory.contentChanged(previous, fingerprint)
 
                 if (contentChanged && profile == snapshot.managementProfile) {
@@ -351,9 +378,7 @@ class HermesRepository(
                         db.messages().replaceSessionMessages(cid, sessionId, rows)
                     }
                 }
-                synchronized(transcriptFingerprintLock) {
-                    transcriptFingerprints[key] = fingerprint
-                }
+                transcriptFingerprints.put(key, fingerprint, TRANSCRIPT_FINGERPRINT_TTL_MS)
                 TranscriptSnapshot(
                     messages = response.messages,
                     fingerprint = fingerprint,
@@ -643,12 +668,14 @@ class HermesRepository(
     suspend fun renameProfile(name: String, newName: String): Result<Unit> = withBoundOperation { operation ->
         operation.api.renameProfile(name, buildJsonObject { put("new_name", newName.trim()) })
         invalidate(operation.snapshot, "profiles")
+        pruneTranscriptProfile(name)
         Unit
     }
 
     suspend fun deleteProfile(name: String): Result<Unit> = withBoundOperation { operation ->
         operation.api.deleteProfile(name)
         invalidate(operation.snapshot, "profiles")
+        pruneTranscriptProfile(name)
         Unit
     }
 
@@ -931,6 +958,23 @@ class HermesRepository(
     suspend fun runBackupToCompletion() = withBoundOperation { operation ->
         awaitAction(operation.api.runBackup(), operation.api)
     }
+
+    /** Keep the ops backup request on the same snapshot-bound repository path. */
+    suspend fun createOpsBackup(request: OpsBackupRequest = OpsBackupRequest()): OpsActionResponse =
+        withBoundOperation { operation -> operation.api.createOpsBackup(request) }.getOrThrow()
+
+    /** Return the streaming body from the same snapshot-bound API facade. */
+    suspend fun downloadOpsBackup(archive: String): ResponseBody =
+        withBoundOperation { operation -> operation.api.downloadOpsBackup(archive) }.getOrThrow()
+
+    /** Create and download a backup through one captured transport scope. */
+    suspend fun createAndDownloadOpsBackup(): Pair<String, ResponseBody> =
+        withBoundOperation { operation ->
+            val response = operation.api.createOpsBackup(OpsBackupRequest())
+            val archive = response.archive?.takeIf { it.isNotBlank() }
+                ?: error(response.error ?: "The backup endpoint did not return an archive")
+            archive to operation.api.downloadOpsBackup(archive)
+        }.getOrThrow()
 
     suspend fun checkUpdate(): Result<JsonElement> = withBoundOperation { operation ->
         operation.api.checkUpdate()

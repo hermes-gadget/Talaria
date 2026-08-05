@@ -39,6 +39,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -287,7 +288,20 @@ fun SystemScreen() {
                         ) { Text("Create & share backup") }
                         when (val state = ui.backupDownload) {
                             BackupDownloadUiState.Idle -> Unit
-                            BackupDownloadUiState.Running -> Text("Creating and downloading backup…")
+                            is BackupDownloadUiState.Running -> {
+                                Text("Creating and downloading backup…")
+                                if (state.totalBytes > 0L) {
+                                    LinearProgressIndicator(
+                                        progress = {
+                                            (state.bytesCopied.toFloat() / state.totalBytes.toFloat())
+                                                .coerceIn(0f, 1f)
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                } else {
+                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                }
+                            }
                             is BackupDownloadUiState.Complete -> {
                                 Text(
                                     "Downloaded ${formatBytes(state.bytes)} and opened the share sheet",

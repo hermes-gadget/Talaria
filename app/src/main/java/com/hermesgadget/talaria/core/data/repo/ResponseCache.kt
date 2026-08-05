@@ -16,53 +16,114 @@
 
 package com.hermesgadget.talaria.core.data.repo
 
-import java.util.concurrent.ConcurrentHashMap
+import java.util.LinkedHashMap
+import kotlinx.coroutines.CancellationException
 
 /**
- * Tiny in-memory read-through cache that makes flipping between Manage menus
- * feel instant: the first visit hits the network, subsequent visits within the
- * TTL return the last decoded value synchronously (no thread hop, no spinner).
+ * A small, thread-safe weighted LRU read-through cache.
  *
- * Entries are keyed per active connection so switching profiles never shows the
- * previous profile's data. Mutations invalidate the affected key so a toggle is
- * never masked by a stale hit.
- *
- * This is deliberately a value cache, not a request de-duplicator: it trades a
- * bounded staleness window (the TTL) for zero-latency re-navigation. Live
- * surfaces that must never be stale (Status polling, pairing) simply don't route
- * through it.
+ * Callers still provide a read TTL because different repository surfaces have
+ * different freshness requirements. Entries also carry the TTL used when they
+ * were stored, so a longer later read cannot resurrect an older value. Both
+ * entry count and approximate weight are bounded; oversized values are never
+ * retained.
  */
 class ResponseCache(
     private val now: () -> Long = System::currentTimeMillis,
+    private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
+    private val maxWeight: Long = DEFAULT_MAX_WEIGHT,
+    private val weigher: (Any?) -> Long = ::defaultWeight,
 ) {
-    private data class Entry(val value: Any?, val storedAt: Long)
+    private data class Entry(
+        val value: Any,
+        val storedAt: Long,
+        val expiresAt: Long,
+        val weight: Long,
+    )
 
-    private val entries = ConcurrentHashMap<String, Entry>()
+    private val lock = Any()
+    private val entries = LinkedHashMap<String, Entry>(16, 0.75f, true)
+    private var totalWeight = 0L
 
-    /** Fresh cached value for [key], or null when absent/expired. */
-    fun peek(key: String, ttlMs: Long): Any? {
-        val e = entries[key] ?: return null
-        return if (now() - e.storedAt <= ttlMs) e.value else null
+    init {
+        require(maxEntries > 0) { "Response cache entry count must be positive" }
+        require(maxWeight > 0L) { "Response cache weight must be positive" }
     }
 
-    fun put(key: String, value: Any?) {
-        entries[key] = Entry(value, now())
+    /** Fresh cached value for [key], or null when absent/expired. */
+    fun peek(key: String, ttlMs: Long): Any? = synchronized(lock) {
+        val currentTime = now()
+        pruneExpiredLocked(currentTime)
+        val entry = entries[key] ?: return@synchronized null
+        val requestedExpiry = expiry(entry.storedAt, ttlMs)
+        if (currentTime <= entry.expiresAt && currentTime <= requestedExpiry) {
+            entry.value
+        } else {
+            removeLocked(key)
+            null
+        }
+    }
+
+    /** Store a value with its own expiry. Nulls are intentionally not cached. */
+    fun put(key: String, value: Any?, ttlMs: Long = DEFAULT_ENTRY_TTL_MS) {
+        if (value == null || ttlMs < 0L) {
+            invalidate(key)
+            return
+        }
+        val weight = weigher(value).coerceAtLeast(0L)
+        synchronized(lock) {
+            val currentTime = now()
+            pruneExpiredLocked(currentTime)
+            removeLocked(key)
+            if (weight > maxWeight || ttlMs == 0L) return
+            entries[key] = Entry(
+                value = value,
+                storedAt = currentTime,
+                expiresAt = expiry(currentTime, ttlMs),
+                weight = weight,
+            )
+            totalWeight = safeAdd(totalWeight, weight)
+            trimLocked()
+        }
     }
 
     /** Drop a single key (call after a mutation to its data). */
-    fun invalidate(key: String) {
-        entries.remove(key)
+    fun invalidate(key: String) = synchronized(lock) {
+        removeLocked(key)
+    }
+
+    /** Drop keys whose names begin with [prefix]. */
+    fun invalidatePrefix(prefix: String) = synchronized(lock) {
+        entries.keys.filter { it.startsWith(prefix) }.forEach(::removeLocked)
+    }
+
+    /** Drop keys matching an arbitrary predicate, useful for deleted scopes. */
+    fun invalidateWhere(predicate: (String) -> Boolean) = synchronized(lock) {
+        entries.keys.filter(predicate).forEach(::removeLocked)
+    }
+
+    /** Drop expired values even when no caller happens to read their key. */
+    fun pruneExpired() = synchronized(lock) {
+        pruneExpiredLocked(now())
     }
 
     /** Drop everything (call on profile/management-scope change or disconnect). */
-    fun clear() {
+    fun clear() = synchronized(lock) {
         entries.clear()
+        totalWeight = 0L
     }
+
+    /** Exposed for deterministic boundary tests and diagnostics. */
+    internal val entryCount: Int
+        get() = synchronized(lock) { entries.size }
+
+    /** Exposed for deterministic boundary tests and diagnostics. */
+    internal val currentWeight: Long
+        get() = synchronized(lock) { totalWeight }
 
     /**
      * Return a fresh cached value if present, otherwise run [fetch], store the
-     * success, and return it. On a hit nothing suspends, so the caller resumes on
-     * the same frame. Failures are never cached.
+     * success, and return it. Failures are never cached.
      */
     @Suppress("UNCHECKED_CAST")
     suspend fun <T> readThrough(
@@ -71,6 +132,58 @@ class ResponseCache(
         fetch: suspend () -> T,
     ): Result<T> {
         peek(key, ttlMs)?.let { return Result.success(it as T) }
-        return runCatching { fetch() }.onSuccess { put(key, it) }
+        return try {
+            Result.success(fetch()).also { result -> put(key, result.getOrNull(), ttlMs) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            Result.failure(failure)
+        }
+    }
+
+    private fun pruneExpiredLocked(currentTime: Long) {
+        entries.entries
+            .filter { currentTime > it.value.expiresAt }
+            .map { it.key }
+            .forEach(::removeLocked)
+    }
+
+    private fun trimLocked() {
+        val iterator = entries.entries.iterator()
+        while ((entries.size > maxEntries || totalWeight > maxWeight) && iterator.hasNext()) {
+            val entry = iterator.next()
+            totalWeight -= entry.value.weight
+            iterator.remove()
+        }
+    }
+
+    private fun removeLocked(key: String) {
+        entries.remove(key)?.let { totalWeight -= it.weight }
+    }
+
+    private fun expiry(storedAt: Long, ttlMs: Long): Long {
+        val safeTtl = ttlMs.coerceAtLeast(0L)
+        return if (Long.MAX_VALUE - storedAt < safeTtl) Long.MAX_VALUE else storedAt + safeTtl
+    }
+
+    private fun safeAdd(left: Long, right: Long): Long =
+        if (Long.MAX_VALUE - left < right) Long.MAX_VALUE else left + right
+
+    private companion object {
+        const val DEFAULT_MAX_ENTRIES = 64
+        const val DEFAULT_MAX_WEIGHT = 8L * 1024L * 1024L
+        const val DEFAULT_ENTRY_TTL_MS = 20_000L
+
+        fun defaultWeight(value: Any?): Long = when (value) {
+            null -> 0L
+            is ByteArray -> value.size.toLong()
+            is String -> value.length.toLong() * 2L
+            is CharSequence -> value.length.toLong() * 2L
+            is Collection<*> -> value.sumOf { defaultWeight(it) }.coerceAtMost(DEFAULT_MAX_WEIGHT)
+            is Map<*, *> -> value.entries.sumOf {
+                defaultWeight(it.key) + defaultWeight(it.value)
+            }.coerceAtMost(DEFAULT_MAX_WEIGHT)
+            else -> 256L
+        }
     }
 }

@@ -28,17 +28,23 @@ import kotlinx.coroutines.withContext
 data class FileSharePayload(
     val path: String,
     val mimeType: String,
-    val bytes: ByteArray,
+    val bytes: ByteArray? = null,
+    val file: File? = null,
 )
 
-/** Builds the same cache-backed FileProvider ACTION_SEND flow used by session exports. */
+/** Builds the cache-backed FileProvider ACTION_SEND flow used by managed files. */
 internal suspend fun buildFileShareIntent(
     context: Context,
     payload: FileSharePayload,
 ): Intent = withContext(Dispatchers.IO) {
-    val shareFile = File(context.cacheDir, "files-share").apply { mkdirs() }
-        .resolve(safeShareFilename(payload.path))
-        .also { it.writeBytes(payload.bytes) }
+    val shareFile = payload.file ?: payload.bytes?.let { bytes ->
+        ShareFileManager(context.applicationContext.cacheDir).createShareFile(
+            prefix = "hermes-file-",
+            suffix = "-${safeShareFilename(payload.path)}",
+            bytes = bytes,
+        )
+    } ?: error("Share payload has no file")
+    require(shareFile.isFile) { "Share file is no longer available" }
     val uri: Uri = FileProvider.getUriForFile(
         context,
         "${context.packageName}.files",

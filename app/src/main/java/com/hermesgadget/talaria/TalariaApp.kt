@@ -20,6 +20,7 @@ import android.content.Context
 import com.hermesgadget.talaria.core.data.prefs.LocaleManager
 import com.hermesgadget.talaria.core.notifications.NotificationChannels
 import com.hermesgadget.talaria.di.AppContainer
+import com.hermesgadget.talaria.feature.manage.files.ShareFileManager
 import com.hermesgadget.talaria.worker.SyncScheduler
 
 class TalariaApp : Application() {
@@ -30,6 +31,10 @@ class TalariaApp : Application() {
         super.onCreate()
         instance = this
         container = AppContainer(this)
+        // Remove process-owned transfer leftovers before any chooser or
+        // managed-file screen can observe them. Fresh ACTION_SEND files are
+        // retained by ShareFileManager until their explicit TTL expires.
+        ShareFileManager(cacheDir).cleanupStaleFiles()
         container.localeManager.apply(this)
         NotificationChannels.ensure(this)
         SyncScheduler.ensurePeriodic(this)

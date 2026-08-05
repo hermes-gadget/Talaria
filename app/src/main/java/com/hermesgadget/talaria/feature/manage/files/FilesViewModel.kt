@@ -34,8 +34,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
@@ -143,6 +146,7 @@ data class FilesUiState(
 class FilesViewModel(
     private val api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
     private val cacheDirectory: File = TalariaApp.instance.cacheDir,
+    private val shareFileManager: ShareFileManager? = null,
 ) : ViewModel() {
     private val _ui = MutableStateFlow(FilesUiState())
     val ui: StateFlow<FilesUiState> = _ui.asStateFlow()
@@ -154,6 +158,7 @@ class FilesViewModel(
     private var downloadJob: Job? = null
     private var saveJob: Job? = null
     private var downloadGeneration = 0L
+    private val defaultShareFileManager by lazy { ShareFileManager(cacheDirectory) }
 
     init {
         open(null)
@@ -387,24 +392,34 @@ class FilesViewModel(
         _ui.update { it.copy(shareLoading = true, sharePayload = null, shareError = null) }
         viewModelScope.launch {
             suspendResult {
-                val bytes = when (type) {
-                    FilePreviewType.TEXT -> file.text.toByteArray(Charsets.UTF_8)
-                    FilePreviewType.IMAGE,
-                    FilePreviewType.BINARY,
-                    -> state.previewBytes ?: readPreviewBytes(file.path, type)
+                withContext(Dispatchers.IO) {
+                    val coroutineContext = currentCoroutineContext()
+                    val source = when (type) {
+                        FilePreviewType.TEXT -> ByteArrayInputStream(file.text.toByteArray(Charsets.UTF_8))
+                        FilePreviewType.IMAGE,
+                        FilePreviewType.BINARY,
+                        -> ByteArrayInputStream(state.previewBytes ?: readPreviewBytes(file.path, type))
+                    }
+                    val output = (shareFileManager ?: defaultShareFileManager).createShareFile(
+                        prefix = "hermes-file-",
+                        suffix = "-${file.name}",
+                        source = source,
+                        beforeRead = { coroutineContext.ensureActive() },
+                    )
+                    FileSharePayload(
+                        path = file.path,
+                        mimeType = effectiveShareMimeType(file.name, file.mimeType, type),
+                        file = output,
+                    )
                 }
-                require(bytes.size.toLong() <= MAX_SHARE_FILE_BYTES) {
-                    "File is too large to share"
-                }
-                FileSharePayload(
-                    path = file.path,
-                    mimeType = effectiveShareMimeType(file.name, file.mimeType, type),
-                    bytes = bytes,
-                )
             }.fold(
                 onSuccess = { payload ->
-                    updateCurrentPreview(file.path) {
-                        it.copy(shareLoading = false, sharePayload = payload, shareError = null)
+                    if (_ui.value.preview?.path == file.path) {
+                        _ui.update {
+                            it.copy(shareLoading = false, sharePayload = payload, shareError = null)
+                        }
+                    } else {
+                        (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(payload.file)
                     }
                 },
                 onFailure = { error ->
@@ -421,26 +436,34 @@ class FilesViewModel(
 
     fun clearSharePayload() = _ui.update { it.copy(sharePayload = null) }
 
-    fun shareFailed(message: String) = _ui.update {
-        it.copy(sharePayload = null, shareLoading = false, shareError = message)
+    fun shareFailed(message: String) {
+        _ui.value.sharePayload?.file?.let { file ->
+            (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(file)
+        }
+        _ui.update { it.copy(sharePayload = null, shareLoading = false, shareError = message) }
     }
 
-    fun closePreview() = _ui.update {
-        it.copy(
-            preview = null,
-            previewLoading = false,
-            previewType = null,
-            previewBytes = null,
-            previewMimeType = null,
-            editing = false,
-            editDraft = "",
-            saving = false,
-            previewError = null,
-            confirmSave = false,
-            shareLoading = false,
-            sharePayload = null,
-            shareError = null,
-        )
+    fun closePreview() {
+        _ui.value.sharePayload?.file?.let { file ->
+            (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(file)
+        }
+        _ui.update {
+            it.copy(
+                preview = null,
+                previewLoading = false,
+                previewType = null,
+                previewBytes = null,
+                previewMimeType = null,
+                editing = false,
+                editDraft = "",
+                saving = false,
+                previewError = null,
+                confirmSave = false,
+                shareLoading = false,
+                sharePayload = null,
+                shareError = null,
+            )
+        }
     }
 
     fun prepareUpload(uri: Uri, resolver: ContentResolver) {
@@ -541,65 +564,60 @@ class FilesViewModel(
             )
         }
         downloadJob = viewModelScope.launch {
+            var output: File? = null
             try {
                 val ready = withContext(Dispatchers.IO) {
-                    val directory = File(cacheDirectory, "managed-downloads").apply { mkdirs() }
-                    val output = File.createTempFile("hermes-file-", ".download", directory)
-                    try {
-                        api.downloadManagedFile(path).use { response ->
-                            val total = response.contentLength().takeIf { it > 0L } ?: size
-                            if (generation == downloadGeneration) {
-                                _ui.update {
-                                    it.copy(
-                                        downloadState = FileDownloadState.Downloading(
-                                            displayName = displayName,
-                                            totalBytes = total,
-                                        ),
-                                    )
-                                }
-                            }
-                            response.byteStream().use { source ->
-                                output.outputStream().use { destination ->
-                                    val progress = ProgressThrottler(onProgress = { copied, reportedTotal ->
-                                        if (generation == downloadGeneration) {
-                                            _ui.update {
-                                                it.copy(
-                                                    downloadState = FileDownloadState.Downloading(
-                                                        displayName = displayName,
-                                                        bytesCopied = copied,
-                                                        totalBytes = reportedTotal,
-                                                    ),
-                                                )
-                                            }
-                                        }
-                                    })
-                                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                                    var copied = 0L
-                                    while (true) {
-                                        val count = source.read(buffer)
-                                        if (count < 0) break
-                                        destination.write(buffer, 0, count)
-                                        copied += count
-                                        progress.report(copied, total)
-                                    }
-                                    progress.complete(copied, total)
-                                }
+                    val coroutineContext = currentCoroutineContext()
+                    api.downloadManagedFile(path).use { response ->
+                        val total = response.contentLength().takeIf { it > 0L }
+                            ?: size.takeIf { it > 0L }
+                            ?: -1L
+                        if (generation == downloadGeneration) {
+                            _ui.update {
+                                it.copy(
+                                    downloadState = FileDownloadState.Downloading(
+                                        displayName = displayName,
+                                        totalBytes = total,
+                                    ),
+                                )
                             }
                         }
-                        FileDownloadState.Ready(output, displayName, mimeType)
-                    } catch (error: Throwable) {
-                        output.delete()
-                        throw error
+                        output = (shareFileManager ?: defaultShareFileManager).createManagedDownload(
+                            prefix = "hermes-file-",
+                            suffix = ".download",
+                            source = response.byteStream(),
+                            declaredBytes = total,
+                            onProgress = { copied, reportedTotal ->
+                                if (generation == downloadGeneration) {
+                                    _ui.update {
+                                        it.copy(
+                                            downloadState = FileDownloadState.Downloading(
+                                                displayName = displayName,
+                                                bytesCopied = copied,
+                                                totalBytes = reportedTotal,
+                                            ),
+                                        )
+                                    }
+                                }
+                            },
+                            beforeRead = { coroutineContext.ensureActive() },
+                        )
                     }
+                    FileDownloadState.Ready(output ?: error("Download did not produce a file"), displayName, mimeType)
                 }
                 if (generation == downloadGeneration) {
                     _ui.update { it.copy(downloadState = ready) }
                 } else {
-                    ready.file?.delete()
+                    (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(ready.file)
                 }
             } catch (cancelled: CancellationException) {
+                output?.let { (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(it) }
+                if (generation == downloadGeneration) {
+                    _ui.update { it.copy(downloadState = FileDownloadState.Idle) }
+                }
                 throw cancelled
             } catch (error: Throwable) {
+                output?.let { (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(it) }
                 if (generation == downloadGeneration) {
                     _ui.update {
                         it.copy(
@@ -662,19 +680,23 @@ class FilesViewModel(
                     }
                 }
                 if (generation != downloadGeneration) return@launch
-                payload.file.delete()
+                (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(payload.file)
                 _ui.update {
                     it.copy(downloadState = FileDownloadState.Complete(payload.displayName))
                 }
             } catch (cancelled: CancellationException) {
+                (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(payload.file)
+                if (generation == downloadGeneration) {
+                    _ui.update { it.copy(downloadState = FileDownloadState.Idle) }
+                }
                 throw cancelled
             } catch (error: Throwable) {
+                (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(payload.file)
                 if (generation == downloadGeneration) {
                     _ui.update {
                         it.copy(
                             downloadState = FileDownloadState.Failed(
                                 message = error.message ?: appString(R.string.files_error_save_download),
-                                file = payload.file,
                                 displayName = payload.displayName,
                                 mimeType = payload.mimeType,
                             ),
@@ -848,8 +870,10 @@ class FilesViewModel(
     }
 
     private fun deleteOwnedDownload() {
-        currentDownloadPayload()?.file?.delete()
-        (_ui.value.downloadState as? FileDownloadState.Saving)?.file?.delete()
+        val manager = shareFileManager ?: defaultShareFileManager
+        manager.deleteOwnedFile(currentDownloadPayload()?.file)
+        manager.deleteOwnedFile((_ui.value.downloadState as? FileDownloadState.Saving)?.file)
+        manager.deleteOwnedFile(_ui.value.sharePayload?.file)
     }
 
     private fun appString(@StringRes resourceId: Int): String = TalariaApp.instance.getString(resourceId)

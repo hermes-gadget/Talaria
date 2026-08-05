@@ -27,7 +27,6 @@ import com.hermesgadget.talaria.core.data.repo.HermesRepository
 import com.hermesgadget.talaria.core.network.HermesApi
 import com.hermesgadget.talaria.core.network.JsonConfig
 import com.hermesgadget.talaria.feature.manage.files.ShareFileManager
-import com.hermesgadget.talaria.feature.manage.files.MAX_SHARE_FILE_BYTES
 import com.hermesgadget.talaria.domain.model.ActionStatus
 import com.hermesgadget.talaria.domain.model.OpsActionResponse
 import com.hermesgadget.talaria.domain.model.OpsBackupRequest
@@ -60,6 +59,7 @@ import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.ResponseBody
 import retrofit2.HttpException
+import java.io.ByteArrayInputStream
 
 data class SystemShareRequest(
     val uri: Uri,
@@ -89,6 +89,13 @@ interface SystemGateway {
     suspend fun importOpsUpload(file: MultipartBody.Part, force: RequestBody): OpsActionResponse
     suspend fun createOpsBackup(request: OpsBackupRequest): OpsActionResponse
     suspend fun downloadOpsBackup(archive: String): ResponseBody
+    /** One snapshot-bound create + stream operation for the backup job. */
+    suspend fun createAndDownloadOpsBackup(): Pair<String, ResponseBody> {
+        val response = createOpsBackup(OpsBackupRequest())
+        val archive = response.archive?.takeIf { it.isNotBlank() }
+            ?: error(response.error ?: "The backup endpoint did not return an archive")
+        return archive to downloadOpsBackup(archive)
+    }
     suspend fun createOpsDebugShare(request: OpsDebugShareRequest): OpsDebugShareResponse
     suspend fun getOpsRawConfig(): OpsRawConfigResponse
     suspend fun putOpsRawConfig(update: OpsRawConfigUpdate): OpsActionResponse
@@ -119,8 +126,9 @@ private class DefaultSystemGateway(
     override suspend fun deleteOpsHook(request: OpsHookDeleteRequest) = api.deleteOpsHook(request)
     override suspend fun importOpsUpload(file: MultipartBody.Part, force: RequestBody) =
         api.importOpsUpload(file, force)
-    override suspend fun createOpsBackup(request: OpsBackupRequest) = api.createOpsBackup(request)
-    override suspend fun downloadOpsBackup(archive: String) = api.downloadOpsBackup(archive)
+    override suspend fun createOpsBackup(request: OpsBackupRequest) = repo.createOpsBackup(request)
+    override suspend fun downloadOpsBackup(archive: String) = repo.downloadOpsBackup(archive)
+    override suspend fun createAndDownloadOpsBackup() = repo.createAndDownloadOpsBackup()
     override suspend fun createOpsDebugShare(request: OpsDebugShareRequest) = api.createOpsDebugShare(request)
     override suspend fun getOpsRawConfig() = api.getOpsRawConfig()
     override suspend fun putOpsRawConfig(update: OpsRawConfigUpdate) = api.putOpsRawConfig(update)
@@ -151,7 +159,11 @@ sealed interface ImportUiState {
 
 sealed interface BackupDownloadUiState {
     data object Idle : BackupDownloadUiState
-    data object Running : BackupDownloadUiState
+    data class Running(
+        val archive: String? = null,
+        val bytesCopied: Long = 0L,
+        val totalBytes: Long = -1L,
+    ) : BackupDownloadUiState
     data class Complete(val archive: String, val bytes: Long) : BackupDownloadUiState
     data class Failed(val message: String) : BackupDownloadUiState
 }
@@ -210,6 +222,7 @@ class SystemViewModel(
     private val gateway: SystemGateway = DefaultSystemGateway(),
     private val cacheDirectory: File = TalariaApp.instance.cacheDir,
     private val autoRefresh: Boolean = true,
+    private val shareFileManager: ShareFileManager? = null,
 ) : ViewModel() {
     private val _ui = MutableStateFlow(SystemUiState())
     val ui: StateFlow<SystemUiState> = _ui.asStateFlow()
@@ -218,6 +231,11 @@ class SystemViewModel(
     private var importJob: Job? = null
     private var importGeneration = 0L
     private var importTempFile: File? = null
+    private var backupJob: Job? = null
+    private var backupGeneration = 0L
+    private var debugShareJob: Job? = null
+    private var debugShareGeneration = 0L
+    private val defaultShareFileManager by lazy { ShareFileManager(cacheDirectory) }
 
     init {
         if (autoRefresh) refresh()
@@ -546,68 +564,111 @@ class SystemViewModel(
     }
 
     fun downloadAndShareBackup() {
-        _ui.update { it.copy(backupDownload = BackupDownloadUiState.Running, shareRequest = null) }
-        viewModelScope.launch {
-            suspendResult {
-                withContext(Dispatchers.IO) {
-                    val response = gateway.createOpsBackup(OpsBackupRequest())
-                    val archive = response.archive?.takeIf { it.isNotBlank() }
-                        ?: error(response.error ?: "The backup endpoint did not return an archive")
-                    // Bounded, tracked share file: abort past the cap instead of
-                    // buffering unboundedly or leaving untracked files in cache.
-                    val shareManager = ShareFileManager(TalariaApp.instance.cacheDir)
-                    val bytes = gateway.downloadOpsBackup(archive).use { body ->
-                        val stream = body.byteStream()
-                        val buffer = java.io.ByteArrayOutputStream()
-                        val chunk = ByteArray(64 * 1024)
-                        var total = 0L
-                        while (true) {
-                            val n = stream.read(chunk)
-                            if (n < 0) break
-                            total += n
-                            if (total > MAX_SHARE_FILE_BYTES) {
-                                error("Backup exceeds the ${MAX_SHARE_FILE_BYTES / (1024 * 1024)} MiB share limit")
-                            }
-                            buffer.write(chunk, 0, n)
+        if (_ui.value.backupDownload is BackupDownloadUiState.Running) return
+        backupGeneration += 1
+        val generation = backupGeneration
+        backupJob?.cancel()
+        _ui.update { it.copy(backupDownload = BackupDownloadUiState.Running(), shareRequest = null) }
+        backupJob = viewModelScope.launch {
+            var output: File? = null
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    val (archive, body) = gateway.createAndDownloadOpsBackup()
+                    if (generation == backupGeneration) {
+                        _ui.update {
+                            it.copy(backupDownload = BackupDownloadUiState.Running(archive = archive))
                         }
-                        buffer.toByteArray()
                     }
-                    val output = shareManager.createShareFile("hermes-backup-", ".zip", bytes)
-                    val uri = FileProvider.getUriForFile(
-                        TalariaApp.instance,
-                        "${TalariaApp.instance.packageName}.files",
-                        output,
-                    )
-                    Triple(archive, output.length(), SystemShareRequest(
-                        uri = uri,
-                        mimeType = "application/zip",
-                        subject = "Hermes backup",
-                        chooserTitle = "Share Hermes backup",
-                    ))
-                }
-            }.fold(
-                onSuccess = { (archive, bytes, share) ->
-                    _ui.update {
-                        it.copy(
-                            backupDownload = BackupDownloadUiState.Complete(archive, bytes),
-                            shareRequest = share,
+                    val coroutineContext = currentCoroutineContext()
+                    body.use { responseBody ->
+                        val total = responseBody.contentLength()
+                        output = (shareFileManager ?: defaultShareFileManager).createShareFile(
+                            prefix = "hermes-backup-",
+                            suffix = ".zip",
+                            source = responseBody.byteStream(),
+                            declaredBytes = total,
+                            onProgress = { copied, reportedTotal ->
+                                if (generation == backupGeneration) {
+                                    _ui.update {
+                                        it.copy(
+                                            backupDownload = BackupDownloadUiState.Running(
+                                                archive = archive,
+                                                bytesCopied = copied,
+                                                totalBytes = reportedTotal,
+                                            ),
+                                        )
+                                    }
+                                }
+                            },
+                            beforeRead = { coroutineContext.ensureActive() },
                         )
                     }
-                },
-                onFailure = { error ->
+                    val file = output ?: error("Backup did not produce a file")
+                    val app = TalariaApp.instance
+                    val uri = FileProvider.getUriForFile(
+                        app,
+                        "${app.packageName}.files",
+                        file,
+                    )
+                    Triple(
+                        archive,
+                        file.length(),
+                        SystemShareRequest(
+                            uri = uri,
+                            mimeType = "application/zip",
+                            subject = "Hermes backup",
+                            chooserTitle = "Share Hermes backup",
+                        ),
+                    )
+                }
+                if (generation != backupGeneration) {
+                    (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(output)
+                    return@launch
+                }
+                _ui.update {
+                    it.copy(
+                        backupDownload = BackupDownloadUiState.Complete(result.first, result.second),
+                        shareRequest = result.third,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(output)
+                if (generation == backupGeneration) {
+                    _ui.update { it.copy(backupDownload = BackupDownloadUiState.Idle) }
+                }
+                throw cancelled
+            } catch (error: Throwable) {
+                (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(output)
+                if (generation == backupGeneration) {
                     _ui.update {
-                        it.copy(backupDownload = BackupDownloadUiState.Failed(error.message ?: "Could not download backup"))
+                        it.copy(
+                            backupDownload = BackupDownloadUiState.Failed(
+                                error.message ?: "Could not download backup",
+                            ),
+                        )
                     }
-                },
-            )
+                }
+            }
         }
     }
 
+    fun cancelBackupDownload() {
+        if (_ui.value.backupDownload !is BackupDownloadUiState.Running) return
+        backupGeneration += 1
+        backupJob?.cancel()
+        _ui.update { it.copy(backupDownload = BackupDownloadUiState.Idle) }
+    }
+
     fun createDebugShare() {
+        if (_ui.value.debugShare is DebugShareUiState.Running) return
+        debugShareGeneration += 1
+        val generation = debugShareGeneration
+        debugShareJob?.cancel()
         _ui.update { it.copy(debugShare = DebugShareUiState.Running, shareRequest = null) }
-        viewModelScope.launch {
-            suspendResult {
-                withContext(Dispatchers.IO) {
+        debugShareJob = viewModelScope.launch {
+            var output: File? = null
+            try {
+                val result = withContext(Dispatchers.IO) {
                     val response = gateway.createOpsDebugShare(OpsDebugShareRequest())
                     val text = buildString {
                         appendLine("Hermes debug share")
@@ -619,12 +680,17 @@ class SystemViewModel(
                         response.failures.forEach { failure -> appendLine("Failure: $failure") }
                     }
                     // Bounded, tracked share file (16 MiB cap, 15-minute TTL, cache sweep).
-                    val output = ShareFileManager(TalariaApp.instance.cacheDir)
-                        .createShareFile("hermes-debug-share-", ".txt", text.toByteArray(Charsets.UTF_8))
+                    val coroutineContext = currentCoroutineContext()
+                    output = (shareFileManager ?: defaultShareFileManager).createShareFile(
+                        prefix = "hermes-debug-share-",
+                        suffix = ".txt",
+                        source = ByteArrayInputStream(text.toByteArray(Charsets.UTF_8)),
+                        beforeRead = { coroutineContext.ensureActive() },
+                    )
                     val uri = FileProvider.getUriForFile(
                         TalariaApp.instance,
                         "${TalariaApp.instance.packageName}.files",
-                        output,
+                        output ?: error("Debug share did not produce a file"),
                     )
                     response to SystemShareRequest(
                         uri = uri,
@@ -633,16 +699,27 @@ class SystemViewModel(
                         chooserTitle = "Share Hermes debug output",
                     )
                 }
-            }.fold(
-                onSuccess = { (response, share) ->
+                if (generation != debugShareGeneration) {
+                    (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(output)
+                    return@launch
+                }
+                _ui.update {
+                    it.copy(debugShare = DebugShareUiState.Complete(result.first), shareRequest = result.second)
+                }
+            } catch (cancelled: CancellationException) {
+                (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(output)
+                if (generation == debugShareGeneration) {
+                    _ui.update { it.copy(debugShare = DebugShareUiState.Idle) }
+                }
+                throw cancelled
+            } catch (error: Throwable) {
+                (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(output)
+                if (generation == debugShareGeneration) {
                     _ui.update {
-                        it.copy(debugShare = DebugShareUiState.Complete(response), shareRequest = share)
+                        it.copy(debugShare = DebugShareUiState.Failed(error.message ?: "Could not create debug share"))
                     }
-                },
-                onFailure = { error ->
-                    _ui.update { it.copy(debugShare = DebugShareUiState.Failed(error.message ?: "Could not create debug share")) }
-                },
-            )
+                }
+            }
         }
     }
 
@@ -797,6 +874,10 @@ class SystemViewModel(
         importJob = null
         importTempFile?.delete()
         importTempFile = null
+        backupGeneration += 1
+        backupJob?.cancel()
+        debugShareGeneration += 1
+        debugShareJob?.cancel()
         super.onCleared()
     }
 

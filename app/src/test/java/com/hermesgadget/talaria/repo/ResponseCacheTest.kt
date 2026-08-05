@@ -18,6 +18,7 @@ package com.hermesgadget.talaria.repo
 import com.hermesgadget.talaria.core.data.repo.ResponseCache
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ResponseCacheTest {
@@ -92,5 +93,53 @@ class ResponseCacheTest {
         assertEquals(true, failed.isFailure)
         assertEquals("ok", retried.getOrNull())
         assertEquals(2, fetches)
+    }
+
+    @Test
+    fun `least recently used entry is evicted at the count bound`() {
+        val cache = ResponseCache(
+            now = { 0L },
+            maxEntries = 2,
+            maxWeight = 100,
+            weigher = { 1L },
+        )
+
+        cache.put("a", "a")
+        cache.put("b", "b")
+        assertEquals("a", cache.peek("a", 10_000))
+        cache.put("c", "c")
+
+        assertNull(cache.peek("b", 10_000))
+        assertEquals("a", cache.peek("a", 10_000))
+        assertEquals("c", cache.peek("c", 10_000))
+    }
+
+    @Test
+    fun `oversized values are not retained`() {
+        val cache = ResponseCache(
+            now = { 0L },
+            maxEntries = 4,
+            maxWeight = 3,
+            weigher = { (it as String).length.toLong() },
+        )
+
+        cache.put("large", "four")
+
+        assertNull(cache.peek("large", 10_000))
+        assertEquals(0, cache.entryCount)
+        assertEquals(0L, cache.currentWeight)
+    }
+
+    @Test
+    fun `expiry pruning removes entries without a key read`() {
+        var clock = 0L
+        val cache = ResponseCache(now = { clock }, maxEntries = 4, maxWeight = 100)
+        cache.put("short", "value", ttlMs = 10)
+        clock = 11
+
+        cache.pruneExpired()
+
+        assertEquals(0, cache.entryCount)
+        assertNull(cache.peek("short", 10_000))
     }
 }
