@@ -44,8 +44,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesgadget.talaria.R
+import com.hermesgadget.talaria.core.data.repo.SessionOrganizationSnapshot
 import com.hermesgadget.talaria.domain.model.SessionSummary
+import com.hermesgadget.talaria.feature.manage.sessions.LocalBadge
 import com.hermesgadget.talaria.feature.manage.sessions.SessionFilters
+import com.hermesgadget.talaria.feature.manage.sessions.SessionLocalBadges
+import com.hermesgadget.talaria.feature.manage.sessions.SessionOrganizationFilter
 import com.hermesgadget.talaria.feature.manage.sessions.SessionTab
 
 /** Session list rendered as a persistent side panel on expanded screens. */
@@ -56,6 +60,10 @@ internal fun SessionRailPane(
     openSessionIds: Set<String>,
     sessionRailTab: SessionTab,
     onTabSelect: (SessionTab) -> Unit,
+    organization: SessionOrganizationSnapshot,
+    organizationFilter: SessionOrganizationFilter,
+    pinnedIds: Set<String>,
+    onOrganizationFilterSelect: (SessionOrganizationFilter) -> Unit,
     onNewSession: () -> Unit,
     onRefreshSessions: () -> Unit,
     onOpenAllSessions: () -> Unit,
@@ -112,9 +120,48 @@ internal fun SessionRailPane(
                     )
                 }
             }
+            Row(
+                modifier = Modifier
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                LocalBadge()
+                FilterChip(
+                    selected = organizationFilter == SessionOrganizationFilter.All,
+                    onClick = { onOrganizationFilterSelect(SessionOrganizationFilter.All) },
+                    label = { Text(stringResource(R.string.sessions_tab_all)) },
+                )
+                FilterChip(
+                    selected = organizationFilter == SessionOrganizationFilter.Pinned,
+                    onClick = { onOrganizationFilterSelect(SessionOrganizationFilter.Pinned) },
+                    label = { Text(stringResource(R.string.sessions_pinned)) },
+                )
+                FilterChip(
+                    selected = organizationFilter == SessionOrganizationFilter.Favorites,
+                    onClick = { onOrganizationFilterSelect(SessionOrganizationFilter.Favorites) },
+                    label = { Text(stringResource(R.string.sessions_favorites)) },
+                )
+                organization.savedFilters.forEach { savedFilter ->
+                    FilterChip(
+                        selected = organizationFilter == SessionOrganizationFilter.Saved(savedFilter.id),
+                        onClick = {
+                            onOrganizationFilterSelect(SessionOrganizationFilter.Saved(savedFilter.id))
+                        },
+                        label = { Text(savedFilter.name) },
+                    )
+                }
+            }
             HorizontalDivider()
             val filtered = sessions.filter {
-                SessionFilters.matchesTab(it.source, sessionRailTab)
+                SessionFilters.matchesTab(it.source, sessionRailTab) &&
+                    SessionFilters.matchesOrganizationFilter(
+                        session = it,
+                        filter = organizationFilter,
+                        pinnedIds = pinnedIds,
+                        organization = organization,
+                    )
             }
             if (filtered.isEmpty()) {
                 Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
@@ -163,6 +210,10 @@ internal fun SessionRailPane(
                                             color = MaterialTheme.colorScheme.secondary,
                                         )
                                     }
+                                    SessionLocalBadges(
+                                        sessionId = s.id,
+                                        organization = organization,
+                                    )
                                 }
                             },
                             modifier = Modifier.clickable { onResumeSession(s.id) },

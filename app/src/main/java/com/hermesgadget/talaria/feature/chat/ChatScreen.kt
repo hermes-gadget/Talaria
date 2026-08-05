@@ -133,6 +133,9 @@ import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.domain.model.ToolCallUi
 import com.hermesgadget.talaria.domain.model.scopeId
 import com.hermesgadget.talaria.feature.manage.sessions.SessionFilters
+import com.hermesgadget.talaria.feature.manage.sessions.SessionOrganizationFilter
+import com.hermesgadget.talaria.feature.manage.sessions.SessionOrganizationViewModel
+import com.hermesgadget.talaria.feature.manage.sessions.SharedPreferencesSessionPinStore
 import com.hermesgadget.talaria.feature.manage.sessions.SessionTab
 import com.hermesgadget.talaria.feature.pip.PipChatIntent
 import com.hermesgadget.talaria.feature.pip.PipChatMessage
@@ -151,6 +154,10 @@ fun ChatScreen(
     vm: ChatViewModel = viewModel(factory = ChatViewModel.factory()),
 ) {
     val ui by vm.ui.collectAsStateWithLifecycle()
+    val organizationVm: SessionOrganizationViewModel = viewModel(
+        factory = SessionOrganizationViewModel.factory(),
+    )
+    val organizationUi by organizationVm.ui.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val connectionStore = TalariaApp.instance.container.connectionStore
     val connectionProfiles by connectionStore.profiles.collectAsStateWithLifecycle()
@@ -163,6 +170,22 @@ fun ChatScreen(
     var renameTarget by remember { mutableStateOf<ChatTab?>(null) }
     var monitorOpen by remember { mutableStateOf(false) }
     var sessionRailTab by remember { mutableStateOf(SessionTab.Chats) }
+    var sessionRailOrganizationFilter by remember {
+        mutableStateOf<SessionOrganizationFilter>(SessionOrganizationFilter.All)
+    }
+    val pinStore = remember { SharedPreferencesSessionPinStore(TalariaApp.instance) }
+    val railPinnedIds = remember(connectionScope) {
+        connectionScope?.let(pinStore::load).orEmpty()
+    }
+    LaunchedEffect(organizationUi.organization.savedFilters) {
+        if (sessionRailOrganizationFilter is SessionOrganizationFilter.Saved &&
+            organizationUi.organization.savedFilters.none {
+                it.id == (sessionRailOrganizationFilter as SessionOrganizationFilter.Saved).id
+            }
+        ) {
+            sessionRailOrganizationFilter = SessionOrganizationFilter.All
+        }
+    }
     val windowInfo = LocalWindowInfo.current
     val isExpanded = with(LocalDensity.current) {
         windowInfo.containerSize.width.toDp() >= 600.dp
@@ -697,6 +720,10 @@ fun ChatScreen(
                     openSessionIds = openSessionIds,
                     sessionRailTab = sessionRailTab,
                     onTabSelect = { sessionRailTab = it },
+                    organization = organizationUi.organization,
+                    organizationFilter = sessionRailOrganizationFilter,
+                    pinnedIds = railPinnedIds,
+                    onOrganizationFilterSelect = { sessionRailOrganizationFilter = it },
                     onNewSession = { vm.newSession() },
                     onRefreshSessions = { vm.refreshSessions() },
                     onOpenAllSessions = onOpenSessions,

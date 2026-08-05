@@ -41,6 +41,7 @@ object Routes {
     const val CONFIG = "config"
     const val API_KEYS = "api_keys"
     const val SESSIONS = "sessions"
+    const val SAVED_FILTERS = "saved_filters"
     const val ARTIFACTS = "artifacts"
     const val LOGS = "logs"
     const val ANALYTICS = "analytics"

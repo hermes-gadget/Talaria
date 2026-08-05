@@ -15,6 +15,8 @@
  */
 package com.hermesgadget.talaria.feature.manage.sessions
 
+import com.hermesgadget.talaria.core.data.repo.SavedSessionFilter
+import com.hermesgadget.talaria.core.data.repo.SessionOrganizationSnapshot
 import com.hermesgadget.talaria.domain.model.SessionSummary
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
@@ -81,6 +83,76 @@ class SessionFiltersTest {
         assertEquals(
             listOf("pinned", "first", "last"),
             SessionFilters.prioritizePinned(sessions, setOf("pinned")).map { it.id },
+        )
+    }
+
+    @Test
+    fun `saved filter combines server metadata and local collection assignments`() {
+        val session = SessionSummary(
+            id = "session-1",
+            source = "Discord",
+            platform = "mobile",
+            end_reason = "agent_close",
+        )
+        val filter = SavedSessionFilter(
+            connectionId = "scope-1",
+            name = "Mobile Discord",
+            source = "discord",
+            platform = "mobile",
+            endReason = "agent_close",
+            labelId = 4,
+            groupId = 9,
+        )
+
+        assertTrue(SessionFilters.matchesSavedFilter(session, filter, setOf(4, 9)))
+        assertFalse(SessionFilters.matchesSavedFilter(session, filter, setOf(4)))
+        assertFalse(
+            SessionFilters.matchesSavedFilter(
+                session.copy(platform = "desktop"),
+                filter,
+                setOf(4, 9),
+            ),
+        )
+    }
+
+    @Test
+    fun `organization chips distinguish pinned favorite and saved scopes`() {
+        val session = SessionSummary(id = "session-1", source = "cli")
+        val organization = SessionOrganizationSnapshot(
+            favoriteSessionIds = setOf(session.id),
+            savedFilters = listOf(
+                SavedSessionFilter(
+                    id = 12,
+                    connectionId = "scope-1",
+                    name = "CLI",
+                    source = "cli",
+                ),
+            ),
+        )
+
+        assertTrue(
+            SessionFilters.matchesOrganizationFilter(
+                session,
+                SessionOrganizationFilter.Pinned,
+                pinnedIds = setOf(session.id),
+                organization = organization,
+            ),
+        )
+        assertTrue(
+            SessionFilters.matchesOrganizationFilter(
+                session,
+                SessionOrganizationFilter.Favorites,
+                pinnedIds = emptySet(),
+                organization = organization,
+            ),
+        )
+        assertTrue(
+            SessionFilters.matchesOrganizationFilter(
+                session,
+                SessionOrganizationFilter.Saved(12),
+                pinnedIds = emptySet(),
+                organization = organization,
+            ),
         )
     }
 }

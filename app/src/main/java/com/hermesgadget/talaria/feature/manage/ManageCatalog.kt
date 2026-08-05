@@ -47,6 +47,7 @@ import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.ui.navigation.Routes
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.ViewKanban
+import androidx.compose.material.icons.filled.FilterAlt
 
 internal data class ManageItem(
     @StringRes val titleRes: Int,
@@ -87,6 +88,12 @@ internal val manageSections = listOf(
             ManageItem(R.string.manage_status_title, R.string.manage_status_subtitle, Routes.STATUS, Icons.Filled.MonitorHeart),
             ManageItem(R.string.manage_command_center_title, R.string.manage_command_center_subtitle, Routes.COMMAND_CENTER, Icons.Filled.Dashboard),
             ManageItem(R.string.manage_sessions_title, R.string.manage_sessions_subtitle, Routes.SESSIONS, Icons.Filled.Forum),
+            ManageItem(
+                R.string.manage_saved_filters_title,
+                R.string.manage_saved_filters_subtitle,
+                Routes.SAVED_FILTERS,
+                Icons.Filled.FilterAlt,
+            ),
             ManageItem(R.string.manage_artifacts_title, R.string.manage_artifacts_subtitle, Routes.ARTIFACTS, Icons.Filled.Folder),
             ManageItem(R.string.manage_cron_title, R.string.manage_cron_subtitle, Routes.CRON, Icons.Filled.Schedule),
             ManageItem(R.string.manage_analytics_title, R.string.manage_analytics_subtitle, Routes.ANALYTICS, Icons.Filled.BarChart),

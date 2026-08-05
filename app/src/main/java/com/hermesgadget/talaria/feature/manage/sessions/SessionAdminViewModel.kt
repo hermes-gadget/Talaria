@@ -180,6 +180,17 @@ class SessionAdminViewModel(
         }
     }
 
+    /** Drop hidden rows before any bulk action so a changed filter cannot widen its scope. */
+    fun retainSelection(visibleIds: Collection<String>) {
+        val visible = visibleIds.toSet()
+        _ui.update { state ->
+            val content = contentOf(state) ?: return@update state
+            val retained = content.selectedIds intersect visible
+            if (retained == content.selectedIds) state
+            else SessionAdminUiState.Content(content.copy(selectedIds = retained))
+        }
+    }
+
     fun togglePinned(id: String) {
         val content = contentOf(_ui.value) ?: return
         setPinned(id, id !in content.pinnedIds)
@@ -223,10 +234,22 @@ class SessionAdminViewModel(
         }
     }
 
-    fun bulkDeleteSelected() {
+    fun bulkDeleteSelected(visibleIds: Collection<String>? = null) {
         val content = contentOf(_ui.value) ?: return
         if (content.busy) return
-        val ids = content.selectedIds.toList()
+        val ids = if (visibleIds == null) {
+            content.selectedIds.toList()
+        } else {
+            val visible = visibleIds.toSet()
+            content.selectedIds.intersect(visible).toList().also { retained ->
+                if (retained.size != content.selectedIds.size) {
+                    _ui.update { state ->
+                        val current = contentOf(state) ?: return@update state
+                        SessionAdminUiState.Content(current.copy(selectedIds = retained.toSet()))
+                    }
+                }
+            }
+        }
         if (ids.isEmpty()) {
             setMessage("Select at least one session")
             return

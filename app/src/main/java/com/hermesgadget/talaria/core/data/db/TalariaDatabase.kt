@@ -29,12 +29,17 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CachedMessageEntity::class,
         ActivityEventEntity::class,
         ChatDraftEntity::class,
+        LocalSessionCollectionEntity::class,
+        LocalSessionCollectionLinkEntity::class,
+        LocalSessionFavoriteEntity::class,
+        SavedSessionFilterEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class TalariaDatabase : RoomDatabase() {
     abstract fun sessions(): SessionDao
+    abstract fun sessionOrganization(): SessionOrganizationDao
     abstract fun messages(): MessageDao
     abstract fun activity(): ActivityDao
     abstract fun drafts(): DraftDao
@@ -53,6 +58,7 @@ abstract class TalariaDatabase : RoomDatabase() {
             if (deleteIds.isNotEmpty()) {
                 sessions().deleteByIds(connectionId, deleteIds)
                 messages().deleteBySessionIds(connectionId, deleteIds)
+                sessionOrganization().deleteSessions(connectionId, deleteIds)
             }
             if (upserts.isNotEmpty()) sessions().upsertAll(upserts)
         }
@@ -147,6 +153,78 @@ abstract class TalariaDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS " +
                         "`index_activity_events_connectionId_createdAt_id` " +
                         "ON `activity_events` (`connectionId`, `createdAt`, `id`)"
+                )
+            }
+        }
+
+        /** Add profile-scoped local organization without changing server/session pin semantics. */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_sessions ADD COLUMN platform TEXT")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS local_session_collections (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        connectionId TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        kind TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_local_session_collections_connectionId_kind_name " +
+                        "ON local_session_collections (connectionId, kind, name)"
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS local_session_collection_links (
+                        connectionId TEXT NOT NULL,
+                        sessionId TEXT NOT NULL,
+                        collectionId INTEGER NOT NULL,
+                        PRIMARY KEY(connectionId, sessionId, collectionId)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "index_local_session_collection_links_connectionId_sessionId " +
+                        "ON local_session_collection_links (connectionId, sessionId)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "index_local_session_collection_links_connectionId_collectionId " +
+                        "ON local_session_collection_links (connectionId, collectionId)"
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS local_session_favorites (
+                        connectionId TEXT NOT NULL,
+                        sessionId TEXT NOT NULL,
+                        PRIMARY KEY(connectionId, sessionId)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS saved_session_filters (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        connectionId TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        source TEXT,
+                        platform TEXT,
+                        endReason TEXT,
+                        labelId INTEGER,
+                        groupId INTEGER,
+                        updatedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "index_saved_session_filters_connectionId_updatedAt " +
+                        "ON saved_session_filters (connectionId, updatedAt)"
                 )
             }
         }

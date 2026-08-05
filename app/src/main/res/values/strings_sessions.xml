@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Strings owned by the sessions feature wave. English only; locale files are translated by the i18n pass. -->
+    <!-- Session administration and local-only organization strings. -->
     <string name="sessions_title">Sessions</string>
     <string name="sessions_detail_title">Session</string>
     <string name="sessions_subtitle">Browse · search · administer</string>
@@ -54,4 +54,42 @@
     <string name="sessions_clear">Clear</string>
     <string name="sessions_delete_selected">Delete selected (%1$d)</string>
     <string name="sessions_delete_empty">Delete empty (%1$d)</string>
+    <string name="sessions_local_badge">Local</string>
+    <string name="sessions_local_favorite">Local · Favorite</string>
+    <string name="sessions_local_named">Local · %1$s</string>
+    <string name="sessions_favorite">Favorite</string>
+    <string name="sessions_favorites">Favorites</string>
+    <string name="sessions_organize_local">Organize · Local</string>
+    <string name="sessions_labels_local">Labels · Local</string>
+    <string name="sessions_groups_local">Groups · Local</string>
+    <string name="sessions_add_label_local">Add label · Local</string>
+    <string name="sessions_add_group_local">Add group · Local</string>
+    <string name="sessions_name">Name</string>
+    <string name="sessions_add">Add</string>
+    <string name="sessions_done">Done</string>
+    <string name="sessions_none_yet">None yet</string>
+    <string name="sessions_saved_filters_title">Saved filters</string>
+    <string name="sessions_saved_filters_subtitle">Labels, groups, favorites, and filters stay on this connection and profile.</string>
+    <string name="sessions_saved_filters_heading">Saved filters</string>
+    <string name="sessions_add_filter">Add filter</string>
+    <string name="sessions_no_saved_filters">No saved filters yet.</string>
+    <string name="sessions_filter_editor_title">Saved filter · Local</string>
+    <string name="sessions_filter_name_required">A saved filter needs a name</string>
+    <string name="sessions_filter_source">Source</string>
+    <string name="sessions_filter_platform">Platform</string>
+    <string name="sessions_filter_end_reason">End reason</string>
+    <string name="sessions_filter_label">Label</string>
+    <string name="sessions_filter_group">Group</string>
+    <string name="sessions_filter_anything">No criteria (matches everything)</string>
+    <string name="sessions_any">Any</string>
+    <string name="sessions_save">Save</string>
+    <string name="sessions_edit">Edit</string>
+    <string name="sessions_delete_filter">Delete saved filter</string>
+    <string name="sessions_delete_filter_body">Delete the local filter “%1$s”?</string>
+    <string name="sessions_delete_local_collection">Delete local collection</string>
+    <string name="sessions_delete_local_collection_body">Delete “%1$s” and remove its local assignments?</string>
+    <string name="sessions_bulk_filtered_notice">Local or list filters are active. Bulk delete uses only visible sessions; host-wide prune, import, and empty-delete stay disabled.</string>
+    <string name="sessions_stats_server_wide">Stats are host-wide; clear filters before host-wide bulk actions.</string>
+    <string name="manage_saved_filters_title">Saved filters</string>
+    <string name="manage_saved_filters_subtitle">Local session labels, groups, favorites, and saved filters</string>
 </resources>

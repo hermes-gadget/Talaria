@@ -26,6 +26,7 @@ import com.hermesgadget.talaria.core.data.prefs.SettingsStore
 import com.hermesgadget.talaria.core.data.repo.ChatRepository
 import com.hermesgadget.talaria.core.data.repo.ConnectionRepository
 import com.hermesgadget.talaria.core.data.repo.HermesRepository
+import com.hermesgadget.talaria.core.data.repo.SessionOrganizationRepository
 import com.hermesgadget.talaria.core.lifecycle.HermesForegroundObserver
 import com.hermesgadget.talaria.core.network.HermesClientFactory
 import com.hermesgadget.talaria.core.network.HermesEventClient
@@ -54,6 +55,7 @@ class AppContainer(context: Context) {
     ).addMigrations(
         TalariaDatabase.MIGRATION_1_2,
         TalariaDatabase.MIGRATION_2_3,
+        TalariaDatabase.MIGRATION_3_4,
     ).build()
 
     val clientFactory = HermesClientFactory(connectionStore, settingsStore)
@@ -62,6 +64,7 @@ class AppContainer(context: Context) {
     val eventClient = HermesEventClient(clientFactory, wsAuthHelper)
     val connectionRepository = ConnectionRepository(connectionStore, clientFactory, wsAuthHelper)
     val hermesRepository = HermesRepository(clientFactory, database, connectionStore, appContext)
+    val sessionOrganizationRepository = SessionOrganizationRepository(database.sessionOrganization())
     val chatRepository = ChatRepository(clientFactory, database, connectionStore, wsAuthHelper)
     val notifier = TalariaNotifier(appContext, settingsStore)
     val agentAlertDispatcher = AgentAlertDispatcher(notifier)

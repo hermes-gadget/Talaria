@@ -42,6 +42,8 @@ data class CachedSessionEntity(
     val lastActive: String?,
     val json: String,
     val updatedAt: Long = System.currentTimeMillis(),
+    /** Optional server-provided platform; older cache rows leave it null. */
+    val platform: String? = null,
 )
 
 @Entity(
@@ -87,5 +89,68 @@ data class ActivityEventEntity(
 data class ChatDraftEntity(
     @PrimaryKey val connectionId: String,
     val text: String,
+    val updatedAt: Long = System.currentTimeMillis(),
+)
+
+/** Local session organization is deliberately separate from Hermes metadata. */
+enum class LocalSessionCollectionKind {
+    LABEL,
+    GROUP,
+}
+
+@Entity(
+    tableName = "local_session_collections",
+    indices = [
+        Index(
+            value = ["connectionId", "kind", "name"],
+            unique = true,
+        ),
+    ],
+)
+data class LocalSessionCollectionEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val connectionId: String,
+    val name: String,
+    /** Stored as [LocalSessionCollectionKind.name] to keep the schema explicit. */
+    val kind: String,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+@Entity(
+    tableName = "local_session_collection_links",
+    primaryKeys = ["connectionId", "sessionId", "collectionId"],
+    indices = [
+        Index(value = ["connectionId", "sessionId"]),
+        Index(value = ["connectionId", "collectionId"]),
+    ],
+)
+data class LocalSessionCollectionLinkEntity(
+    val connectionId: String,
+    val sessionId: String,
+    val collectionId: Long,
+)
+
+@Entity(
+    tableName = "local_session_favorites",
+    primaryKeys = ["connectionId", "sessionId"],
+)
+data class LocalSessionFavoriteEntity(
+    val connectionId: String,
+    val sessionId: String,
+)
+
+@Entity(
+    tableName = "saved_session_filters",
+    indices = [Index(value = ["connectionId", "updatedAt"])],
+)
+data class SavedSessionFilterEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val connectionId: String,
+    val name: String,
+    val source: String? = null,
+    val platform: String? = null,
+    val endReason: String? = null,
+    val labelId: Long? = null,
+    val groupId: Long? = null,
     val updatedAt: Long = System.currentTimeMillis(),
 )

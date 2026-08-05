@@ -76,6 +76,8 @@ data class SessionSummary(
     val id: String,
     val title: String? = null,
     val source: String? = null,
+    /** Optional platform discriminator used by local saved filters. */
+    val platform: String? = null,
     val model: String? = null,
     val message_count: Int? = null,
     val tool_call_count: Int? = null,
