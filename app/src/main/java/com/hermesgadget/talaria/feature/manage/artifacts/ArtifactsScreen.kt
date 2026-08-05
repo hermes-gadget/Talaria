@@ -17,7 +17,6 @@
 package com.hermesgadget.talaria.feature.manage.artifacts
 
 import android.graphics.BitmapFactory
-import android.util.Base64
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -74,6 +73,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesgadget.talaria.core.util.formatHermesTimestamp
+import com.hermesgadget.talaria.core.util.BoundedImage
+import com.hermesgadget.talaria.core.util.ImageHandle
 import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
@@ -129,11 +130,14 @@ fun ArtifactsScreen(
         ) {
             ArtifactPreviewSheet(
                 preview = ui.preview,
+                previewArtifact = ui.previewArtifact,
                 loading = ui.previewLoading,
                 error = ui.previewError,
                 sharing = ui.sharing,
                 onShare = { ui.preview?.artifact?.let(vm::share) },
-                onOpenSession = { ui.preview?.artifact?.sessionId?.let(onOpenSession) },
+                onOpenSession = {
+                    (ui.preview?.artifact ?: ui.previewArtifact)?.sessionId?.let(onOpenSession)
+                },
                 onClose = vm::closePreview,
             )
         }
@@ -288,6 +292,7 @@ private fun ArtifactRow(
 @Composable
 private fun ArtifactPreviewSheet(
     preview: ArtifactPreview?,
+    previewArtifact: ArtifactRecord?,
     loading: Boolean,
     error: String?,
     sharing: Boolean,
@@ -302,13 +307,13 @@ private fun ArtifactPreviewSheet(
             .heightIn(min = 120.dp, max = 560.dp),
     ) {
         Text(
-            preview?.artifact?.label ?: "Artifact preview",
+            (preview?.artifact ?: previewArtifact)?.label ?: "Artifact preview",
             style = MaterialTheme.typography.titleMedium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            preview?.artifact?.path.orEmpty(),
+            (preview?.artifact ?: previewArtifact)?.path.orEmpty(),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -320,8 +325,8 @@ private fun ArtifactPreviewSheet(
             loading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
             error != null -> Text(error, color = MaterialTheme.colorScheme.error)
             preview is ArtifactPreview.Image -> {
-                val bitmapState by produceState<ImageBitmap?>(null, preview.dataUrl) {
-                    value = withContext(Dispatchers.Default) { decodeBitmap(preview.dataUrl) }
+                val bitmapState by produceState<ImageBitmap?>(null, preview.handle.path) {
+                    value = withContext(Dispatchers.Default) { decodeBitmap(preview.handle) }
                 }
                 val bitmap = bitmapState
                 if (bitmap != null) {
@@ -376,7 +381,7 @@ private fun ArtifactPreviewSheet(
                 )
             }
         }
-        if (preview != null) {
+        if (preview != null || previewArtifact != null) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -388,7 +393,7 @@ private fun ArtifactPreviewSheet(
                     Spacer(Modifier.width(4.dp))
                     Text("Open session")
                 }
-                TextButton(onClick = onShare, enabled = !sharing) {
+                TextButton(onClick = onShare, enabled = preview != null && !sharing) {
                     Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(if (sharing) "Preparing…" else "Share")
@@ -446,24 +451,19 @@ private fun ArtifactRecord.icon() = when (kind) {
     ArtifactKind.ARCHIVE -> Icons.Filled.Archive
 }
 
-private fun decodeBitmap(dataUrl: String) = runCatching {
-    val comma = dataUrl.indexOf(',')
-    if (comma <= 0) return@runCatching null
-    val metadata = dataUrl.substring(0, comma)
-    if (!metadata.contains("base64", ignoreCase = true)) return@runCatching null
-    val bytes = Base64.decode(dataUrl.substring(comma + 1), Base64.DEFAULT)
-    // Bounds-first, sampled decode — never materialise a full-resolution bitmap.
+private fun decodeBitmap(handle: ImageHandle) = runCatching {
+    val file = java.io.File(handle.path)
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    BitmapFactory.decodeFile(file.absolutePath, bounds)
     if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
-    var sample = 1
-    while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 2048) sample *= 2
-    BitmapFactory.decodeByteArray(
-        bytes,
-        0,
-        bytes.size,
+    BoundedImage.validateBounds(bounds.outWidth, bounds.outHeight)
+    val sample = BoundedImage.sampleSizeFor(bounds.outWidth, bounds.outHeight)
+    BitmapFactory.decodeFile(
+        file.absolutePath,
         BitmapFactory.Options().apply { inSampleSize = sample },
-    )?.asImageBitmap()
+    )?.takeIf {
+        it.width.toLong() * it.height.toLong() <= BoundedImage.MAX_DISPLAY_PIXELS
+    }?.asImageBitmap()
 }.getOrNull()
 
 private fun formatBytes(bytes: Long): String = when {

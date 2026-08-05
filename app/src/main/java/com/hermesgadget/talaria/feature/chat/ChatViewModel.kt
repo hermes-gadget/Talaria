@@ -71,6 +71,9 @@ import com.hermesgadget.talaria.domain.model.scopeId
 import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
 import com.hermesgadget.talaria.feature.manage.sessions.SessionFilters
 import com.hermesgadget.talaria.core.util.BoundedTextBuffer
+import com.hermesgadget.talaria.core.util.BoundedImage
+import com.hermesgadget.talaria.core.util.ImageHandle
+import com.hermesgadget.talaria.core.util.PreparedImage
 import com.hermesgadget.talaria.core.util.suspendResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -97,6 +100,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import retrofit2.HttpException
+import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.Base64
 import java.util.UUID
 
@@ -124,6 +129,7 @@ data class ChatImageAttachmentUi(
     val id: String,
     val filename: String,
     val sizeBytes: Int,
+    val handle: ImageHandle,
     val status: ChatImageAttachmentStatus = ChatImageAttachmentStatus.READY,
     val error: String? = null,
 )
@@ -256,7 +262,7 @@ private class SessionRuntime(
 )
 
 private data class PendingChatImage(
-    val image: ValidatedChatImage,
+    val image: PreparedImage,
     var attachedSessionId: String? = null,
 )
 
@@ -355,8 +361,11 @@ class ChatViewModel(
     private var loadingConnectionScope = false
     private val inputHistoryStore = ChatInputHistoryStore(TalariaApp.instance)
     private val inputHistories = mutableMapOf<String, InputHistoryNavigator>()
-    /** Raw picker bytes stay outside StateFlow so Compose never copies or compares them. */
+    /** Prepared image handles stay outside StateFlow's bulk work; the UI sees metadata only. */
     private val pendingImages = mutableMapOf<String, LinkedHashMap<String, PendingChatImage>>()
+    private val attachmentDirectory by lazy {
+        File(TalariaApp.instance.cacheDir, "chat-attachments")
+    }
     /** Server STT dictation (the primary voice path — same engine the Voice
      * settings test uses). On-device Android dictation is the fallback for
      * servers without STT; it can fail with a client error on some devices. */
@@ -369,6 +378,35 @@ class ChatViewModel(
     private var serverSttScope: String? = null
     private var serverSttProbeGeneration = 0L
     private val serverSttCapabilities = mutableMapOf<String, CachedServerSttCapability>()
+
+    private fun deletePendingImages(tabId: String) {
+        pendingImages.remove(tabId)?.values?.forEach { pending ->
+            BoundedImage.delete(pending.image.handle)
+        }
+    }
+
+    private fun clearPendingImages() {
+        pendingImages.values.flatMap { it.values }.forEach { pending ->
+            BoundedImage.delete(pending.image.handle)
+        }
+        pendingImages.clear()
+    }
+
+    /** Encode one prepared file at a time; raw picker bytes never enter UI or pending state. */
+    private fun encodeAttachmentFile(handle: ImageHandle): String {
+        val file = File(handle.path)
+        require(file.isFile && file.length() <= ChatImageAttachments.MAX_TRANSPORT_BYTES) {
+            "Image attachment is no longer available"
+        }
+        val estimated = (file.length() * 4L / 3L + 4L)
+            .coerceAtMost(Int.MAX_VALUE.toLong())
+            .toInt()
+        val encoded = ByteArrayOutputStream(estimated)
+        Base64.getEncoder().wrap(encoded).use { base64 ->
+            file.inputStream().use { input -> input.copyTo(base64, 16 * 1024) }
+        }
+        return encoded.toString(Charsets.US_ASCII.name())
+    }
 
     private fun createPtyTransport(
         snapshot: com.hermesgadget.talaria.core.network.ConnectionSnapshot,
@@ -576,7 +614,7 @@ class ChatViewModel(
         synchronized(sessionOwnershipLock) { sessionOwners.clear() }
         pendingLocalCreations.clear()
         autoOpenedTabs.clear()
-        pendingImages.clear()
+        clearPendingImages()
         inputHistories.clear()
         slashCatalog = SlashCommands.defaults
         slashRequestGeneration += 1
@@ -906,7 +944,7 @@ class ChatViewModel(
         autoOpenedTabs.remove(tabId)
         removePendingLocalCreation(tabId)
         AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
-        pendingImages.remove(tabId)
+        deletePendingImages(tabId)
         val rt = runtimes.remove(tabId)
         rt?.collectJob?.cancel()
         rt?.transportStateJob?.cancel()
@@ -1258,7 +1296,7 @@ class ChatViewModel(
     private fun closeAutoTab(tabId: String) {
         autoOpenedTabs.remove(tabId)
         AgentTaskNotificationService.stopWatching(TalariaApp.instance, tabId)
-        pendingImages.remove(tabId)
+        deletePendingImages(tabId)
         val rt = runtimes.remove(tabId)
         rt?.collectJob?.cancel()
         rt?.transportStateJob?.cancel()
@@ -2067,17 +2105,25 @@ class ChatViewModel(
                     )?.use { cursor ->
                         if (cursor.moveToFirst()) cursor.getString(0) else null
                     } ?: uri.lastPathSegment
-                    val bytes = resolver.openInputStream(uri)?.use(ChatImageAttachments::readCapped)
-                        ?: throw IllegalArgumentException("Could not read the selected image")
-                    ChatImageAttachments.validate(bytes, displayName, resolver.getType(uri))
+                    ChatImageAttachments.prepare(
+                        resolver = resolver,
+                        uri = uri,
+                        outputDirectory = attachmentDirectory,
+                        displayName = displayName,
+                    )
                 }
             }
             selected.onSuccess { image ->
-                if (_ui.value.tabs.none { it.id == tabId }) return@onSuccess
-                val existingBytes = pendingImages[tabId]?.values?.sumOf { it.image.bytes.size } ?: 0
-                if (existingBytes + image.bytes.size > ChatImageAttachments.MAX_BYTES) {
+                if (_ui.value.tabs.none { it.id == tabId }) {
+                    BoundedImage.delete(image.handle)
+                    return@onSuccess
+                }
+                val existingBytes = pendingImages[tabId]?.values
+                    ?.sumOf { it.image.handle.sizeBytes } ?: 0L
+                if (existingBytes + image.handle.sizeBytes > ChatImageAttachments.MAX_AGGREGATE_BYTES) {
+                    BoundedImage.delete(image.handle)
                     updateTab(tabId) {
-                        it.copy(error = "Selected images exceed the 25 MB attachment limit")
+                        it.copy(error = "Selected images exceed the attachment limit")
                     }
                     return@onSuccess
                 }
@@ -2088,7 +2134,8 @@ class ChatViewModel(
                         imageAttachments = it.imageAttachments + ChatImageAttachmentUi(
                             id = id,
                             filename = image.filename,
-                            sizeBytes = image.bytes.size,
+                            sizeBytes = image.handle.sizeBytes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                            handle = image.handle,
                         ),
                         error = null,
                     )
@@ -2110,7 +2157,8 @@ class ChatViewModel(
             }
             return
         }
-        pendingImages[tab.id]?.remove(id)
+        val removed = pendingImages[tab.id]?.remove(id)
+        BoundedImage.delete(removed?.image?.handle)
         if (pendingImages[tab.id].isNullOrEmpty()) pendingImages.remove(tab.id)
         updateTab(tab.id) {
             it.copy(imageAttachments = it.imageAttachments.filterNot { image -> image.id == id }, error = null)
@@ -2211,7 +2259,7 @@ class ChatViewModel(
                         ?: throw IllegalStateException("An image attachment is no longer available")
                     if (pending.attachedSessionId != sessionId) {
                         val content = withContext(Dispatchers.Default) {
-                            Base64.getEncoder().encodeToString(pending.image.bytes)
+                            encodeAttachmentFile(pending.image.handle)
                         }
                         val result = runtime.eventClient.requestRpc(
                             "image.attach_bytes",
@@ -2307,7 +2355,7 @@ class ChatViewModel(
         // Every turn starts in the clean transcript. Raw PTY/TUI output is a
         // diagnostic idle view and must not expose model reasoning in flight.
         _ui.update { it.copy(showSlashPalette = false, transcriptMode = TranscriptMode.READING) }
-        pendingImages.remove(tabId)
+        deletePendingImages(tabId)
         runtime.assistantBuffer = BoundedTextBuffer(MAX_ANSWER_BUFFER_CHARS)
         runtime.sidecarAssistantBuffer = BoundedTextBuffer(MAX_ANSWER_BUFFER_CHARS)
         _ui.value.tabs.firstOrNull { it.id == tabId }?.let { current ->
@@ -3380,7 +3428,7 @@ class ChatViewModel(
             sessionOwners.clear()
             claimedSessions.clear()
         }
-        pendingImages.clear()
+        clearPendingImages()
         super.onCleared()
     }
 

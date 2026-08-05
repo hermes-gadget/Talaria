@@ -22,6 +22,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import java.util.ArrayDeque
 
 /** Accepts either an old ISO/text value or the numeric epoch values emitted by current Hermes. */
 @OptIn(ExperimentalSerializationApi::class)
@@ -65,27 +66,100 @@ object FlexibleMessageTextSerializer : KSerializer<String?> {
     }
 }
 
-private fun JsonElement.toReadableMessageText(): String? = when (this) {
-    JsonNull -> null
-    is JsonPrimitive -> contentOrNull
-    is JsonArray -> mapNotNull { block ->
-        when (block) {
-            is JsonObject -> {
-                block["text"]?.toReadableMessageText()
-                    ?: block["content"]?.toReadableMessageText()
-                    ?: when (block["type"]?.jsonPrimitive?.contentOrNull) {
-                        "image", "image_url", "input_image" -> "[image]"
-                        "audio", "input_audio" -> "[audio]"
-                        else -> null
-                    }
-            }
-            else -> block.toReadableMessageText()
+private const val MAX_READABLE_MESSAGE_DEPTH = 16
+private const val MAX_READABLE_MESSAGE_NODES = 4_096
+private const val MAX_READABLE_MESSAGE_CHARS = 64 * 1024
+
+private data class ReadableVisit(
+    val element: JsonElement,
+    val depth: Int,
+    val fromArray: Boolean,
+)
+
+/** Bounded, iterative projection of multimodal JSON into transcript text. */
+private fun JsonElement.toReadableMessageText(): String? {
+    val pending = ArrayDeque<ReadableVisit>()
+    val segments = mutableListOf<String>()
+    var nodes = 0
+    var outputChars = 0
+    var truncated = false
+    pending.addLast(ReadableVisit(this, depth = 0, fromArray = false))
+
+    fun appendSegment(value: String?) {
+        if (value.isNullOrBlank() || truncated) return
+        val remaining = MAX_READABLE_MESSAGE_CHARS - outputChars
+        if (remaining <= 0) {
+            truncated = true
+            return
         }
-    }.joinToString("\n").ifBlank { null }
-    is JsonObject -> {
-        this["text"]?.toReadableMessageText()
-            ?: this["content"]?.toReadableMessageText()
-            ?: this["result"]?.toReadableMessageText()
-            ?: toString()
+        val bounded = value.take(remaining)
+        segments += bounded
+        outputChars += bounded.length
+        if (bounded.length < value.length) truncated = true
     }
+
+    while (pending.isNotEmpty() && !truncated) {
+        val visit = pending.removeLast()
+        if (++nodes > MAX_READABLE_MESSAGE_NODES || visit.depth > MAX_READABLE_MESSAGE_DEPTH) break
+        when (val element = visit.element) {
+            JsonNull -> Unit
+            is JsonPrimitive -> appendSegment(element.contentOrNull)
+            is JsonArray -> {
+                val childCount = minOf(element.size, MAX_READABLE_MESSAGE_NODES - nodes - pending.size)
+                    .coerceAtLeast(0)
+                for (index in (childCount - 1 downTo 0)) {
+                    pending.addLast(
+                        ReadableVisit(
+                            element = element[index],
+                            depth = visit.depth + 1,
+                            fromArray = true,
+                        ),
+                    )
+                }
+            }
+            is JsonObject -> {
+                val text = element["text"]
+                val content = element["content"]
+                val result = element["result"]
+                val selected = sequenceOf(text, content, result)
+                    .filterNotNull()
+                    .firstOrNull { it !is JsonNull }
+                if (selected != null && nodes + pending.size < MAX_READABLE_MESSAGE_NODES) {
+                    pending.addLast(
+                        ReadableVisit(
+                            element = selected,
+                            depth = visit.depth + 1,
+                            fromArray = visit.fromArray,
+                        ),
+                    )
+                } else if (visit.fromArray) {
+                    when (element["type"]?.jsonPrimitive?.contentOrNull) {
+                        "image", "image_url", "input_image" -> appendSegment("[image]")
+                        "audio", "input_audio" -> appendSegment("[audio]")
+                        else -> Unit
+                    }
+                } else {
+                    appendSegment(boundedObjectPreview(element))
+                }
+            }
+        }
+    }
+    return segments.joinToString("\n").ifBlank { null }
+}
+
+private fun boundedObjectPreview(element: JsonObject): String = buildString {
+    append('{')
+    element.entries.take(8).forEachIndexed { index, (key, value) ->
+        if (index > 0) append(", ")
+        append(key.take(128)).append(':').append(boundedJsonValuePreview(value))
+    }
+    if (element.size > 8) append(", …")
+    append('}')
+}
+
+private fun boundedJsonValuePreview(value: JsonElement): String = when (value) {
+    JsonNull -> "null"
+    is JsonPrimitive -> value.contentOrNull?.take(256) ?: "?"
+    is JsonArray -> "[…]"
+    is JsonObject -> "{…}"
 }

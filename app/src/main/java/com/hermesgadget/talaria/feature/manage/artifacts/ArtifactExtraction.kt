@@ -18,6 +18,7 @@ package com.hermesgadget.talaria.feature.manage.artifacts
 
 import com.hermesgadget.talaria.domain.model.SessionMessage
 import com.hermesgadget.talaria.domain.model.SessionSummary
+import java.util.ArrayDeque
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -43,6 +44,15 @@ data class ArtifactRecord(
     val timestamp: String? = null,
 )
 
+internal const val MAX_ARTIFACT_MESSAGES = 512
+internal const val MAX_ARTIFACT_INPUT_BYTES = 512L * 1024L
+internal const val MAX_ARTIFACT_TRANSCRIPT_BYTES = 4L * 1024L * 1024L
+internal const val MAX_ARTIFACT_CANDIDATES = 256
+internal const val MAX_ARTIFACT_JSON_NODES = 4_096
+internal const val MAX_ARTIFACT_STRUCTURAL_DEPTH = 16
+internal const val MAX_ARTIFACT_NESTED_DECODES = 64
+internal const val MAX_ARTIFACT_PATH_CHARS = 4_096
+
 /** Filters the pure extraction result without coupling it to Compose state. */
 fun filterArtifacts(records: List<ArtifactRecord>, filter: ArtifactKind?): List<ArtifactRecord> =
     if (filter == null) records else records.filter { it.kind == filter }
@@ -56,11 +66,14 @@ fun filterArtifacts(records: List<ArtifactRecord>, filter: ArtifactKind?): List<
  */
 fun extractArtifacts(session: SessionSummary, messages: List<SessionMessage>): List<ArtifactRecord> {
     val found = LinkedHashMap<String, ArtifactRecord>()
+    val budget = ExtractionBudget()
     val sessionTitle = session.title?.trim().takeUnless { it.isNullOrEmpty() }
         ?: session.preview?.trim().takeUnless { it.isNullOrEmpty() }
         ?: session.id
+    var currentNewIds: MutableList<String>? = null
 
     fun add(raw: String) {
+        if (!budget.takeCandidate()) return
         val path = normalizePath(raw) ?: return
         val kind = artifactKindForPath(path) ?: return
         val key = "${session.id}:$path"
@@ -74,29 +87,36 @@ fun extractArtifacts(session: SessionSummary, messages: List<SessionMessage>): L
             sessionTitle = sessionTitle,
             timestamp = null,
         )
+        currentNewIds?.add(key)
     }
 
-    messages.forEach { message ->
+    messages.asSequence().take(MAX_ARTIFACT_MESSAGES).forEach { message ->
+        if (budget.exhausted) return@forEach
         if (message.role !in setOf("assistant", "tool")) return@forEach
-        val before = found.keys.toSet()
+        val newIds = mutableListOf<String>()
+        currentNewIds = newIds
 
         message.content?.takeIf { it.isNotBlank() }?.let { text ->
-            collectTextCandidates(text, ::add)
+            val boundedText = budget.takeText(text)
+            collectTextCandidates(boundedText, ::add)
             if (message.role == "tool") {
-                parseJson(text)?.let { collectJsonCandidates(it, "tool_result", ::add) }
+                parseJson(boundedText)?.let { collectJsonCandidates(it, "tool_result", ::add, budget) }
             }
         }
 
-        message.tool_calls?.let { collectJsonCandidates(it, "tool_call", ::add) }
+        message.tool_calls?.let { collectJsonCandidates(it, "tool_call", ::add, budget) }
 
         // Keep the originating message timestamp on the record. The map entry is
         // only created once, so repeated tool output cannot move it around.
-        found.keys
-            .filterNot(before::contains)
-            .toList()
-            .forEach { id ->
-                found[id]?.let { record -> found[id] = record.copy(timestamp = message.timestamp) }
-            }
+        // A bounded candidate callback records only the ids made by this message;
+        // copying the whole key set for every transcript item would retain and
+        // repeatedly traverse unnecessary transcript-sized collections.
+        // Candidates are added synchronously above, so the callback has already
+        // populated this list. Reset the owner before the next transcript item.
+        currentNewIds = null
+        newIds.forEach { id ->
+            found[id]?.let { record -> found[id] = record.copy(timestamp = message.timestamp) }
+        }
     }
 
     return found.values.toList()
@@ -156,57 +176,167 @@ private fun collectTextCandidates(text: String, add: (String) -> Unit) {
     PATH_TOKEN_RE.findAll(text).forEach { add(it.groupValues[1]) }
 }
 
-/** Max stringified-JSON unwrap depth. Real tool payloads rarely nest beyond one or two levels. */
-private const val MAX_STRINGIFIED_JSON_DEPTH = 16
+private data class JsonVisit(
+    val element: JsonElement,
+    val keyPath: String,
+    val depth: Int,
+)
 
-private fun collectJsonCandidates(element: JsonElement, keyPath: String, add: (String) -> Unit) {
-    collectJsonCandidates(element, keyPath, add, 0)
-}
+/**
+ * Walk JSON with an explicit stack. The depth belongs to every queued child;
+ * object/array branches must never reset it or a stringified object/array chain
+ * can evade the guard and recurse forever.
+ */
+private fun collectJsonCandidates(
+    element: JsonElement,
+    keyPath: String,
+    add: (String) -> Unit,
+    budget: ExtractionBudget,
+) {
+    val pending = ArrayDeque<JsonVisit>()
+    pending.addLast(JsonVisit(element, keyPath.take(MAX_ARTIFACT_PATH_CHARS), depth = 0))
+    while (pending.isNotEmpty() && !budget.exhausted) {
+        val visit = pending.removeLast()
+        if (!budget.takeJsonNode()) break
+        when (val current = visit.element) {
+            is JsonPrimitive -> {
+                val value = current.contentOrNull ?: continue
+                if (!budget.consumeJsonValue(value)) break
+                val hasPathShape = value.startsWith('/') || value.startsWith("~/") ||
+                    value.startsWith("./") || value.startsWith("../") || value.startsWith("file://")
+                val hasKnownExtension = artifactKindForPath(value) != null
+                if (hasPathShape || (hasKnownExtension && KEY_HINT_RE.containsMatchIn(visit.keyPath))) {
+                    add(value)
+                }
 
-private fun collectJsonCandidates(element: JsonElement, keyPath: String, add: (String) -> Unit, depth: Int) {
-    when (element) {
-        is JsonPrimitive -> {
-            val value = element.contentOrNull ?: return
-            val hasPathShape = value.startsWith('/') || value.startsWith("~/") ||
-                value.startsWith("./") || value.startsWith("../") || value.startsWith("file://")
-            val hasKnownExtension = artifactKindForPath(value) != null
-            if (hasPathShape || (hasKnownExtension && KEY_HINT_RE.containsMatchIn(keyPath))) {
-                add(value)
-            }
-
-            // Tool arguments frequently put a JSON object in a string field.
-            // Only unwrap values that actually look like a JSON object/array:
-            // parseToJsonElement also accepts bare unquoted strings as JSON
-            // literals (e.g. "report.txt"), which would re-parse to themselves
-            // and recurse without bound.
-            if (depth < MAX_STRINGIFIED_JSON_DEPTH) {
-                val trimmed = value.trimStart()
-                if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-                    parseJson(value)?.let { nested ->
-                        collectJsonCandidates(nested, keyPath, add, depth + 1)
+                // Json.parseToJsonElement accepts bare unquoted strings as JSON
+                // literals. Prefix-check before every nested decode so a plain
+                // path such as "report.txt" is never parsed back into itself.
+                if (visit.depth < MAX_ARTIFACT_STRUCTURAL_DEPTH &&
+                    budget.nestedDecodes < MAX_ARTIFACT_NESTED_DECODES
+                ) {
+                    val trimmed = value.trimStart()
+                    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+                        budget.nestedDecodes++
+                        if (budget.remainingJsonSlots(pending.size) > 0) {
+                            parseJson(value)?.let { nested ->
+                                pending.addLast(
+                                    JsonVisit(
+                                        element = nested,
+                                        keyPath = visit.keyPath,
+                                        depth = visit.depth + 1,
+                                    ),
+                                )
+                            }
+                        }
                     }
                 }
             }
-        }
 
-        is JsonArray -> element.forEachIndexed { index, child ->
-            collectJsonCandidates(child, "$keyPath.$index", add)
-        }
+            is JsonArray -> {
+                if (visit.depth >= MAX_ARTIFACT_STRUCTURAL_DEPTH) continue
+                val childCount = minOf(
+                    current.size,
+                    budget.remainingJsonSlots(pending.size),
+                ).coerceAtLeast(0)
+                for (index in (childCount - 1 downTo 0)) {
+                    pending.addLast(
+                        JsonVisit(
+                            element = current[index],
+                            keyPath = "${visit.keyPath}.$index".take(MAX_ARTIFACT_PATH_CHARS),
+                            depth = visit.depth + 1,
+                        ),
+                    )
+                }
+            }
 
-        is JsonObject -> element.forEach { (key, child) ->
-            collectJsonCandidates(child, "$keyPath.$key", add)
+            is JsonObject -> {
+                if (visit.depth >= MAX_ARTIFACT_STRUCTURAL_DEPTH) continue
+                // Copy only a bounded prefix before reversing to preserve the
+                // historical insertion order without queuing an untrusted map.
+                val entries = current.entries.take(budget.remainingJsonSlots(pending.size))
+                for ((key, child) in entries.reversed()) {
+                    pending.addLast(
+                        JsonVisit(
+                            element = child,
+                            keyPath = "${visit.keyPath}.$key".take(MAX_ARTIFACT_PATH_CHARS),
+                            depth = visit.depth + 1,
+                        ),
+                    )
+                }
+            }
         }
     }
 }
 
-private fun parseJson(value: String): JsonElement? = runCatching {
-    Json.parseToJsonElement(value)
-}.getOrNull()
+private fun parseJson(value: String): JsonElement? {
+    val trimmed = value.trimStart()
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null
+    return runCatching { Json.parseToJsonElement(value) }.getOrNull()
+}
+
+private class ExtractionBudget {
+    var candidates = 0
+        private set
+    var jsonNodes = 0
+        private set
+    var nestedDecodes = 0
+    var inputBytes = 0L
+        private set
+    var exhausted = false
+        private set
+
+    fun takeCandidate(): Boolean {
+        if (exhausted || candidates >= MAX_ARTIFACT_CANDIDATES) {
+            exhausted = true
+            return false
+        }
+        candidates++
+        return true
+    }
+
+    fun takeJsonNode(): Boolean {
+        if (exhausted || jsonNodes >= MAX_ARTIFACT_JSON_NODES) {
+            exhausted = true
+            return false
+        }
+        jsonNodes++
+        return true
+    }
+
+    fun consumeJsonValue(value: String): Boolean {
+        val bytes = value.toUtf8Length()
+        if (bytes > MAX_ARTIFACT_INPUT_BYTES || inputBytes > MAX_ARTIFACT_TRANSCRIPT_BYTES - bytes) {
+            exhausted = true
+            return false
+        }
+        inputBytes += bytes
+        return true
+    }
+
+    fun remainingJsonSlots(pendingSize: Int): Int =
+        (MAX_ARTIFACT_JSON_NODES - jsonNodes - pendingSize).coerceAtLeast(0)
+
+    fun takeText(value: String): String {
+        if (exhausted || inputBytes >= MAX_ARTIFACT_TRANSCRIPT_BYTES) {
+            exhausted = true
+            return ""
+        }
+        val remaining = minOf(
+            MAX_ARTIFACT_INPUT_BYTES,
+            MAX_ARTIFACT_TRANSCRIPT_BYTES - inputBytes,
+        )
+        val bounded = value.takeUtf8Bytes(remaining)
+        inputBytes += bounded.toUtf8Length()
+        return bounded
+    }
+}
 
 private fun normalizePath(raw: String): String? {
     var value = raw.trim()
         .trimStart('`', '(', '[', '<', '"', '\'')
         .trimEnd('`', ')', ']', '>', '"', '\'', ',', ';', ':', '.')
+    if (value.length > MAX_ARTIFACT_PATH_CHARS) return null
     if (value.startsWith("file://", ignoreCase = true)) {
         value = value.substringAfter("file://", missingDelimiterValue = value)
     }
@@ -220,3 +350,49 @@ private fun artifactLabel(path: String): String = path
     .substringAfterLast('/')
     .substringAfterLast('\\')
     .ifBlank { path }
+
+private fun String.takeUtf8Bytes(maxBytes: Long): String {
+    if (maxBytes <= 0L) return ""
+    var used = 0L
+    var index = 0
+    while (index < length) {
+        val character = this[index]
+        val charBytes = when {
+            character.isHighSurrogate() && index + 1 < length && this[index + 1].isLowSurrogate() -> 4
+            character.code <= 0x7f -> 1
+            character.code <= 0x7ff -> 2
+            else -> 3
+        }
+        if (used + charBytes > maxBytes) break
+        used += charBytes
+        index += if (charBytes == 4) 2 else 1
+    }
+    return substring(0, index)
+}
+
+private fun String.toUtf8Length(): Long {
+    var bytes = 0L
+    var index = 0
+    while (index < length) {
+        val character = this[index]
+        when {
+            character.isHighSurrogate() && index + 1 < length && this[index + 1].isLowSurrogate() -> {
+                bytes += 4
+                index += 2
+            }
+            character.code <= 0x7f -> {
+                bytes++
+                index++
+            }
+            character.code <= 0x7ff -> {
+                bytes += 2
+                index++
+            }
+            else -> {
+                bytes += 3
+                index++
+            }
+        }
+    }
+    return bytes
+}

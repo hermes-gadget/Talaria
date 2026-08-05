@@ -57,4 +57,14 @@ class ChatImageAttachmentsTest {
             ChatImageAttachments.readCapped(ByteArrayInputStream(ByteArray(5)), 4)
         }
     }
+
+    @Test
+    fun `decoded pixel budget rejects huge dimensions before decode`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            ChatImageAttachments.validateDecodedPixels(100_000, 100_000)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ChatImageAttachments.validateDecodedPixels(Int.MAX_VALUE, 2)
+        }
+    }
 }

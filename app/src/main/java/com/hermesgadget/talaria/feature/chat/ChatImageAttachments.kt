@@ -16,6 +16,11 @@
 
 package com.hermesgadget.talaria.feature.chat
 
+import android.content.ContentResolver
+import android.net.Uri
+import com.hermesgadget.talaria.core.util.BoundedImage
+import com.hermesgadget.talaria.core.util.PreparedImage
+import java.io.File
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 
@@ -28,6 +33,24 @@ internal data class ValidatedChatImage(
 /** Validation shared by picker ingestion and tests; mirrors Hermes' attach-bytes limits. */
 internal object ChatImageAttachments {
     const val MAX_BYTES: Int = 25 * 1024 * 1024
+    const val MAX_AGGREGATE_BYTES: Long = BoundedImage.MAX_SOURCE_BYTES
+    const val MAX_TRANSPORT_BYTES: Long = BoundedImage.MAX_TRANSPORT_BYTES
+    const val MAX_DECODED_PIXELS: Long = BoundedImage.MAX_DECODED_PIXELS
+
+    suspend fun prepare(
+        resolver: ContentResolver,
+        uri: Uri,
+        outputDirectory: File,
+        displayName: String?,
+    ): PreparedImage = BoundedImage.prepareFromUri(
+        resolver = resolver,
+        uri = uri,
+        outputDirectory = outputDirectory,
+        displayName = displayName,
+    )
+
+    fun validateDecodedPixels(width: Int, height: Int) =
+        BoundedImage.validateBounds(width, height)
 
     fun readCapped(input: InputStream, maxBytes: Int = MAX_BYTES): ByteArray {
         require(maxBytes > 0)

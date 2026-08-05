@@ -13,6 +13,8 @@ package com.hermesgadget.talaria.feature.manage.artifacts
 import com.hermesgadget.talaria.domain.model.SessionMessage
 import com.hermesgadget.talaria.domain.model.SessionSummary
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -106,6 +108,58 @@ class ArtifactExtractionTest {
         assertEquals(1, filterArtifacts(artifacts, ArtifactKind.ARCHIVE).size)
         assertEquals(3, filterArtifacts(artifacts, null).size)
         assertTrue(artifacts.all { it.sessionId == "session-42" })
+    }
+
+    @Test
+    fun `stringified object and array alternation is depth bounded`() {
+        var nested = "/tmp/deep.txt"
+        repeat(MAX_ARTIFACT_STRUCTURAL_DEPTH + 2) { index ->
+            nested = if (index % 2 == 0) {
+                buildJsonObject { put("payload", nested) }.toString()
+            } else {
+                "[$nested]"
+            }
+        }
+
+        val artifacts = extractArtifacts(
+            session(),
+            listOf(
+                SessionMessage(
+                    role = "assistant",
+                    tool_calls = buildJsonObject { put("result", nested) },
+                ),
+            ),
+        )
+
+        assertTrue(artifacts.size <= 1)
+    }
+
+    @Test
+    fun `candidate and JSON node overflow stays bounded`() {
+        val payload = JsonObject(
+            (0..(MAX_ARTIFACT_CANDIDATES + 64)).associate { index ->
+                "output_$index" to JsonPrimitive("/tmp/output-$index.txt")
+            },
+        )
+
+        val artifacts = extractArtifacts(
+            session(),
+            listOf(SessionMessage(role = "assistant", tool_calls = payload)),
+        )
+
+        assertTrue(artifacts.size <= MAX_ARTIFACT_CANDIDATES)
+    }
+
+    @Test
+    fun `transcript byte budget drops content after the bounded prefix`() {
+        val text = "/tmp/first.txt " + "x".repeat(MAX_ARTIFACT_INPUT_BYTES.toInt()) + " /tmp/late.txt"
+
+        val artifacts = extractArtifacts(
+            session(),
+            listOf(SessionMessage(role = "assistant", content = text)),
+        )
+
+        assertEquals(listOf("/tmp/first.txt"), artifacts.map { it.path })
     }
 
     private fun session() = SessionSummary(

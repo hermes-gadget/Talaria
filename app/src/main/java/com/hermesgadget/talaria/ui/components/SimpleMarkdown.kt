@@ -51,8 +51,18 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.withStyle
 import androidx.core.net.toUri
+import java.util.ArrayDeque
 
 private const val LINK_TAG = "talaria-markdown-link"
+
+internal const val MAX_MARKDOWN_INPUT_BYTES = 1L * 1024L * 1024L
+internal const val MAX_MARKDOWN_BLOCKS = 512
+internal const val MAX_MARKDOWN_INLINE_DEPTH = 16
+internal const val MAX_MARKDOWN_INLINE_NODES = 4_096
+internal const val MAX_MARKDOWN_CODE_TOKENS = 4_096
+private const val MAX_MARKDOWN_LINES = 4_096
+private const val MAX_MARKDOWN_TABLE_ROWS = 256
+private const val MAX_MARKDOWN_TABLE_CELLS = 64
 
 /**
  * A small, offline GFM-ish renderer for the chat transcript.
@@ -502,13 +512,15 @@ internal data class MarkdownCodeToken(
     val kind: MarkdownCodeTokenKind,
 )
 
-/** Parse the supported markdown constructs in one linear pass over the lines. */
+/** Parse the supported markdown constructs in one bounded linear pass over the lines. */
 internal fun parseMarkdown(markdown: String): MarkdownDocument {
-    val lines = markdown.replace("\r\n", "\n").replace('\r', '\n').split('\n')
+    val bounded = markdown.takeUtf8Bytes(MAX_MARKDOWN_INPUT_BYTES)
+    val lines = splitMarkdownLines(bounded.replace("\r\n", "\n").replace('\r', '\n'))
     val blocks = mutableListOf<MarkdownBlock>()
+    val budget = MarkdownBudget()
     var index = 0
 
-    while (index < lines.size) {
+    while (index < lines.size && blocks.size < MAX_MARKDOWN_BLOCKS && !budget.exhausted) {
         val line = lines[index]
         if (line.isBlank()) {
             index++
@@ -521,21 +533,20 @@ internal fun parseMarkdown(markdown: String): MarkdownDocument {
             val codeLines = mutableListOf<String>()
             index++
             while (index < lines.size && !isFenceClose(lines[index])) {
-                codeLines += lines[index]
+                if (codeLines.size < MAX_MARKDOWN_LINES) codeLines += lines[index]
                 index++
             }
             if (index < lines.size) index++
-            val code = codeLines.joinToString("\n")
-            blocks += MarkdownCodeBlock(language, tokenizeCode(code, language))
+            blocks += MarkdownCodeBlock(language, tokenizeCode(codeLines.joinToString("\n"), language))
             continue
         }
 
-        if (index + 1 < lines.size && isTableSeparator(lines[index + 1]) && lines[index].contains('|')) {
-            val header = parseTableRow(lines[index])
+        if (index + 1 < lines.size && isTableSeparator(lines[index + 1]) && line.contains('|')) {
+            val header = parseTableRow(line, budget)
             index += 2
             val rows = mutableListOf<List<List<MarkdownInline>>>()
             while (index < lines.size && lines[index].isNotBlank() && lines[index].contains('|')) {
-                rows += parseTableRow(lines[index])
+                if (rows.size < MAX_MARKDOWN_TABLE_ROWS) rows += parseTableRow(lines[index], budget)
                 index++
             }
             blocks += MarkdownTable(header, rows)
@@ -552,18 +563,18 @@ internal fun parseMarkdown(markdown: String): MarkdownDocument {
             val quoteLines = mutableListOf<List<MarkdownInline>>()
             while (index < lines.size && lines[index].trimStart().startsWith('>')) {
                 val quoteText = lines[index].trimStart().removePrefix(">").removePrefix(" ")
-                quoteLines += parseInline(quoteText)
+                if (quoteLines.size < MAX_MARKDOWN_LINES) quoteLines += parseInline(quoteText, budget)
                 index++
             }
             blocks += MarkdownQuote(quoteLines)
             continue
         }
 
-        if (listMatch(line) != null) {
+        if (isListLine(line)) {
             val items = mutableListOf<MarkdownListItem>()
             while (index < lines.size) {
-                val match = listMatch(lines[index]) ?: break
-                items += match
+                val match = listMatch(lines[index], budget) ?: break
+                if (items.size < MAX_MARKDOWN_LINES) items += match
                 index++
             }
             blocks += MarkdownList(items)
@@ -573,7 +584,7 @@ internal fun parseMarkdown(markdown: String): MarkdownDocument {
         val heading = HEADING.matchEntire(line)
         if (heading != null) {
             blocks += MarkdownParagraph(
-                lines = listOf(parseInline(heading.groupValues[2].trim())),
+                lines = listOf(parseInline(heading.groupValues[2].trim(), budget)),
                 headingLevel = heading.groupValues[1].length,
             )
             index++
@@ -583,7 +594,7 @@ internal fun parseMarkdown(markdown: String): MarkdownDocument {
         val paragraph = mutableListOf<List<MarkdownInline>>()
         while (index < lines.size && lines[index].isNotBlank()) {
             if (paragraph.isNotEmpty() && startsBlock(lines, index)) break
-            paragraph += parseInline(lines[index])
+            if (paragraph.size < MAX_MARKDOWN_LINES) paragraph += parseInline(lines[index], budget)
             index++
         }
         if (paragraph.isNotEmpty()) blocks += MarkdownParagraph(paragraph)
@@ -594,15 +605,16 @@ internal fun parseMarkdown(markdown: String): MarkdownDocument {
 private val FENCE_OPEN = Regex("^\\s*```(.*)$")
 private val HEADING = Regex("^\\s{0,3}(#{1,6})\\s+(.+?)\\s*#*\\s*$")
 private val TABLE_CELL = Regex("^:?-{3,}:?$")
+private val FENCE_CLOSE = Regex("^```+$")
 
 private fun startsBlock(lines: List<String>, index: Int): Boolean {
     val line = lines[index]
     if (FENCE_OPEN.matches(line) || isHorizontalRule(line)) return true
-    if (line.trimStart().startsWith('>') || listMatch(line) != null || HEADING.matches(line)) return true
+    if (line.trimStart().startsWith('>') || isListLine(line) || HEADING.matches(line)) return true
     return index + 1 < lines.size && line.contains('|') && isTableSeparator(lines[index + 1])
 }
 
-private fun isFenceClose(line: String): Boolean = line.trim().matches(Regex("^```+$"))
+private fun isFenceClose(line: String): Boolean = line.trim().matches(FENCE_CLOSE)
 
 private fun isHorizontalRule(line: String): Boolean {
     val compact = line.trim().filterNot(Char::isWhitespace)
@@ -611,11 +623,12 @@ private fun isHorizontalRule(line: String): Boolean {
 
 private fun isTableSeparator(line: String): Boolean {
     if (!line.contains('|')) return false
-    return splitTableCells(line).isNotEmpty() && splitTableCells(line).all { TABLE_CELL.matches(it.trim()) }
+    val cells = splitTableCells(line)
+    return cells.isNotEmpty() && cells.all { TABLE_CELL.matches(it.trim()) }
 }
 
-private fun parseTableRow(line: String): List<List<MarkdownInline>> =
-    splitTableCells(line).map { parseInline(it.trim()) }
+private fun parseTableRow(line: String, budget: MarkdownBudget): List<List<MarkdownInline>> =
+    splitTableCells(line).map { parseInline(it.trim(), budget) }
 
 private fun splitTableCells(line: String): List<String> {
     val trimmed = line.trim().removePrefix("|").removeSuffix("|")
@@ -633,99 +646,226 @@ private fun splitTableCells(line: String): List<String> {
                 escaped = true
             }
             character == '|' -> {
-                cells += current.toString()
+                if (cells.size < MAX_MARKDOWN_TABLE_CELLS) cells += current.toString()
                 current.clear()
             }
             else -> current.append(character)
         }
     }
-    cells += current.toString()
+    if (cells.size < MAX_MARKDOWN_TABLE_CELLS) cells += current.toString()
     return cells
 }
 
-private data class ListMatch(
-    val depth: Int,
-    val ordered: Boolean,
-    val number: Int,
-    val content: List<MarkdownInline>,
-)
-
 private val LIST_ITEM = Regex("^(\\s*)([-+*]|\\d+[.)])\\s+(.*)$")
 
-private fun listMatch(line: String): MarkdownListItem? {
+private fun isListLine(line: String): Boolean = LIST_ITEM.matches(line)
+
+private fun listMatch(line: String, budget: MarkdownBudget): MarkdownListItem? {
     val match = LIST_ITEM.matchEntire(line) ?: return null
     val marker = match.groupValues[2]
     return MarkdownListItem(
         depth = match.groupValues[1].length / 2,
         ordered = marker.first().isDigit(),
         number = marker.takeWhile(Char::isDigit).toIntOrNull() ?: 0,
-        content = parseInline(match.groupValues[3]),
+        content = parseInline(match.groupValues[3], budget),
     )
 }
 
-private fun parseInline(source: String): List<MarkdownInline> {
-    val result = mutableListOf<MarkdownInline>()
-    val plain = StringBuilder()
+private enum class InlineWrapperKind { BOLD, ITALIC, STRIKE, CODE, LINK }
 
-    fun flushPlain() {
-        if (plain.isNotEmpty()) {
-            result += MarkdownText(plain.toString())
-            plain.clear()
+private data class InlineWrapper(
+    val kind: InlineWrapperKind,
+    val url: String? = null,
+)
+
+private data class InlineFrame(
+    val source: String,
+    val endExclusive: Int,
+    var index: Int,
+    val output: MutableList<MarkdownInline>,
+    val wrapper: InlineWrapper? = null,
+    val depth: Int = 0,
+    val plain: StringBuilder = StringBuilder(),
+)
+
+private class MarkdownBudget {
+    var nodes: Int = 0
+        private set
+    var exhausted: Boolean = false
+        private set
+
+    fun addNode(): Boolean {
+        if (exhausted || nodes >= MAX_MARKDOWN_INLINE_NODES) {
+            exhausted = true
+            return false
         }
+        nodes++
+        return true
+    }
+}
+
+/** Iterative inline parser with an explicit frame stack and bounded nesting. */
+private fun parseInline(source: String, budget: MarkdownBudget): List<MarkdownInline> {
+    val result = mutableListOf<MarkdownInline>()
+    val frames = ArrayDeque<InlineFrame>()
+    frames.addLast(InlineFrame(source, source.length, 0, result))
+
+    fun flush(frame: InlineFrame): Boolean {
+        if (frame.plain.isEmpty()) return true
+        if (!budget.addNode()) return false
+        frame.output += MarkdownText(frame.plain.toString())
+        frame.plain.clear()
+        return true
     }
 
-    var index = 0
-    while (index < source.length) {
-        if (source[index] == '\\' && index + 1 < source.length) {
-            plain.append(source[index + 1])
-            index += 2
+    while (frames.isNotEmpty() && !budget.exhausted) {
+        val frame = frames.peekLast() ?: break
+        if (frame.index >= frame.endExclusive) {
+            if (!flush(frame)) break
+            frames.removeLast()
+            val wrapper = frame.wrapper
+            val parent = frames.peekLast()
+            if (wrapper != null && parent != null) {
+                if (!budget.addNode()) break
+                parent.output += when (wrapper.kind) {
+                    InlineWrapperKind.BOLD -> MarkdownBold(frame.output.toList())
+                    InlineWrapperKind.ITALIC -> MarkdownItalic(frame.output.toList())
+                    InlineWrapperKind.STRIKE -> MarkdownStrike(frame.output.toList())
+                    InlineWrapperKind.CODE -> MarkdownInlineCode(
+                        frame.output.joinToString("") { node ->
+                            (node as? MarkdownText)?.value.orEmpty()
+                        },
+                    )
+                    InlineWrapperKind.LINK -> MarkdownLink(
+                        children = frame.output.toList(),
+                        url = wrapper.url.orEmpty(),
+                    )
+                }
+            }
             continue
         }
 
-        val linkEnd = if (source[index] == '[') source.indexOf("](", index + 1) else -1
-        if (linkEnd >= 0) {
-            val urlEnd = source.indexOf(')', linkEnd + 2)
-            if (urlEnd > linkEnd + 2) {
-                flushPlain()
-                result += MarkdownLink(
-                    children = parseInline(source.substring(index + 1, linkEnd)),
-                    url = source.substring(linkEnd + 2, urlEnd).trim(),
+        val index = frame.index
+        if (frame.source[index] == '\\' && index + 1 < frame.endExclusive) {
+            frame.plain.append(frame.source[index + 1])
+            frame.index += 2
+            continue
+        }
+
+        val linkEnd = if (frame.source[index] == '[') {
+            frame.source.indexOf("](", index + 1).takeIf { it in (index + 1) until frame.endExclusive }
+        } else {
+            null
+        }
+        if (linkEnd != null) {
+            val urlEnd = frame.source.indexOf(')', linkEnd + 2)
+            if (urlEnd > linkEnd + 2 && urlEnd < frame.endExclusive) {
+                if (!flush(frame)) break
+                val child = InlineFrame(
+                    source = frame.source,
+                    endExclusive = linkEnd,
+                    index = index + 1,
+                    output = mutableListOf(),
+                    wrapper = InlineWrapper(
+                        kind = InlineWrapperKind.LINK,
+                        url = frame.source.substring(linkEnd + 2, urlEnd).trim(),
+                    ),
+                    depth = frame.depth + 1,
                 )
-                index = urlEnd + 1
+                frame.index = urlEnd + 1
+                if (child.depth > MAX_MARKDOWN_INLINE_DEPTH) {
+                    frame.plain.append(frame.source, index, frame.index)
+                } else {
+                    frames.addLast(child)
+                }
                 continue
             }
         }
 
         val marker = when {
-            source.startsWith("**", index) -> "**"
-            source.startsWith("__", index) -> "__"
-            source.startsWith("~~", index) -> "~~"
-            source[index] == '`' -> "`"
-            source[index] == '*' -> "*"
-            source[index] == '_' -> "_"
+            frame.source.startsWith("**", index) -> "**"
+            frame.source.startsWith("__", index) -> "__"
+            frame.source.startsWith("~~", index) -> "~~"
+            frame.source[index] == '`' -> "`"
+            frame.source[index] == '*' -> "*"
+            frame.source[index] == '_' -> "_"
             else -> null
         }
         if (marker != null) {
-            val end = source.indexOf(marker, index + marker.length)
-            if (end > index + marker.length) {
-                flushPlain()
-                val value = source.substring(index + marker.length, end)
-                result += when (marker) {
-                    "**", "__" -> MarkdownBold(parseInline(value))
-                    "~~" -> MarkdownStrike(parseInline(value))
-                    "`" -> MarkdownInlineCode(value)
-                    else -> MarkdownItalic(parseInline(value))
+            val end = frame.source.indexOf(marker, index + marker.length)
+            if (end > index + marker.length && end < frame.endExclusive) {
+                if (!flush(frame)) break
+                val kind = when (marker) {
+                    "**", "__" -> InlineWrapperKind.BOLD
+                    "~~" -> InlineWrapperKind.STRIKE
+                    "`" -> InlineWrapperKind.CODE
+                    else -> InlineWrapperKind.ITALIC
                 }
-                index = end + marker.length
+                frame.index = end + marker.length
+                if (kind == InlineWrapperKind.CODE) {
+                    if (!budget.addNode()) break
+                    frame.output += MarkdownInlineCode(
+                        frame.source.substring(index + marker.length, end),
+                    )
+                    continue
+                }
+                val child = InlineFrame(
+                    source = frame.source,
+                    endExclusive = end,
+                    index = index + marker.length,
+                    output = mutableListOf(),
+                    wrapper = InlineWrapper(kind),
+                    depth = frame.depth + 1,
+                )
+                if (child.depth > MAX_MARKDOWN_INLINE_DEPTH) {
+                    frame.plain.append(frame.source, index, frame.index)
+                } else {
+                    frames.addLast(child)
+                }
                 continue
             }
         }
 
-        plain.append(source[index])
+        frame.plain.append(frame.source[index])
+        frame.index++
+    }
+    return result
+}
+
+private fun splitMarkdownLines(source: String): List<String> {
+    val lines = ArrayList<String>(minOf(MAX_MARKDOWN_LINES, 128))
+    var start = 0
+    var index = 0
+    while (index < source.length && lines.size < MAX_MARKDOWN_LINES) {
+        if (source[index] == '\n') {
+            lines += source.substring(start, index)
+            start = index + 1
+        }
         index++
     }
-    flushPlain()
-    return result
+    if (lines.size < MAX_MARKDOWN_LINES && start <= source.length) {
+        lines += source.substring(start)
+    }
+    return lines
+}
+
+private fun String.takeUtf8Bytes(maxBytes: Long): String {
+    if (maxBytes <= 0L) return ""
+    var used = 0L
+    var index = 0
+    while (index < length) {
+        val character = this[index]
+        val charBytes = when {
+            character.isHighSurrogate() && index + 1 < length && this[index + 1].isLowSurrogate() -> 4
+            character.code <= 0x7f -> 1
+            character.code <= 0x7ff -> 2
+            else -> 3
+        }
+        if (used + charBytes > maxBytes) break
+        used += charBytes
+        index += if (charBytes == 4) 2 else 1
+    }
+    return substring(0, index)
 }
 
 private val COMMON_KEYWORDS = setOf("true", "false", "null")
@@ -812,16 +952,29 @@ private fun tokenizeCode(code: String, language: String): List<MarkdownCodeToken
     val keywords = LANGUAGE_KEYWORDS[canonicalLanguage].orEmpty()
     val result = mutableListOf<MarkdownCodeToken>()
     val plain = StringBuilder()
+    var tokenCount = 0
+    var tokenLimitHit = false
 
-    fun flushPlain() {
+    fun emit(token: MarkdownCodeToken): Boolean {
+        if (tokenCount >= MAX_MARKDOWN_CODE_TOKENS) {
+            tokenLimitHit = true
+            return false
+        }
+        result += token
+        tokenCount++
+        return true
+    }
+
+    fun flushPlain(): Boolean {
         if (plain.isNotEmpty()) {
-            result += MarkdownCodeToken(plain.toString(), MarkdownCodeTokenKind.PLAIN)
+            if (!emit(MarkdownCodeToken(plain.toString(), MarkdownCodeTokenKind.PLAIN))) return false
             plain.clear()
         }
+        return true
     }
 
     var index = 0
-    while (index < code.length) {
+    while (index < code.length && !tokenLimitHit) {
         val current = code[index]
         val lineComment = when {
             current == '#' && canonicalLanguage in setOf("python", "bash", "yaml", "ruby") -> true
@@ -832,12 +985,12 @@ private fun tokenizeCode(code: String, language: String): List<MarkdownCodeToken
             else -> false
         }
         if (lineComment) {
-            flushPlain()
+            if (!flushPlain()) break
             val end = when {
                 current == '<' -> code.indexOf("-->", index + 4).let { if (it < 0) code.length else it + 3 }
                 else -> code.indexOf('\n', index).let { if (it < 0) code.length else it }
             }
-            result += MarkdownCodeToken(code.substring(index, end), MarkdownCodeTokenKind.COMMENT)
+            if (!emit(MarkdownCodeToken(code.substring(index, end), MarkdownCodeTokenKind.COMMENT))) break
             index = end
             continue
         }
@@ -845,16 +998,16 @@ private fun tokenizeCode(code: String, language: String): List<MarkdownCodeToken
         if (current == '/' && index + 1 < code.length && code[index + 1] == '*' &&
             canonicalLanguage in setOf("kotlin", "javascript", "typescript", "java", "csharp", "go", "rust", "swift", "css", "xml")
         ) {
-            flushPlain()
+            if (!flushPlain()) break
             val close = code.indexOf("*/", index + 2)
             val end = if (close < 0) code.length else close + 2
-            result += MarkdownCodeToken(code.substring(index, end), MarkdownCodeTokenKind.COMMENT)
+            if (!emit(MarkdownCodeToken(code.substring(index, end), MarkdownCodeTokenKind.COMMENT))) break
             index = end
             continue
         }
 
         if (current == '"' || current == '\'') {
-            flushPlain()
+            if (!flushPlain()) break
             val quote = current
             var end = index + 1
             var escaped = false
@@ -868,16 +1021,16 @@ private fun tokenizeCode(code: String, language: String): List<MarkdownCodeToken
                 if (character != '\\') escaped = false
                 end++
             }
-            result += MarkdownCodeToken(code.substring(index, end), MarkdownCodeTokenKind.STRING)
+            if (!emit(MarkdownCodeToken(code.substring(index, end), MarkdownCodeTokenKind.STRING))) break
             index = end
             continue
         }
 
         if (current.isDigit() && (index == 0 || !code[index - 1].isLetterOrDigit())) {
-            flushPlain()
+            if (!flushPlain()) break
             var end = index + 1
             while (end < code.length && (code[end].isDigit() || code[end] in ".xABCDEFXabcdef")) end++
-            result += MarkdownCodeToken(code.substring(index, end), MarkdownCodeTokenKind.NUMBER)
+            if (!emit(MarkdownCodeToken(code.substring(index, end), MarkdownCodeTokenKind.NUMBER))) break
             index = end
             continue
         }
@@ -887,8 +1040,8 @@ private fun tokenizeCode(code: String, language: String): List<MarkdownCodeToken
             while (end < code.length && (code[end].isLetterOrDigit() || code[end] == '_')) end++
             val word = code.substring(index, end)
             if (word in keywords || word in COMMON_KEYWORDS) {
-                flushPlain()
-                result += MarkdownCodeToken(word, MarkdownCodeTokenKind.KEYWORD)
+                if (!flushPlain()) break
+                if (!emit(MarkdownCodeToken(word, MarkdownCodeTokenKind.KEYWORD))) break
             } else {
                 plain.append(word)
             }
@@ -899,6 +1052,6 @@ private fun tokenizeCode(code: String, language: String): List<MarkdownCodeToken
         plain.append(current)
         index++
     }
-    flushPlain()
+    if (!tokenLimitHit) flushPlain()
     return result
 }

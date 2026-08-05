@@ -9,6 +9,7 @@ import com.hermesgadget.talaria.domain.model.SessionMessage
 import com.hermesgadget.talaria.domain.model.SessionSummary
 import com.hermesgadget.talaria.domain.model.SessionsPage
 import com.hermesgadget.talaria.util.MainDispatcherRule
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -20,6 +21,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class)
@@ -102,16 +104,16 @@ class ArtifactsViewModelTest {
     }
 
     @Test
-    fun `image preview uses data URL metadata`() = runTest {
+    fun `image preview stores a bounded file handle rather than a data URL`() = runTest {
         val artifact = artifact(ArtifactKind.IMAGE, "/tmp/render.png")
         val vm = viewModel(
             messages = emptyList(),
             readDataUrl = {
                 FsDataUrl(
                     path = it,
-                    dataUrl = "data:image/png;base64,aGVsbG8=",
+                    dataUrl = "data:image/png;base64,$ONE_PIXEL_PNG",
                     mimeType = "image/png",
-                    byteSize = 5,
+                    byteSize = 68,
                 )
             },
         )
@@ -121,9 +123,11 @@ class ArtifactsViewModelTest {
         advanceUntilIdle()
 
         val preview = vm.ui.value.preview as ArtifactPreview.Image
-        assertEquals("data:image/png;base64,aGVsbG8=", preview.dataUrl)
-        assertEquals("image/png", preview.mimeType)
-        assertEquals(5, preview.byteSize)
+        assertTrue(File(preview.handle.path).isFile)
+        assertEquals(1, preview.handle.width)
+        assertEquals(1, preview.handle.height)
+        assertEquals("image/jpeg", preview.mimeType)
+        assertTrue(preview.byteSize > 0)
     }
 
     @Test
@@ -179,6 +183,51 @@ class ArtifactsViewModelTest {
         assertEquals("sessions unavailable", failure.message)
     }
 
+    @Test
+    fun `canceled scan does not publish a failure`() = runTest {
+        val vm = ArtifactsViewModel(
+            loadSessions = { throw CancellationException("scan canceled") },
+            loadMessages = { Result.success(emptyList()) },
+            readText = { Result.success(FsTextFile(path = it)) },
+            readDataUrl = { FsDataUrl(path = it) },
+        )
+        advanceUntilIdle()
+
+        assertTrue(vm.ui.value.load is ArtifactLoadState.Loading)
+    }
+
+    @Test
+    fun `fifty session scan is incremental and revision cached`() = runTest {
+        var messageLoads = 0
+        val sessions = (0 until 50).map { index ->
+            SessionSummary(
+                id = "session-$index",
+                title = "Session $index",
+                message_count = 1,
+                last_active = index.toString(),
+            )
+        }
+        val vm = ArtifactsViewModel(
+            loadSessions = { Result.success(SessionsPage(sessions = sessions, total = 50)) },
+            loadMessages = {
+                messageLoads++
+                Result.success(listOf(SessionMessage(role = "assistant", content = "/tmp/$it.txt")))
+            },
+            readText = { Result.success(FsTextFile(path = it)) },
+            readDataUrl = { FsDataUrl(path = it) },
+            previewDirectoryOverride = File(System.getProperty("java.io.tmpdir"), "talaria-artifact-test"),
+        )
+        advanceUntilIdle()
+
+        assertEquals(50, messageLoads)
+        assertEquals(50, (vm.ui.value.load as ArtifactLoadState.Ready).artifacts.size)
+
+        vm.refresh()
+        advanceUntilIdle()
+
+        assertEquals(50, messageLoads)
+    }
+
     private fun viewModel(
         messages: List<SessionMessage>,
         readText: suspend (String) -> Result<FsTextFile> = { Result.success(FsTextFile(path = it)) },
@@ -201,6 +250,7 @@ class ArtifactsViewModelTest {
         readText = readText,
         readDataUrl = readDataUrl,
         shareRequestBuilder = shareRequestBuilder,
+        previewDirectoryOverride = File(System.getProperty("java.io.tmpdir"), "talaria-artifact-test"),
     )
 
     private fun artifact(kind: ArtifactKind, path: String) = ArtifactRecord(
@@ -211,4 +261,9 @@ class ArtifactsViewModelTest {
         sessionId = "session-1",
         sessionTitle = "Build preview",
     )
+
+    private companion object {
+        const val ONE_PIXEL_PNG =
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    }
 }

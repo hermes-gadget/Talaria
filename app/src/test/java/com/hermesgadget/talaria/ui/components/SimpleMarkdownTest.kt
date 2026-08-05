@@ -121,6 +121,41 @@ class SimpleMarkdownTest {
         assertTrue(document.blocks[1] is MarkdownHorizontalRule)
     }
 
+    @Test
+    fun deeplyNestedInlineMarkupTerminatesWithoutRecursiveStackGrowth() {
+        val markdown = buildString {
+            repeat(200) { append("**") }
+            append('x')
+            repeat(200) { append("**") }
+        }
+
+        val document = parseMarkdown(markdown)
+
+        assertEquals(1, document.blocks.size)
+        assertTrue(document.blocks.single() is MarkdownParagraph)
+    }
+
+    @Test
+    fun inputAndBlockBudgetsBoundPathologicalDocuments() {
+        val markdown = buildString {
+            repeat(MAX_MARKDOWN_BLOCKS + 32) { appendLine("---") }
+            append("z".repeat(MAX_MARKDOWN_INPUT_BYTES.toInt()))
+        }
+
+        val document = parseMarkdown(markdown)
+
+        assertTrue(document.blocks.size <= MAX_MARKDOWN_BLOCKS)
+    }
+
+    @Test
+    fun codeTokenBudgetBoundsRepeatedKeywords() {
+        val document = parseMarkdown(
+            "```kotlin\n" + "true ".repeat(MAX_MARKDOWN_CODE_TOKENS + 100) + "\n```")
+
+        val code = document.blocks.single() as MarkdownCodeBlock
+        assertTrue(code.tokens.size <= MAX_MARKDOWN_CODE_TOKENS)
+    }
+
     private fun inlineText(nodes: List<MarkdownInline>): String = buildString {
         nodes.forEach { node ->
             when (node) {
