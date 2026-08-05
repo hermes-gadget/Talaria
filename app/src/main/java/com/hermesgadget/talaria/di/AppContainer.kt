@@ -35,6 +35,9 @@ import com.hermesgadget.talaria.core.notifications.TalariaNotifier
 import com.hermesgadget.talaria.core.notifications.AgentAlertDispatcher
 import com.hermesgadget.talaria.core.voice.SpeechCoordinator
 import com.hermesgadget.talaria.core.voice.TtsSpeaker
+import com.hermesgadget.talaria.feature.capture.ShareIntakeStore
+import com.hermesgadget.talaria.feature.manage.files.ShareFileManager
+import com.hermesgadget.talaria.feature.manage.sessions.SharedPreferencesSessionPinStore
 
 /**
  * Lightweight manual DI graph. Keeps the app free of annotation processors
@@ -42,6 +45,11 @@ import com.hermesgadget.talaria.core.voice.TtsSpeaker
  */
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
+
+    val contentResolver = appContext.contentResolver
+    val shareFileManager = ShareFileManager(appContext.cacheDir)
+    val shareIntakeStore = ShareIntakeStore(appContext)
+    val sessionPinStore = SharedPreferencesSessionPinStore(appContext)
 
     val settingsStore = SettingsStore(appContext)
     val localeManager = LocaleManager(settingsStore)

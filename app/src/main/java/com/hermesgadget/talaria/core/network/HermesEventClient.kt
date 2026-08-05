@@ -222,6 +222,21 @@ class HermesEventClient(
             true
         } ?: false
 
+    /** Wait until the JSON-RPC socket is open before an ordered RPC workflow. */
+    suspend fun awaitRpcConnected(timeoutMs: Long = EVENTS_CONNECT_TIMEOUT_MS): Boolean =
+        withTimeoutOrNull(timeoutMs) {
+            while (true) {
+                val registration = currentSockets["rpc"]
+                if (registration?.opened == true &&
+                    registration.socket != null &&
+                    isCurrentRegistration(registration)
+                ) {
+                    return@withTimeoutOrNull true
+                }
+                delay(10L)
+            }
+        } ?: false
+
     fun start(channel: String = UUID.randomUUID().toString(), includeRpc: Boolean = true) {
         stop()
         val startingSnapshot = fixedSnapshot ?: clientFactory.snapshot()

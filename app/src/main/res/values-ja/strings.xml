@@ -252,4 +252,25 @@
     <string name="chat_approval_broad_warning">%1$s は永続的な権限を付与します。続行するには確認してください。</string>
     <string name="manage_car_hosts_title">車載ホスト</string>
     <string name="manage_car_hosts_subtitle">証明書登録とアクセス</string>
+    <string name="capture_title">Talaria に共有</string>
+    <string name="capture_close">共有タスクを閉じる</string>
+    <string name="capture_share_into">共有先</string>
+    <string name="capture_profile">プロファイル: %1$s</string>
+    <string name="capture_current_chat">現在のチャット</string>
+    <string name="capture_current_unavailable">現在のチャットは利用できません</string>
+    <string name="capture_new_chat">新しいチャット</string>
+    <string name="capture_shared_text">共有テキスト</string>
+    <string name="capture_url_suggestions">URL タスクの候補</string>
+    <string name="capture_summarize">要約</string>
+    <string name="capture_compare">比較</string>
+    <string name="capture_extract">抽出</string>
+    <string name="capture_attachments">添付ファイル</string>
+    <string name="capture_remove">添付ファイルを削除</string>
+    <string name="capture_managed_file_notice">管理ファイルの参照として送信（アップロード/リンクの代替）。</string>
+    <string name="capture_instruction_label">任意の指示</string>
+    <string name="capture_instruction_hint">この共有内容を Hermes にどう処理させますか？</string>
+    <string name="capture_discard">破棄</string>
+    <string name="capture_send">送信</string>
+    <string name="capture_sending">送信中…</string>
+    <string name="capture_delivery_unknown">送信状態を確認できません。再試行する前にこの下書きを確認してください。</string>
 </resources>
