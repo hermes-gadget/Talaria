@@ -143,7 +143,11 @@ class WsAuthHelper(
             .get()
             .build()
         val result = suspendResult {
-            clientFactory.okHttp(snapshot).newCall(req).execute().use { resp ->
+            // Shell fetch: credential-free SPA HTML, so use the minimal
+            // shell client (cleartext policy only). The store-bound bundle
+            // would reject a never-persisted draft via
+            // ensureSnapshotStillStored() before the request leaves.
+            clientFactory.shellClient(snapshot).newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 val body = resp.body?.string().orEmpty()
                 SESSION_TOKEN_RE.find(body)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }

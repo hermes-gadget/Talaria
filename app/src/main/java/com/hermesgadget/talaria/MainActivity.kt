@@ -61,6 +61,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
         // Android Automotive OS: the car launcher starts this activity
         // (it owns the MAIN/LAUNCHER filter), but on head units the car
         // experience must be the templated CarAppActivity rendered by the
@@ -85,7 +86,6 @@ class MainActivity : ComponentActivity() {
                 darkScrim = Color.Transparent.toArgb(),
             ),
         )
-        super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         handleIntent(intent)
         setContent {

@@ -58,6 +58,31 @@ class HermesClientFactory(
     fun okHttp(snapshot: ConnectionSnapshot? = snapshot()): OkHttpClient =
         bundle(snapshot ?: ConnectionSnapshot.anonymous(settingsStore.httpLoggingEnabled)).rest
 
+    /**
+     * Minimal client for credential-free SPA-shell fetches (the one-tap
+     * "Fetch token from dashboard" discovery and the loopback token sync).
+     *
+     * Deliberately NOT the store-bound bundle: a draft connection is never
+     * persisted, so AuthInterceptor's ensureSnapshotStillStored() would throw
+     * "connection changed" before the request leaves, and building a
+     * PersistentCookieJar on the calling thread is wasted disk I/O. The shell
+     * is public HTML with no credentials attached, so the only policy that
+     * must apply is the cleartext gate (consent) plus the emulator Host
+     * rewrite in debug builds.
+     */
+    fun shellClient(snapshot: ConnectionSnapshot): OkHttpClient =
+        OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .addInterceptor(CleartextPolicyInterceptor(snapshot))
+            .addNetworkInterceptor(CleartextPolicyInterceptor(snapshot))
+            .apply {
+                // Emulator loopback rewrite is dev scaffolding; never ship it in release.
+                if (BuildConfig.DEBUG) addInterceptor(EmulatorLoopbackInterceptor())
+            }
+            .build()
+
     fun api(snapshot: ConnectionSnapshot? = snapshot()): HermesApi =
         bundle(snapshot ?: ConnectionSnapshot.anonymous(settingsStore.httpLoggingEnabled)).api
 

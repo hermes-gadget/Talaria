@@ -614,6 +614,12 @@ class ConnectViewModel(
             )
             return
         }
+        // Cleartext gate: an http:// LAN dashboard needs explicit
+        // local-network consent before the fetch client will even open a
+        // socket (CleartextPolicyInterceptor throws otherwise). Mirror the
+        // save path's consent prompt — show it, abort the fetch, and let
+        // the user tap Fetch again once approved.
+        if (maybeRequestCleartextConsent(s)) return
         _ui.value = _ui.value.copy(tokenFetching = true, error = null)
         viewModelScope.launch {
             try {
