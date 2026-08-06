@@ -2,17 +2,22 @@
 package com.hermesgadget.talaria.feature.manage.sessions
 
 import com.hermesgadget.talaria.core.network.JsonConfig
+import com.hermesgadget.talaria.core.network.HermesApi
 import com.hermesgadget.talaria.domain.model.BulkDeleteSessionsResponse
 import com.hermesgadget.talaria.domain.model.EmptySessionCount
 import com.hermesgadget.talaria.domain.model.EmptySessionsDeleteResponse
 import com.hermesgadget.talaria.domain.model.SessionImportResponse
 import com.hermesgadget.talaria.domain.model.SessionStats
 import com.hermesgadget.talaria.util.MainDispatcherRule
+import io.mockk.coEvery
+import io.mockk.mockk
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -174,6 +179,30 @@ class SessionAdminViewModelTest {
             JsonConfig.json.parseToJsonElement("""{"status":"aborted"}""").jsonObject,
         )
         assertEquals("aborted", aborted.status)
+    }
+
+    @Test
+    fun `destructive admin mutations reconcile the transcript cache after acknowledgement`() = runTest {
+        val api = mockk<HermesApi>()
+        var reconciliations = 0
+        coEvery { api.bulkDeleteSessionsRaw(any()) } returns buildJsonObject {
+            put("ok", true)
+            put("deleted", 2)
+        }
+        coEvery { api.deleteEmptySessionsRaw(null) } returns buildJsonObject {
+            put("ok", true)
+            put("deleted", 1)
+        }
+        val gateway = HermesSessionAdminGateway(
+            api = api,
+            profileProvider = { null },
+            reconcileAfterMutation = { reconciliations++ },
+        )
+
+        gateway.bulkDelete(listOf("a", "b"))
+        gateway.deleteEmpty()
+
+        assertEquals(2, reconciliations)
     }
 
     private fun viewModel(

@@ -109,6 +109,18 @@ class TranscriptSyncPolicyTest {
                     )
                 },
             )
+            assertEquals(
+                listOf(activeTab),
+                tabs.filter {
+                    TranscriptSyncPolicy.shouldRunFallback(
+                        lifecycleStarted = true,
+                        activeTab = it == activeTab,
+                        visible = true,
+                        working = true,
+                        eventsHealthy = false,
+                    )
+                },
+            )
             assertFalse(
                 TranscriptSyncPolicy.shouldEmitRefreshSignal(
                     lifecycleStarted = false,

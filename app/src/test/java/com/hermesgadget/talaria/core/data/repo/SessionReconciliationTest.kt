@@ -41,6 +41,13 @@ class SessionReconciliationTest {
         val changed = same.copy(preview = "changed")
         assertTrue(SessionReconciliation.changedRows(mapOf("s1" to old), listOf(same)).isEmpty())
         assertEquals(listOf(changed), SessionReconciliation.changedRows(mapOf("s1" to old), listOf(changed)))
+        assertEquals(
+            listOf(same.copy(platform = "android")),
+            SessionReconciliation.changedRows(
+                mapOf("s1" to old),
+                listOf(same.copy(platform = "android")),
+            ),
+        )
     }
 
     @Test
