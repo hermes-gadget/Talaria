@@ -72,6 +72,48 @@ class TranscriptReconciliationRoomTest {
     }
 
     @Test
+    fun `cross-dao deletion failure rolls back the session and transcript together`() =
+        runTest(StandardTestDispatcher()) {
+            val connectionId = "connection-a"
+            val sessionId = "rollback"
+            val expectedSession = session(sessionId, connectionId)
+            val expectedMessage = message(sessionId, connectionId)
+            database.sessions().upsertAll(listOf(expectedSession))
+            database.messages().upsertAll(listOf(expectedMessage))
+            database.openHelper.writableDatabase.execSQL(
+                """
+                CREATE TRIGGER fail_transcript_delete
+                BEFORE DELETE ON cached_messages
+                WHEN OLD.sessionId = 'rollback'
+                BEGIN
+                    SELECT RAISE(ABORT, 'injected cache deletion failure');
+                END
+                """.trimIndent(),
+            )
+
+            var failed = false
+            try {
+                database.reconcileSessionCache(connectionId, listOf(sessionId), emptyList())
+            } catch (_: Throwable) {
+                failed = true
+            } finally {
+                database.openHelper.writableDatabase.execSQL(
+                    "DROP TRIGGER fail_transcript_delete",
+                )
+            }
+
+            assertTrue("cross-dao reconciliation should fail", failed)
+            assertEquals(
+                listOf(expectedSession),
+                database.sessions().getAll(connectionId),
+            )
+            assertEquals(
+                listOf(expectedMessage),
+                database.messages().getSessionMessages(connectionId, sessionId),
+            )
+        }
+
+    @Test
     fun `hot cache predicates have matching composite indices`() {
         val expected = setOf(
             "index_cached_sessions_connectionId_updatedAt",

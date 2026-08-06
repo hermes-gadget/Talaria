@@ -133,6 +133,15 @@ class HermesRepository(
         }
     }
 
+    private fun pruneTranscriptSessions(snapshot: ConnectionSnapshot, sessionIds: Collection<String>) {
+        val ids = sessionIds.toSet()
+        if (ids.isEmpty()) return
+        transcriptFingerprints.invalidateWhere { key ->
+            key.startsWith("${snapshot.connectionId}|") &&
+                ids.any { sessionId -> key.endsWith("|$sessionId") }
+        }
+    }
+
     private fun pruneTranscriptProfile(profileName: String) {
         transcriptFingerprints.invalidateWhere { key ->
             key.substringAfter('|', missingDelimiterValue = "")
@@ -229,7 +238,7 @@ class HermesRepository(
         if (deleteIds.isNotEmpty() || changedRows.isNotEmpty()) {
             db.reconcileSessionCache(cid, deleteIds, changedRows)
         }
-        deleteIds.forEach { pruneTranscriptSession(snapshot, it) }
+        pruneTranscriptSessions(snapshot, deleteIds)
         return list
     }
 

@@ -3099,6 +3099,11 @@ class ChatViewModel(
             }.onFailure {
                 // A failed read does not touch Room and does not replace the
                 // last-good UI transcript with an empty/partial response.
+                // Keep the dirty marker so the next foreground resume emits
+                // one immediate scoped retry, including Room replacement
+                // failures that are unrelated to transport health.
+                rt.transcriptDirty = true
+                rt.transcriptDirtySessionId = sessionId
                 setReconciliationDelayed(tabId)
             }
         }

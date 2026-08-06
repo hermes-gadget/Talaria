@@ -53,13 +53,14 @@ class HermesSessionAdminGateway(
     private val profileProvider: () -> String? = {
         TalariaApp.instance.container.connectionStore.activeProfile()?.effectiveManagementProfile()
     },
+    private val reconcileAfterMutation: suspend () -> Unit = {},
 ) : SessionAdminGateway {
     private fun profile(): String? = profileProvider()?.takeIf { it.isNotBlank() }
 
     override suspend fun stats(): SessionStats = parseSessionStats(api.getSessionStatsRaw(profile()))
 
-    override suspend fun bulkDelete(ids: List<String>): BulkDeleteSessionsResponse =
-        parseBulkDeleteResponse(
+    override suspend fun bulkDelete(ids: List<String>): BulkDeleteSessionsResponse {
+        val result = parseBulkDeleteResponse(
             api.bulkDeleteSessionsRaw(
                 buildJsonObject {
                     put("ids", JsonArray(ids.map { JsonPrimitive(it) }))
@@ -67,12 +68,18 @@ class HermesSessionAdminGateway(
                 },
             ),
         )
+        if (result.ok) reconcileAfterMutation()
+        return result
+    }
 
     override suspend fun emptyCount(): EmptySessionCount =
         parseEmptySessionCount(api.getEmptySessionCountRaw(profile()))
 
-    override suspend fun deleteEmpty(): EmptySessionsDeleteResponse =
-        parseEmptyDeleteResponse(api.deleteEmptySessionsRaw(profile()))
+    override suspend fun deleteEmpty(): EmptySessionsDeleteResponse {
+        val result = parseEmptyDeleteResponse(api.deleteEmptySessionsRaw(profile()))
+        if (result.ok) reconcileAfterMutation()
+        return result
+    }
 
     override suspend fun importSessions(sessions: JsonArray): SessionImportResponse =
         parseSessionImportResponse(
@@ -382,6 +389,9 @@ class SessionAdminViewModel(
         fun factory(
             gateway: SessionAdminGateway = HermesSessionAdminGateway(
                 TalariaApp.instance.container.clientFactory.api(),
+                reconcileAfterMutation = {
+                    TalariaApp.instance.container.hermesRepository.refreshSessions().getOrThrow()
+                },
             ),
             pinStore: SessionPinStore = SharedPreferencesSessionPinStore(TalariaApp.instance),
             scopeIdProvider: () -> String? = {

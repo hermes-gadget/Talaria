@@ -51,10 +51,10 @@ interface SessionDao {
     }
 
     /**
-     * Metadata-only transaction retained for DAO callers; repository
-     * reconciliation uses [TalariaDatabase.reconcileSessionCache] so message
-     * rows are deleted in the same cross-DAO transaction.
+     * @deprecated Use [TalariaDatabase.reconcileSessionCache] so transcript
+     * rows and local session metadata share the same cross-DAO transaction.
      */
+    @Deprecated("Use TalariaDatabase.reconcileSessionCache for cache reconciliation")
     @Transaction
     suspend fun reconcile(
         connectionId: String,

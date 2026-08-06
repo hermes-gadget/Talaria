@@ -84,6 +84,7 @@ object SessionReconciliation {
             old.preview != next.preview ||
             old.messageCount != next.messageCount ||
             old.lastActive != next.lastActive ||
-            old.json != next.json
+            old.json != next.json ||
+            old.platform != next.platform
     }
 }
