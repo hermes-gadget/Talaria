@@ -80,6 +80,17 @@ class HermesClientFactory(
             .apply {
                 // Emulator loopback rewrite is dev scaffolding; never ship it in release.
                 if (BuildConfig.DEBUG) addInterceptor(EmulatorLoopbackInterceptor())
+                // Same opt-in observability as the credential-bearing bundle:
+                // the SPA-shell fetch carries no secrets, so BASIC level with
+                // only Host redacted is safe to enable for diagnostics.
+                if (snapshot.httpLoggingEnabled) {
+                    addInterceptor(
+                        HttpLoggingInterceptor().apply {
+                            level = HttpLoggingInterceptor.Level.BASIC
+                            redactHeader("Host")
+                        },
+                    )
+                }
             }
             .build()
 

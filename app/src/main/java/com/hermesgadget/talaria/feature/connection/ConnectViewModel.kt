@@ -644,6 +644,7 @@ class ConnectViewModel(
                 val snapshot = ConnectionSnapshot.from(
                     profile,
                     ConnectionSecrets(sessionToken = null),
+                    httpLoggingEnabled = TalariaApp.instance.container.settingsStore.httpLoggingEnabled,
                 )
                 val token = TalariaApp.instance.container.wsAuthHelper
                     .fetchLoopbackSessionToken(snapshot)

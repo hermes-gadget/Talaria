@@ -147,10 +147,12 @@ class WsAuthHelper(
             // shell client (cleartext policy only). The store-bound bundle
             // would reject a never-persisted draft via
             // ensureSnapshotStillStored() before the request leaves.
-            clientFactory.shellClient(snapshot).newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@use null
-                val body = resp.body?.string().orEmpty()
-                SESSION_TOKEN_RE.find(body)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+            withContext(Dispatchers.IO) {
+                clientFactory.shellClient(snapshot).newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use null
+                    val body = resp.body?.string().orEmpty()
+                    SESSION_TOKEN_RE.find(body)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+                }
             }
         }
         result.exceptionOrNull()?.rethrowIfCancellationLike()
