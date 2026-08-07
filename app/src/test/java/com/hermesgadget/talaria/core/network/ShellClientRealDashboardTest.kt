@@ -50,9 +50,13 @@ class ShellClientRealDashboardTest {
     fun `shell client fetches token from real dashboard`() = runBlocking {
         assumeTrue(
             "local Hermes dashboard not reachable on 127.0.0.1:9119 — skipping",
-            Socket().use { socket ->
-                socket.connect(InetSocketAddress("127.0.0.1", 9119), 500)
-                socket.isConnected
+            try {
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress("127.0.0.1", 9119), 500)
+                    socket.isConnected
+                }
+            } catch (e: Exception) {
+                false
             },
         )
         val base = "http://127.0.0.1:9119"
