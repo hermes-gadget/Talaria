@@ -25,16 +25,22 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.net.InetSocketAddress
+import java.net.Socket
 
 /**
  * Integration test: the real shellClient() against the REAL dashboard on
  * the host (127.0.0.1:9119). Proves the full chain — consent gate,
  * Host header, HTTP GET, regex extraction — works against a live
  * dashboard, independent of emulator networking.
+ *
+ * CI-safe: skips (assumption failure) when no dashboard is listening on
+ * the host loopback, so runners without the local dashboard stay green.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = android.app.Application::class)
@@ -42,6 +48,13 @@ class ShellClientRealDashboardTest {
 
     @Test
     fun `shell client fetches token from real dashboard`() = runBlocking {
+        assumeTrue(
+            "local Hermes dashboard not reachable on 127.0.0.1:9119 — skipping",
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress("127.0.0.1", 9119), 500)
+                socket.isConnected
+            },
+        )
         val base = "http://127.0.0.1:9119"
         val origin = ConnectionOrigin.normalize(base)!!
         val profile = ConnectionProfile(
