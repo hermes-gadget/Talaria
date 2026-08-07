@@ -9,8 +9,12 @@
     <string name="widget_status_title">Talaria</string>
     <string name="widget_status_cached">%1$s · مخزّن مؤقتًا</string>
     <plurals name="widget_status_pairing">
+        <item quantity="zero">لا توجد طلبات اقتران</item>
         <item quantity="one">%1$d طلب اقتران</item>
-        <item quantity="other">%1$d طلبات اقتران</item>
+        <item quantity="two">%1$d طلبي اقتران</item>
+        <item quantity="few">%1$d طلبات اقتران</item>
+        <item quantity="many">%1$d طلبًا للاقتران</item>
+        <item quantity="other">%1$d طلب اقتران</item>
     </plurals>
     <string name="tile_status_up">Hermes GW · يعمل</string>
     <string name="tile_status_down">Hermes GW · معطل</string>
