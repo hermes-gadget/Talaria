@@ -2,7 +2,7 @@
 
 All notable Talaria changes are documented here. Versions below correspond to repository tags; there has never been a `1.0.0` release.
 
-## [0.9.0] — 2026-08-05 (unreleased)
+## [0.9.0] — 2026-08-06
 
 ### Added
 
@@ -11,13 +11,17 @@ All notable Talaria changes are documented here. Versions below correspond to re
 - Explicit "Refresh now" action on the "Live updates delayed; reconciling…" status row.
 - Multi-item share intake (R1.8): `ACTION_SEND_MULTIPLE` and `ACTION_PROCESS_TEXT` capture surface with owned, byte-bounded staging, target selection, and URL suggestion chips.
 - Local session organization (R1.9): labels/groups/favorites/saved filters, Room-backed, profile-scoped, with a clear Local badge; bulk actions respect filtered selections.
+- Transcript deletion and reconciliation (N0.11): deleting a session now removes the local transcript store and reconciles the active rail, with a sync policy for the deletion path.
 - Widget/car strings moved into resources across all five locales (N1.11 slice).
 - Draft persistence debounced to 350 ms; microphone recording stops when the app leaves the foreground (N1.14 slices).
 
 ### Fixed
 
+- Fetch token from dashboard ran its blocking HTTP call on the main thread (`NetworkOnMainThreadException` silently swallowed by `suspendResult`) — the fetch now executes on `Dispatchers.IO` and reliably returns the SPA token.
+- Fetch token from dashboard lacked the cleartext consent gate and used a store-bound client that rejected the never-persisted draft — added the consent gate and a credential-free shell client (cleartext policy + emulator loopback rewrite only).
 - REST auth now converges with WS auth: the SPA-discovered loopback token is persisted to the store, so chats update again after a dashboard restart or stale stored token.
 - Launch crash loop from untrimmed pasted tokens (sanitized at input, persistence, load, and transport boundaries).
+- MainActivity `super.onCreate()` ordering (crash on Android Auto hosts).
 
 ## [0.8.5] — 2026-08-05
 
