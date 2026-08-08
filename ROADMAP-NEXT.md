@@ -1,6 +1,6 @@
 # Talaria — next roadmap
 
-This roadmap starts from the verified state at `main@5cf5389`: R0.6 is functionally implemented; R0.1–R0.5 and R0.7/R0.9–R0.11 are partial; R0.8 is not implemented. It folds the audit's new defects into the existing R1 direction without treating commit messages as acceptance evidence.
+This roadmap starts from the verified state at `main@6366ace` (2026-08-08). R0.1–R0.5 and R0.7/R0.10/R0.11 closures are merged; R0.8 (N0.7) and R0.9 (N0.9) are not implemented; the N0.12 harness is not complete. It folds the audit's new defects into the existing R1 direction without treating commit messages as acceptance evidence.
 
 Ordering rules:
 
@@ -9,6 +9,24 @@ Ordering rules:
 3. Enforce budgets at ingress/ownership boundaries before performance polish.
 4. Add executable acceptance coverage with each item; R0.11 is not a later cleanup bucket.
 5. Extract facades before Gradle modules; move vertical slices rather than performing a big-bang rewrite.
+
+## Landed since the previous baseline (verified 2026-08-08)
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| N0.1 — Fail-closed validation and tag release | ✅ merged | `99ef0f2` (Wave 0) + `.github/workflows/apk-release.yml` verified: read-only `pr-gate` on PR/main, tag-only signed build, strict `vMAJ.MIN.PATCH(-rcN)` parse with monotonic versionCode + legacy floor, `apksigner verify` + fingerprint/package/version checks before upload, actions pinned by SHA, wrapper checksum + `validateDistributionUrl` set |
+| N0.2 — Exact, informed approval choices | ✅ merged | `99ef0f2` (Wave 0). `ApprovalChoicePolicy` (safe one-shot allowlist, fail-closed resolution, broad-confirm requirement), `ChatViewModel.respondPrompt` resolves only the exact tapped value and errors when no explicit choice resolves, `ChatScreen` renders per-choice buttons with a confirm step for broad values. Policy tests: broad-first/once-first/unknown/deny/empty/server-offered cases. **Open acceptance gap:** expired/stale-session/duplicate-tap cases at the ViewModel/RPC boundary are untestable without a transport-injection seam — deferred to N1.10 (matches the existing `SessionAutoOpenOwnershipBehaviorTest` convention) |
+| N0.3 — Exact-origin cleartext consent (R0.1) | ✅ merged | `43139f7` (+ `b5abdc1` in-chat re-approval after fail-closed migration) |
+| N0.4 — Snapshot-bound operation + credential bootstrap (R0.3) | ✅ merged | `12ed612` (+ `29917ac` Auto message-center cleanup) |
+| N0.5 — Independent WS auth + generation ownership (R0.2) | ✅ merged | `c784b0d` |
+| N0.6 — Loss-aware bounded ingress + cancellation (R0.4) | ✅ merged | `59a15eb` |
+| N0.8 — Identity-safe feature mutations + lifecycle cleanup | ✅ merged | `99ef0f2` (S slices) |
+| N0.10 — Untrusted-content and media budgets (R0.7) | ✅ merged | `355fca3` (+ `3ebcc0d` injectable dispatchers) |
+| N0.11 — Transcript deletion/reconciliation (R0.5) | ✅ merged | `f5de928` (agent 467882a) |
+| R1.8 — Capture/attachment pipeline | ✅ merged early | `4520492` (agent b4c05dc); tests: `ShareIntakePolicyTest`, `ShareIntentParserTest`, `ShareIntakeStoreTest`, `ShareIntakeDeliveryTest`, `ShareFileManagerTest` |
+| R1.9 — Session labels/groups/favorites | ✅ merged early | `90fbec5` (agent 5cb2363, verification pending → verified 2026-08-08 unit run) — no dedicated labels tests yet, covered by suite + manual check |
+
+**Remaining P0:** N0.7 (typed secure-store recovery), N0.9 (owned files/backups/caches), N0.12 (trustworthy P0 harness). **Next after P0:** Wave 3 lifecycle/delivery (N1.1–N1.6).
 
 ## P0 — close current safety and release contracts
 
@@ -300,9 +318,9 @@ Ordering rules:
 
 ## Recommended wave order
 
-1. **Wave 0 — quick release and intent safety:** N0.1, N0.2, the S slices of N0.8, plus neutral mic/path/tile/dead-code cleanup from the audit.
-2. **Wave 1 — P0 security and scope:** N0.3, N0.4, N0.5, then N0.6.
-3. **Wave 2 — P0 recovery, data, and resource ownership:** N0.7, N0.9, N0.10, N0.11, with N0.12 acceptance coverage landing alongside each item.
-4. **Wave 3 — lifecycle and delivery platform:** N1.1, N1.2, N1.3, N1.4, N1.5, N1.6.
+1. ~~**Wave 0 — quick release and intent safety:** N0.1, N0.2, the S slices of N0.8, plus neutral mic/path/tile/dead-code cleanup from the audit~~ ✅ landed (`99ef0f2`)
+2. ~~**Wave 1 — P0 security and scope:** N0.3, N0.4, N0.5, then N0.6~~ ✅ landed (`43139f7`, `12ed612`, `c784b0d`, `59a15eb`)
+3. **Wave 2 — P0 recovery, data, and resource ownership:** N0.7, N0.9 (N0.10, N0.11 already landed), with N0.12 acceptance coverage landing alongside each item.
+4. **Wave 3 — lifecycle and delivery platform:** N1.1, N1.2, N1.3, N1.4, N1.5, N1.6. (R1.8/R1.9 already landed early — merge `4520492`, `90fbec5`.)
 5. **Wave 4 — user-facing features:** N1.7, N1.8, N1.9, N1.11.
-6. **Wave 5 — architecture and durable assurance:** N1.10, N1.12, N1.13, N1.14, then N2.1 vertical module extraction.
+6. **Wave 5 — architecture and durable assurance:** N1.10, N1.12, N1.13, N1.14, then N2.1 vertical module extraction. (N1.10 also unblocks N0.2's remaining RPC-boundary acceptance tests.)
