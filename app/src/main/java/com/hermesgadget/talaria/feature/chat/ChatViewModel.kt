@@ -350,9 +350,10 @@ class ChatViewModel(
     private var restoring = false
     private var sttJob: Job? = null
     private var slashCompletionJob: Job? = null
-    private val draftSaveScheduler = ScopeBoundDraftSaver(viewModelScope) { scopeId, text ->
-        chatRepository.saveDraft(scopeId, text)
-    }
+    private val draftSaveScheduler = ScopeBoundDraftSaver(
+        coroutineScope = viewModelScope,
+        persist = { scopeId, text -> chatRepository.saveDraft(scopeId, text) },
+    )
     private var scopeLoadJob: Job? = null
     private var scopeTransitionJob: Job? = null
     private var sessionPollJob: Job? = null
