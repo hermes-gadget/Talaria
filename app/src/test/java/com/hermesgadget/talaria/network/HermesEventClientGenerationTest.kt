@@ -112,7 +112,7 @@ class HermesEventClientGenerationTest {
         coEvery { wsAuth.authQueryParam(snapshot) } coAnswers {
             val attempt = attempts.incrementAndGet()
             if (attempt <= 2) throw IOException("temporary ticket outage")
-            "ticket-retry-$attempt"
+            "ticket=ticket-retry-$attempt"
         }
         val eventsSocket = enqueueSocket()
         val rpcSocket = enqueueSocket()
