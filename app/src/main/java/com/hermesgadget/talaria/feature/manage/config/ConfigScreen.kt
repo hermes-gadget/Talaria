@@ -42,6 +42,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -81,23 +82,27 @@ fun ConfigScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var text by remember { mutableStateOf("") }
-    // Baseline of the last loaded/saved config, to detect unsaved edits.
-    var savedText by remember { mutableStateOf("") }
+    var editorState by remember { mutableStateOf(ConfigEditorState()) }
+    var pendingSaves by remember { mutableIntStateOf(0) }
     var defaultsText by remember { mutableStateOf<String?>(null) }
     var schema by remember { mutableStateOf<ConfigSchemaResponse?>(null) }
     var schemaFailed by remember { mutableStateOf(false) }
     var selectedCategory by remember { mutableStateOf<String?>(null) }
-    var message by remember { mutableStateOf<String?>(null) }
     var importText by remember { mutableStateOf<String?>(null) }
     var importing by remember { mutableStateOf(false) }
     var importJob by remember { mutableStateOf<Job?>(null) }
     var importGeneration by remember { mutableLongStateOf(0L) }
     var fieldDrafts by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var fieldErrors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    val saveCoordinator = remember(repo) {
+        ConfigSaveCoordinator(
+            putConfig = { config -> repo.putConfig(config) },
+            getConfig = { repo.getConfig() },
+        )
+    }
 
     fun replaceConfigText(newText: String) {
-        text = newText
+        editorState = editorState.edit(newText)
         fieldDrafts = emptyMap()
         fieldErrors = emptyMap()
     }
@@ -112,13 +117,13 @@ fun ConfigScreen() {
                     (key to (error.message ?: "Invalid value"))
                 return
             }
-        val updatedText = runCatching { applyConfigEdit(text, key, value) }
+        val updatedText = runCatching { applyConfigEdit(editorState.text, key, value) }
             .getOrElse {
                 fieldErrors = fieldErrors +
                     (key to "Current config is not valid JSON")
                 return
             }
-        text = updatedText
+        editorState = editorState.edit(updatedText)
         fieldErrors = fieldErrors - key
     }
 
@@ -135,12 +140,12 @@ fun ConfigScreen() {
                 val raw = readAndValidateConfigImport(context.contentResolver, uri)
                 if (generation != importGeneration) return@launch
                 replaceConfigText(raw)
-                message = "Imported from file (not saved)"
+                editorState = editorState.withMessage("Imported from file (not saved)")
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
                 if (generation == importGeneration) {
-                    message = "Invalid config file: ${error.message}"
+                    editorState = editorState.withMessage("Invalid config file: ${error.message}")
                 }
             } finally {
                 if (generation == importGeneration) importing = false
@@ -153,10 +158,11 @@ fun ConfigScreen() {
             repo.getConfig()
                 .onSuccess { config ->
                     val loadedText = JsonConfig.json.encodeToString(config)
-                    replaceConfigText(loadedText)
-                    savedText = loadedText
+                    editorState = editorState.loaded(loadedText)
+                    fieldDrafts = emptyMap()
+                    fieldErrors = emptyMap()
                 }
-                .onFailure { message = it.message }
+                .onFailure { editorState = editorState.withMessage(it.message) }
             repo.getConfigDefaults()
                 .onSuccess { defaultsText = JsonConfig.json.encodeToString(it) }
                 .onFailure { /* optional */ }
@@ -176,7 +182,10 @@ fun ConfigScreen() {
 
     LaunchedEffect(Unit) { load() }
 
-    val dirty = text != savedText || fieldErrors.isNotEmpty()
+    val text = editorState.text
+    val savedText = editorState.savedText
+    val message = editorState.message
+    val dirty = editorState.isDirty || fieldErrors.isNotEmpty()
     UnsavedChangesGuard(hasUnsavedChanges = dirty)
 
     val categories = remember(schema) {
@@ -359,22 +368,23 @@ fun ConfigScreen() {
                 Button(
                     enabled = !importing && !hasFieldErrors && text != savedText,
                     onClick = {
-                        val submittedText = text
+                        val request = ConfigSaveRequest(
+                            text = editorState.text,
+                            draftGeneration = editorState.draftGeneration,
+                        )
+                        pendingSaves += 1
                         scope.launch {
-                            runCatching {
-                                val obj = JsonConfig.json.parseToJsonElement(submittedText).jsonObject
-                                repo.putConfig(obj).getOrThrow()
-                            }.onSuccess {
-                                if (text == submittedText) {
-                                    savedText = submittedText
-                                    message = "Saved"
-                                } else {
-                                    message = "Saved; newer edits remain unsaved"
-                                }
-                            }.onFailure { message = it.message }
+                            try {
+                                val result = saveCoordinator.save(request)
+                                editorState = editorState.applySaveResult(result)
+                            } catch (error: CancellationException) {
+                                throw error
+                            } finally {
+                                pendingSaves = (pendingSaves - 1).coerceAtLeast(0)
+                            }
                         }
                     },
-                ) { Text("Save") }
+                ) { Text(if (pendingSaves > 0) "Saving…" else "Save") }
             }
 
             CollapsibleSection(
@@ -388,8 +398,8 @@ fun ConfigScreen() {
                     OutlinedButton(onClick = {
                         defaultsText?.let {
                             replaceConfigText(it)
-                            message = "Reset to defaults (not saved)"
-                        } ?: run { message = "Defaults unavailable" }
+                            editorState = editorState.withMessage("Reset to defaults (not saved)")
+                        } ?: run { editorState = editorState.withMessage("Defaults unavailable") }
                     }) { Text("Reset") }
                     OutlinedButton(onClick = {
                         val send = Intent(Intent.ACTION_SEND).apply {
@@ -433,8 +443,10 @@ fun ConfigScreen() {
                                 JsonConfig.json.parseToJsonElement(pasted).jsonObject
                                 replaceConfigText(pasted)
                                 importText = null
-                                message = "Imported (not saved)"
-                            }.onFailure { message = "Invalid JSON: ${it.message}" }
+                                editorState = editorState.withMessage("Imported (not saved)")
+                            }.onFailure {
+                                editorState = editorState.withMessage("Invalid JSON: ${it.message}")
+                            }
                         }) { Text("Apply import") }
                         TextButton(onClick = { importText = null }) { Text("Cancel") }
                     }
