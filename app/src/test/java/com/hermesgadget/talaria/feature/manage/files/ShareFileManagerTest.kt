@@ -94,6 +94,34 @@ class ShareFileManagerTest {
     }
 
     @Test
+    fun `managed download cap can be raised per surface while default stays bounded`() {
+        val root = tempDirectory()
+        try {
+            val manager = ShareFileManager(root, ownerId = "process-a")
+
+            assertThrows(IllegalArgumentException::class.java) {
+                manager.createManagedDownload(
+                    prefix = "test-",
+                    suffix = ".download",
+                    source = ByteArrayInputStream(byteArrayOf(1)),
+                    declaredBytes = MAX_MANAGED_DOWNLOAD_BYTES + 1,
+                )
+            }
+
+            val backup = manager.createManagedDownload(
+                prefix = "backup-",
+                suffix = ".zip",
+                source = ByteArrayInputStream(byteArrayOf(1, 2, 3)),
+                declaredBytes = 3,
+                maxBytes = MAX_OPS_BACKUP_DOWNLOAD_BYTES,
+            )
+            assertArrayEquals(byteArrayOf(1, 2, 3), backup.readBytes())
+        } finally {
+            deleteTree(root)
+        }
+    }
+
+    @Test
     fun `restart sweep removes prior transfer owner but retains chooser file until ttl`() {
         val root = tempDirectory()
         try {

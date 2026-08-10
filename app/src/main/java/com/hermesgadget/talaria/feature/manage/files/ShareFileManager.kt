@@ -28,6 +28,9 @@ internal const val MAX_SHARE_FILE_BYTES = 16L * 1024L * 1024L
 /** A generous cap for a managed file selected by the Files screen. */
 internal const val MAX_MANAGED_DOWNLOAD_BYTES = 64L * 1024L * 1024L
 
+/** Backups contain the session database, artifacts, and configuration. */
+internal const val MAX_OPS_BACKUP_DOWNLOAD_BYTES = 512L * 1024L * 1024L
+
 private const val PARTIAL_SUFFIX = ".partial"
 private const val MANAGED_DOWNLOAD_DIRECTORY = "managed-downloads"
 private const val MANAGED_PARTIAL_DIRECTORY = "managed-partials"

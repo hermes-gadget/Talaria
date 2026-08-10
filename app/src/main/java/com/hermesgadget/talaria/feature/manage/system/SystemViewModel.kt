@@ -26,6 +26,7 @@ import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.repo.HermesRepository
 import com.hermesgadget.talaria.core.network.HermesApi
 import com.hermesgadget.talaria.core.network.JsonConfig
+import com.hermesgadget.talaria.feature.manage.files.MAX_OPS_BACKUP_DOWNLOAD_BYTES
 import com.hermesgadget.talaria.feature.manage.files.ShareFileManager
 import com.hermesgadget.talaria.domain.model.ActionStatus
 import com.hermesgadget.talaria.domain.model.OpsActionResponse
@@ -582,11 +583,12 @@ class SystemViewModel(
                     val coroutineContext = currentCoroutineContext()
                     body.use { responseBody ->
                         val total = responseBody.contentLength()
-                        output = (shareFileManager ?: defaultShareFileManager).createShareFile(
+                        output = (shareFileManager ?: defaultShareFileManager).createManagedDownload(
                             prefix = "hermes-backup-",
                             suffix = ".zip",
                             source = responseBody.byteStream(),
                             declaredBytes = total,
+                            maxBytes = MAX_OPS_BACKUP_DOWNLOAD_BYTES,
                             onProgress = { copied, reportedTotal ->
                                 if (generation == backupGeneration) {
                                     _ui.update {
