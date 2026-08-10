@@ -93,6 +93,22 @@ internal class InputHistoryNavigator(
     }
 }
 
+/** Versioned, unambiguous namespace for persisted composer history. */
+internal object ChatInputHistoryKey {
+    fun forSession(
+        connectionId: String,
+        managementProfile: String,
+        sessionId: String,
+    ): String = buildString {
+        append("v2:")
+        listOf(connectionId, managementProfile, sessionId).forEach { component ->
+            append(component.length)
+            append(':')
+            append(component)
+        }
+    }
+}
+
 /**
  * History persistence follows SettingsStore's SharedPreferences/JSON pattern.
  * It intentionally lives in feature/chat because core/ is owned by another lane.

@@ -1950,13 +1950,31 @@ class ChatViewModel(
         }
     }
 
-    private fun historyKey(tab: ChatTab): String =
-        tab.liveSessionId ?: tab.resumeSessionId ?: "tab:${tab.id}"
+    private fun historyKey(tab: ChatTab, sessionIdOverride: String? = null): String {
+        // A tab keeps its originating management profile while the foreground
+        // profile can change, so use the tab's profile rather than the current
+        // active profile when constructing the namespace.
+        val connectionId = boundConnectionId
+            ?: container.connectionStore.activeProfile()?.id
+            ?: boundConnectionScope
+            ?: "unbound"
+        val sessionId = sessionIdOverride
+            ?: tab.liveSessionId
+            ?: tab.resumeSessionId
+            ?: "tab:${tab.id}"
+        return ChatInputHistoryKey.forSession(
+            connectionId = connectionId,
+            managementProfile = tab.profileName,
+            sessionId = sessionId,
+        )
+    }
 
-    private fun historyFor(tab: ChatTab): InputHistoryNavigator =
-        inputHistories.getOrPut(historyKey(tab)) {
-            InputHistoryNavigator(inputHistoryStore.load(historyKey(tab)))
+    private fun historyFor(tab: ChatTab): InputHistoryNavigator {
+        val key = historyKey(tab)
+        return inputHistories.getOrPut(key) {
+            InputHistoryNavigator(inputHistoryStore.load(key))
         }
+    }
 
     private fun recordSubmittedDraft(tab: ChatTab, payload: String) {
         if (payload.isBlank()) return
@@ -3460,11 +3478,12 @@ class ChatViewModel(
         if (tab.liveSessionId == sessionId) return
         if (!claimSession(tabId, sessionId)) return
         val oldHistoryKey = historyKey(tab)
+        val newHistoryKey = historyKey(tab, sessionId)
         tab.liveSessionId?.let { releaseSession(tabId, it) }
         removePendingLocalCreation(tabId)
         updateTab(tabId) { it.copy(liveSessionId = sessionId) }
         ProfileRegistry.markActive(tab.profileName, sessionId)
-        migrateInputHistory(oldHistoryKey, sessionId)
+        migrateInputHistory(oldHistoryKey, newHistoryKey)
         runtimes[tabId]?.let { runtime ->
             runtime.readingSessionId = sessionId
             runtime.lastTranscriptContentKey = null

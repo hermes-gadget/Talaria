@@ -17,10 +17,33 @@
 package com.hermesgadget.talaria.feature.chat
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ComposerInputStateTest {
+    @Test
+    fun `history key separates equal session ids across profiles and connections`() {
+        val profileA = ChatInputHistoryKey.forSession("connection-a", "profile-a", "shared-id")
+        val profileB = ChatInputHistoryKey.forSession("connection-a", "profile-b", "shared-id")
+        val connectionB = ChatInputHistoryKey.forSession("connection-b", "profile-a", "shared-id")
+
+        assertNotEquals(profileA, profileB)
+        assertNotEquals(profileA, connectionB)
+        assertEquals(
+            profileA,
+            ChatInputHistoryKey.forSession("connection-a", "profile-a", "shared-id"),
+        )
+    }
+
+    @Test
+    fun `history key length prefixes prevent component boundary collisions`() {
+        val first = ChatInputHistoryKey.forSession("ab", "c", "session")
+        val second = ChatInputHistoryKey.forSession("a", "bc", "session")
+
+        assertNotEquals(first, second)
+    }
+
     @Test
     fun queuePreservesSubmissionOrderAndSkipsBlankPrompts() {
         var queue = emptyList<String>()
