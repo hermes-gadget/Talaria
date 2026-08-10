@@ -153,7 +153,10 @@ fun TalariaNavRoot(
 ) {
     val profiles by TalariaApp.instance.container.connectionStore.profiles.collectAsState()
     val activeId by TalariaApp.instance.container.connectionStore.activeId.collectAsState()
-    val activeScope = (profiles.find { it.id == activeId } ?: profiles.firstOrNull())?.scopeId()
+    val connectionScope by TalariaApp.instance.container.connectionStore.scope.collectAsState()
+    val activeScope = connectionScope?.key
+    val activeScopeId = connectionScope?.scopeId
+        ?: (profiles.find { it.id == activeId } ?: profiles.firstOrNull())?.scopeId()
     var pendingDeepLink by remember { mutableStateOf<PendingDeepLink?>(null) }
     var connectProfile by remember { mutableStateOf<String?>(null) }
 
@@ -193,7 +196,8 @@ fun TalariaNavRoot(
         }
         pendingDeepLink = PendingDeepLink(
             destination = destination,
-            expectedScope = container.connectionStore.activeProfile()?.scopeId(),
+            expectedScope = container.connectionStore.scope.value?.scopeId
+                ?: container.connectionStore.activeProfile()?.scopeId(),
         )
     }
 
@@ -444,9 +448,9 @@ fun TalariaNavRoot(
             // This effect is deliberately below the NavHost declaration. The
             // current-entry flow waits until the replacement host has installed
             // its graph, so a scoped link cannot navigate a disposed controller.
-            LaunchedEffect(pendingDeepLink, activeScope) {
+            LaunchedEffect(pendingDeepLink, activeScopeId) {
                 val pending = pendingDeepLink ?: return@LaunchedEffect
-                if (pending.expectedScope != null && pending.expectedScope != activeScope) return@LaunchedEffect
+                if (pending.expectedScope != null && pending.expectedScope != activeScopeId) return@LaunchedEffect
                 val navigated = runCatching {
                     navController.currentBackStackEntryFlow.first()
                     when (val destination = pending.destination) {

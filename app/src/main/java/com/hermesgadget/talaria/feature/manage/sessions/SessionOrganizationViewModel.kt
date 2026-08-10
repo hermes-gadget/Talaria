@@ -19,11 +19,15 @@ import com.hermesgadget.talaria.core.data.repo.SavedSessionFilter
 import com.hermesgadget.talaria.core.data.repo.SessionOrganizationRepository
 import com.hermesgadget.talaria.core.data.repo.SessionOrganizationSnapshot
 import com.hermesgadget.talaria.core.data.repo.SessionOrganizationStore
+import com.hermesgadget.talaria.core.network.ConnectionScope
+import com.hermesgadget.talaria.core.network.ConnectionScopeObserver
+import com.hermesgadget.talaria.core.util.suspendResult
 import com.hermesgadget.talaria.domain.model.scopeId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -40,20 +44,50 @@ data class SessionOrganizationUiState(
 class SessionOrganizationViewModel(
     private val store: SessionOrganizationStore,
     connectionIdProvider: () -> String? = { null },
+    private val scopeFlow: StateFlow<ConnectionScope?>? = null,
 ) : ViewModel() {
-    private val connectionId = connectionIdProvider()?.trim()?.takeIf { it.isNotEmpty() }
+    private var boundScope: ConnectionScope? = scopeFlow?.value
+    private var connectionId: String? = if (scopeFlow != null) {
+        scopeFlow.value?.scopeId
+    } else {
+        connectionIdProvider()?.trim()?.takeIf { it.isNotEmpty() }
+    }
+    private var scopeObserver: ConnectionScopeObserver? = null
+    private var observeJob: Job? = null
+    private var mutationJob: Job? = null
     private val _ui = MutableStateFlow(SessionOrganizationUiState())
     val ui: StateFlow<SessionOrganizationUiState> = _ui.asStateFlow()
 
     init {
-        if (connectionId != null) {
-            viewModelScope.launch {
-                store.observe(connectionId).collect { organization ->
+        scopeObserver = scopeFlow?.let { flow ->
+            ConnectionScopeObserver(flow, viewModelScope) { next -> rebind(next) }
+        }
+        connectionId?.let { observeConnection(it) }
+    }
+
+    private fun rebind(next: ConnectionScope?) {
+        boundScope = next
+        connectionId = next?.scopeId
+        mutationJob?.cancel()
+        observeJob?.cancel()
+        _ui.value = SessionOrganizationUiState()
+        next?.scopeId?.let { observeConnection(it) }
+    }
+
+    private fun observeConnection(scope: String) {
+        val expectedScope = boundScope
+        observeJob?.cancel()
+        observeJob = viewModelScope.launch {
+            store.observe(scope).collect { organization ->
+                if (scopeObserver?.isCurrent(expectedScope) != false) {
                     _ui.update { current -> current.copy(organization = organization, busy = false) }
                 }
             }
         }
     }
+
+    private fun isCurrentScope(expected: ConnectionScope?): Boolean =
+        scopeObserver?.isCurrent(expected) != false
 
     fun toggleFavorite(sessionId: String) {
         val scope = requireScope() ?: return
@@ -100,14 +134,20 @@ class SessionOrganizationViewModel(
     }
 
     private fun launchMutation(block: suspend () -> Unit) {
+        val expectedScope = boundScope
         if (_ui.value.busy) return
         _ui.update { it.copy(busy = true, error = null) }
-        viewModelScope.launch {
-            runCatching { block() }
-                .onSuccess { _ui.update { it.copy(busy = false) } }
+        mutationJob?.cancel()
+        mutationJob = viewModelScope.launch {
+            suspendResult { block() }
+                .onSuccess {
+                    if (isCurrentScope(expectedScope)) _ui.update { it.copy(busy = false) }
+                }
                 .onFailure { error ->
-                    _ui.update {
-                        it.copy(busy = false, error = error.message ?: "Local update failed")
+                    if (isCurrentScope(expectedScope)) {
+                        _ui.update {
+                            it.copy(busy = false, error = error.message ?: "Local update failed")
+                        }
                     }
                 }
         }
@@ -123,7 +163,11 @@ class SessionOrganizationViewModel(
         ) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                SessionOrganizationViewModel(store, connectionIdProvider) as T
+                SessionOrganizationViewModel(
+                    store = store,
+                    connectionIdProvider = connectionIdProvider,
+                    scopeFlow = TalariaApp.instance.container.connectionStore.scope,
+                ) as T
         }
     }
 }

@@ -21,6 +21,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.repo.ChatRepository
+import com.hermesgadget.talaria.core.network.ConnectionScope
+import com.hermesgadget.talaria.core.network.ConnectionScopeObserver
 import com.hermesgadget.talaria.core.network.HermesEventClient
 import com.hermesgadget.talaria.core.network.HermesEventScope
 import com.hermesgadget.talaria.core.network.HermesSideEvent
@@ -39,7 +41,6 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.util.UUID
-import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
 
 sealed interface TerminalConnectionState {
     data class Disconnected(
@@ -70,23 +71,59 @@ data class TerminalUiState(
  */
 class TerminalViewModel(
     private val chatRepository: ChatRepository = TalariaApp.instance.container.chatRepository,
+    private val scopeFlow: StateFlow<ConnectionScope?>? = null,
 ) : ViewModel() {
     private val container = TalariaApp.instance.container
     private val _ui = MutableStateFlow(TerminalUiState())
     val ui: StateFlow<TerminalUiState> = _ui.asStateFlow()
 
     private val output = TerminalOutputBuffer()
-    private val history = TerminalInputHistory()
+    private var history = TerminalInputHistory()
     private var pty: PtyWebSocketSession? = null
     private var eventClient: HermesEventClient? = null
     private var ptyJob: Job? = null
     private var sidecarJob: Job? = null
+    private var backendJob: Job? = null
     private var connectionGeneration = 0L
     private var explicitlyDisconnected = false
+    private var boundScope: ConnectionScope? = scopeFlow?.value
+    private var scopeObserver: ConnectionScopeObserver? = null
+
+    init {
+        scopeObserver = scopeFlow?.let { flow ->
+            ConnectionScopeObserver(flow, viewModelScope) { next -> rebind(next) }
+        }
+        if (scopeFlow != null && boundScope != null) {
+            ensureStarted()
+            loadBackends()
+        }
+    }
+
+    private fun rebind(next: ConnectionScope?) {
+        boundScope = next
+        connectionGeneration += 1
+        backendJob?.cancel()
+        closeTransport()
+        explicitlyDisconnected = false
+        history = TerminalInputHistory()
+        _ui.value = TerminalUiState(
+            connection = TerminalConnectionState.Disconnected(
+                reason = if (next == null) "No active connection" else null,
+            ),
+            output = output.clear(),
+        )
+        if (next != null) {
+            ensureStarted()
+            loadBackends()
+        }
+    }
+
+    private fun isCurrentScope(expected: ConnectionScope?): Boolean =
+        scopeObserver?.isCurrent(expected) != false
 
     /** Start once a profile exists; later resume calls reconnect only if needed. */
     fun ensureStarted() {
-        if (container.connectionStore.activeProfile() == null) {
+        if (scopeFlow != null && boundScope == null) {
             _ui.update {
                 it.copy(
                     connection = TerminalConnectionState.Disconnected(reason = "No active connection"),
@@ -108,28 +145,37 @@ class TerminalViewModel(
 
     fun loadBackends() {
         if (_ui.value.backendsLoading) return
-        val profile = container.connectionStore.activeProfile()?.effectiveManagementProfile() ?: return
-        viewModelScope.launch {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val snapshot = expectedScope?.snapshot ?: container.clientFactory.snapshot() ?: return
+        val requestApi = container.clientFactory.api(snapshot)
+        val profile = snapshot.managementProfile
+        backendJob?.cancel()
+        backendJob = viewModelScope.launch {
             _ui.update { it.copy(backendsLoading = true, backendError = null) }
             suspendResult {
-                container.clientFactory.api().getTerminalBackends(profile)
+                requestApi.getTerminalBackends(profile)
             }.fold(
                 onSuccess = { response ->
-                    _ui.update {
-                        it.copy(
-                            backends = response,
-                            backendsLoading = false,
-                            backendSelecting = null,
-                            backendError = null,
-                        )
+                    if (isCurrentScope(expectedScope)) {
+                        _ui.update {
+                            it.copy(
+                                backends = response,
+                                backendsLoading = false,
+                                backendSelecting = null,
+                                backendError = null,
+                            )
+                        }
                     }
                 },
                 onFailure = { failure ->
-                    _ui.update {
-                        it.copy(
-                            backendsLoading = false,
-                            backendError = failure.message,
-                        )
+                    if (isCurrentScope(expectedScope)) {
+                        _ui.update {
+                            it.copy(
+                                backendsLoading = false,
+                                backendError = failure.message,
+                            )
+                        }
                     }
                 },
             )
@@ -138,37 +184,46 @@ class TerminalViewModel(
 
     fun selectBackend(backend: String) {
         val requested = backend.trim()
-        val profile = container.connectionStore.activeProfile()?.effectiveManagementProfile() ?: return
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val snapshot = expectedScope?.snapshot ?: container.clientFactory.snapshot() ?: return
+        val requestApi = container.clientFactory.api(snapshot)
+        val profile = snapshot.managementProfile
         if (requested.isEmpty() || _ui.value.backendSelecting != null) return
-        viewModelScope.launch {
+        backendJob?.cancel()
+        backendJob = viewModelScope.launch {
             _ui.update { it.copy(backendSelecting = requested, backendError = null) }
             suspendResult {
-                container.clientFactory.api().selectTerminalBackend(
+                requestApi.selectTerminalBackend(
                     body = buildJsonObject { put("backend", requested) },
                     profile = profile,
                 )
             }.fold(
                 onSuccess = {
-                    _ui.update { state ->
-                        state.copy(
-                            backends = state.backends?.copy(
-                                active = requested,
-                                backends = state.backends.backends.map { row ->
-                                    row.copy(active = row.name == requested)
-                                },
-                            ),
-                            backendSelecting = null,
-                            backendError = null,
-                        )
+                    if (isCurrentScope(expectedScope)) {
+                        _ui.update { state ->
+                            state.copy(
+                                backends = state.backends?.copy(
+                                    active = requested,
+                                    backends = state.backends.backends.map { row ->
+                                        row.copy(active = row.name == requested)
+                                    },
+                                ),
+                                backendSelecting = null,
+                                backendError = null,
+                            )
+                        }
+                        loadBackends()
                     }
-                    loadBackends()
                 },
                 onFailure = { failure ->
-                    _ui.update {
-                        it.copy(
-                            backendSelecting = null,
-                            backendError = failure.message,
-                        )
+                    if (isCurrentScope(expectedScope)) {
+                        _ui.update {
+                            it.copy(
+                                backendSelecting = null,
+                                backendError = failure.message,
+                            )
+                        }
                     }
                 },
             )
@@ -225,7 +280,9 @@ class TerminalViewModel(
     }
 
     private fun connect() {
-        val snapshot = container.clientFactory.snapshot()
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val snapshot = expectedScope?.snapshot ?: container.clientFactory.snapshot()
         if (snapshot == null) {
             _ui.update {
                 it.copy(
@@ -264,7 +321,7 @@ class TerminalViewModel(
         sidecar.start(channel)
         sidecarJob = viewModelScope.launch {
             sidecar.events.collect { event ->
-                if (generation != connectionGeneration) return@collect
+                if (generation != connectionGeneration || !isCurrentScope(expectedScope)) return@collect
                 if (event is HermesSideEvent.TransportError) {
                     _ui.update {
                         it.copy(sidecarError = "${event.socket}: ${event.message}")
@@ -274,11 +331,11 @@ class TerminalViewModel(
         }
         ptyJob = viewModelScope.launch {
             try {
-                flow.collect { event -> handlePtyEvent(generation, event) }
+                flow.collect { event -> handlePtyEvent(generation, expectedScope, event) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
-                if (generation == connectionGeneration) {
+                if (generation == connectionGeneration && isCurrentScope(expectedScope)) {
                     sidecar.stop()
                     _ui.update {
                         it.copy(connection = TerminalConnectionState.Failed(
@@ -290,8 +347,12 @@ class TerminalViewModel(
         }
     }
 
-    private fun handlePtyEvent(generation: Long, event: PtyEvent) {
-        if (generation != connectionGeneration) return
+    private fun handlePtyEvent(
+        generation: Long,
+        expectedScope: ConnectionScope?,
+        event: PtyEvent,
+    ) {
+        if (generation != connectionGeneration || !isCurrentScope(expectedScope)) return
         when (event) {
             is PtyEvent.Connected -> _ui.update {
                 it.copy(
@@ -335,14 +396,20 @@ class TerminalViewModel(
     override fun onCleared() {
         explicitlyDisconnected = true
         connectionGeneration += 1
+        backendJob?.cancel()
         closeTransport()
             }
 
     companion object {
         fun factory() = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                TerminalViewModel() as T
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                val container = TalariaApp.instance.container
+                return TerminalViewModel(
+                    chatRepository = container.chatRepository,
+                    scopeFlow = container.connectionStore.scope,
+                ) as T
+            }
         }
     }
 }

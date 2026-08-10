@@ -21,6 +21,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
+import com.hermesgadget.talaria.core.network.ConnectionScope
+import com.hermesgadget.talaria.core.network.ConnectionScopeObserver
 import com.hermesgadget.talaria.core.network.HermesApi
 import com.hermesgadget.talaria.core.network.decodeJsonResponse
 import com.hermesgadget.talaria.core.voice.SpeechCoordinator
@@ -56,11 +58,20 @@ import kotlinx.serialization.json.jsonPrimitive
 import retrofit2.HttpException
 
 class VoiceViewModel(
-    private val api: HermesApi,
+    api: HermesApi? = null,
     context: Context,
     private val speech: SpeechCoordinator,
     private val profileProvider: () -> String? = { null },
+    private val apiProvider: (ConnectionScope?) -> HermesApi = { scope ->
+        scope?.snapshot?.let { TalariaApp.instance.container.clientFactory.api(it) }
+            ?: TalariaApp.instance.container.clientFactory.api()
+    },
+    private val scopeFlow: StateFlow<ConnectionScope?>? = null,
 ) : ViewModel() {
+    private val fixedApi = api
+    private var boundApi: HermesApi = api ?: apiProvider(scopeFlow?.value)
+    private var boundScope: ConnectionScope? = scopeFlow?.value
+    private var scopeObserver: ConnectionScopeObserver? = null
     private val appContext = context.applicationContext
     private val recorder = VoiceRecorder(appContext)
     private val audioPlayer = VoiceAudioPlayer(appContext)
@@ -73,8 +84,47 @@ class VoiceViewModel(
     val ui: StateFlow<VoiceUiState> = _ui.asStateFlow()
 
     private var fallbackJob: Job? = null
+    private var capabilityJob: Job? = null
+    private var elevenLabsJob: Job? = null
+    private var transcriptionJob: Job? = null
+    private var speakJob: Job? = null
+
+    init {
+        scopeObserver = scopeFlow?.let { flow ->
+            ConnectionScopeObserver(flow, viewModelScope) { next -> rebind(next) }
+        }
+    }
+
+    private fun rebind(next: ConnectionScope?) {
+        boundScope = next
+        boundApi = fixedApi ?: apiProvider(next)
+        capabilityJob?.cancel()
+        elevenLabsJob?.cancel()
+        transcriptionJob?.cancel()
+        speakJob?.cancel()
+        fallbackJob?.cancel()
+        recorder.cancel()
+        audioPlayer.stop()
+        _ui.value = VoiceUiState(
+            androidSpeechAvailable = speech.isAvailable(),
+            microphonePermissionGranted = speech.hasMicPermission(),
+        )
+        if (next != null) {
+            refreshCapabilities()
+            refreshElevenLabsVoices()
+        }
+    }
+
+    private fun isCurrentScope(expected: ConnectionScope?): Boolean =
+        scopeObserver?.isCurrent(expected) != false
+
+    private fun profile(): String? =
+        (boundScope?.managementProfile ?: profileProvider())?.takeIf { it.isNotBlank() }
 
     fun refreshCapabilities() {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestApi = boundApi
         val current = _ui.value
         if (current.checkingCapabilities || current.phase in setOf(
                 VoicePhase.RECORDING,
@@ -84,33 +134,38 @@ class VoiceViewModel(
         ) return
 
         _ui.update { it.copy(checkingCapabilities = true, error = null) }
-        viewModelScope.launch {
-            suspendResult { VoiceCapabilities.fromOpenApiPaths(openApiPaths(api.getOpenApi())) }
+        capabilityJob?.cancel()
+        capabilityJob = viewModelScope.launch {
+            suspendResult { VoiceCapabilities.fromOpenApiPaths(openApiPaths(requestApi.getOpenApi())) }
                 .fold(
                     onSuccess = { capabilities ->
-                        _ui.update { state ->
-                            state.copy(
-                                phase = VoiceStateMachine.reduce(
-                                    state.phase,
-                                    if (capabilities.serverStt || capabilities.serverTts) VoiceEvent.ServerAvailable
-                                    else VoiceEvent.ServerUnavailable,
-                                ),
-                                capabilityChecked = true,
-                                checkingCapabilities = false,
-                                capabilities = capabilities,
-                                error = null,
-                            )
+                        if (isCurrentScope(expectedScope)) {
+                            _ui.update { state ->
+                                state.copy(
+                                    phase = VoiceStateMachine.reduce(
+                                        state.phase,
+                                        if (capabilities.serverStt || capabilities.serverTts) VoiceEvent.ServerAvailable
+                                        else VoiceEvent.ServerUnavailable,
+                                    ),
+                                    capabilityChecked = true,
+                                    checkingCapabilities = false,
+                                    capabilities = capabilities,
+                                    error = null,
+                                )
+                            }
                         }
                     },
                     onFailure = { error ->
-                        _ui.update { state ->
-                            state.copy(
-                                phase = VoiceStateMachine.reduce(state.phase, VoiceEvent.ServerUnavailable),
-                                capabilityChecked = true,
-                                checkingCapabilities = false,
-                                capabilities = VoiceCapabilities(),
-                                error = "Could not inspect Hermes voice capabilities: ${messageFor(error)}",
-                            )
+                        if (isCurrentScope(expectedScope)) {
+                            _ui.update { state ->
+                                state.copy(
+                                    phase = VoiceStateMachine.reduce(state.phase, VoiceEvent.ServerUnavailable),
+                                    capabilityChecked = true,
+                                    checkingCapabilities = false,
+                                    capabilities = VoiceCapabilities(),
+                                    error = "Could not inspect Hermes voice capabilities: ${messageFor(error)}",
+                                )
+                            }
                         }
                     },
                 )
@@ -118,31 +173,41 @@ class VoiceViewModel(
     }
 
     fun refreshElevenLabsVoices() {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestApi = boundApi
         if (_ui.value.elevenLabsLoading) return
         _ui.update { it.copy(elevenLabsLoading = true, elevenLabsError = null) }
-        viewModelScope.launch {
-            suspendResult { parseElevenLabsVoices(api.getElevenLabsVoices()) }
+        elevenLabsJob?.cancel()
+        elevenLabsJob = viewModelScope.launch {
+            suspendResult { parseElevenLabsVoices(requestApi.getElevenLabsVoices()) }
                 .fold(
                     onSuccess = { payload ->
-                        _ui.update {
-                            it.copy(
-                                elevenLabsAvailable = payload.available,
-                                elevenLabsVoices = payload.voices,
-                                elevenLabsError = payload.error,
-                            )
+                        if (isCurrentScope(expectedScope)) {
+                            _ui.update {
+                                it.copy(
+                                    elevenLabsAvailable = payload.available,
+                                    elevenLabsVoices = payload.voices,
+                                    elevenLabsError = payload.error,
+                                )
+                            }
                         }
                     },
                     onFailure = { error ->
-                        _ui.update {
-                            it.copy(
-                                elevenLabsAvailable = false,
-                                elevenLabsVoices = emptyList(),
-                                elevenLabsError = messageFor(error),
-                            )
+                        if (isCurrentScope(expectedScope)) {
+                            _ui.update {
+                                it.copy(
+                                    elevenLabsAvailable = false,
+                                    elevenLabsVoices = emptyList(),
+                                    elevenLabsError = messageFor(error),
+                                )
+                            }
                         }
                     },
                 )
-            _ui.update { it.copy(elevenLabsLoading = false) }
+            if (isCurrentScope(expectedScope)) {
+                _ui.update { it.copy(elevenLabsLoading = false) }
+            }
         }
     }
 
@@ -156,6 +221,7 @@ class VoiceViewModel(
     }
 
     fun startRecording() {
+        if (scopeFlow != null && boundScope == null) return
         val state = _ui.value
         if (!state.capabilities.serverStt) {
             _ui.update { it.copy(error = "Hermes server STT is unavailable") }
@@ -187,6 +253,10 @@ class VoiceViewModel(
     }
 
     private fun stopRecordingAndTranscribe(autoStopped: Boolean) {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestApi = boundApi
+        val requestProfile = profile()
         if (_ui.value.phase != VoicePhase.RECORDING || _ui.value.fallbackListening) return
 
         val recorded = recorder.stop()
@@ -215,7 +285,8 @@ class VoiceViewModel(
             }
             return
         }
-        viewModelScope.launch {
+        transcriptionJob?.cancel()
+        transcriptionJob = viewModelScope.launch {
             suspendResult {
                 val dataUrl = withContext(Dispatchers.IO) {
                     try {
@@ -224,9 +295,9 @@ class VoiceViewModel(
                         audio.file.delete()
                     }
                 }
-                val response = api.transcribeAudioBody(
+                val response = requestApi.transcribeAudioBody(
                     VoiceTranscriptionRequest(dataUrl = dataUrl, mimeType = audio.mimeType),
-                    profile = profileProvider(),
+                    profile = requestProfile,
                 ).decodeJsonResponse<VoiceTranscriptionResponse>()
                 val transcript = response.transcript.trim()
                 if (!response.ok || transcript.isBlank()) {
@@ -235,25 +306,33 @@ class VoiceViewModel(
                 transcript
             }.fold(
                 onSuccess = { transcript ->
-                    _ui.update { state ->
-                        state.copy(
-                            text = transcript,
-                            partialText = "",
-                            history = addHistory(state.history, transcript, VoiceHistoryKind.SERVER_TRANSCRIPTION),
-                        )
+                    if (isCurrentScope(expectedScope)) {
+                        _ui.update { state ->
+                            state.copy(
+                                text = transcript,
+                                partialText = "",
+                                history = addHistory(state.history, transcript, VoiceHistoryKind.SERVER_TRANSCRIPTION),
+                            )
+                        }
+                        _ui.update { it.copy(
+                            phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.TranscriptionFinished),
+                            error = null,
+                        ) }
                     }
-                    _ui.update { it.copy(
-                        phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.TranscriptionFinished),
-                        error = null,
-                    ) }
                 },
                 onFailure = { error ->
-                    _ui.update { it.copy(
-                        phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.TranscriptionFinished),
-                        error = messageFor(error, "Server transcription failed"),
-                    ) }
-                    if (error is HttpException && error.code() == 404) {
-                        markCapabilityMissing(VoiceCapability.SERVER_STT, "Hermes no longer exposes server STT")
+                    if (isCurrentScope(expectedScope)) {
+                        _ui.update { it.copy(
+                            phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.TranscriptionFinished),
+                            error = messageFor(error, "Server transcription failed"),
+                        ) }
+                        if (error is HttpException && error.code() == 404) {
+                            markCapabilityMissing(
+                                VoiceCapability.SERVER_STT,
+                                "Hermes no longer exposes server STT",
+                                expectedScope,
+                            )
+                        }
                     }
                 },
             )
@@ -261,6 +340,8 @@ class VoiceViewModel(
     }
 
     fun startOnDeviceDictation() {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
         val state = _ui.value
         if (!state.androidSpeechAvailable || state.phase !in setOf(VoicePhase.IDLE, VoicePhase.UNAVAILABLE)) {
             _ui.update { it.copy(error = "On-device speech recognition is unavailable on this device") }
@@ -281,6 +362,7 @@ class VoiceViewModel(
         fallbackJob = viewModelScope.launch {
             try {
                 speech.listen(continuous = false).collect { event ->
+                    if (!isCurrentScope(expectedScope)) return@collect
                     when (event) {
                         is SttEvent.Partial -> _ui.update { it.copy(partialText = event.text) }
                         is SttEvent.Final -> {
@@ -313,7 +395,7 @@ class VoiceViewModel(
                     }
                 }
             } finally {
-                if (!currentCoroutineContext().isActive) return@launch
+                if (!currentCoroutineContext().isActive || !isCurrentScope(expectedScope)) return@launch
                 _ui.update { state ->
                     state.copy(
                         phase = if (state.phase == VoicePhase.RECORDING) {
@@ -349,6 +431,10 @@ class VoiceViewModel(
     }
 
     fun speakText() {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestApi = boundApi
+        val requestProfile = profile()
         val state = _ui.value
         val text = state.text.trim()
         if (!state.capabilities.serverTts) {
@@ -365,11 +451,12 @@ class VoiceViewModel(
             phase = VoiceStateMachine.reduce(it.phase, VoiceEvent.StartPlayback),
             error = null,
         ) }
-        viewModelScope.launch {
+        speakJob?.cancel()
+        speakJob = viewModelScope.launch {
             suspendResult {
-                val response = api.speakTextBody(
+                val response = requestApi.speakTextBody(
                     VoiceSpeakRequest(text),
-                    profile = profileProvider(),
+                    profile = requestProfile,
                 ).decodeJsonResponse<VoiceSpeakResponse>()
                 if (!response.ok || response.dataUrl.isBlank()) {
                     throw IllegalStateException(response.error ?: "Hermes returned no audio")
@@ -377,19 +464,26 @@ class VoiceViewModel(
                 response.dataUrl
             }.fold(
                 onSuccess = { dataUrl ->
+                    if (!isCurrentScope(expectedScope)) return@fold
                     _ui.update { current ->
                         current.copy(history = addHistory(current.history, text, VoiceHistoryKind.SERVER_SPEECH))
                     }
                     audioPlayer.play(
                         dataUrl,
-                        onCompleted = { finishPlayback() },
-                        onError = { error -> finishPlayback(error) },
+                        onCompleted = { finishPlayback(expectedScope = expectedScope) },
+                        onError = { error -> finishPlayback(error, expectedScope) },
                     )
                 },
                 onFailure = { error ->
-                    finishPlayback(messageFor(error, "Server speech synthesis failed"))
-                    if (error is HttpException && error.code() == 404) {
-                        markCapabilityMissing(VoiceCapability.SERVER_TTS, "Hermes no longer exposes server TTS")
+                    if (isCurrentScope(expectedScope)) {
+                        finishPlayback(messageFor(error, "Server speech synthesis failed"), expectedScope)
+                        if (error is HttpException && error.code() == 404) {
+                            markCapabilityMissing(
+                                VoiceCapability.SERVER_TTS,
+                                "Hermes no longer exposes server TTS",
+                                expectedScope,
+                            )
+                        }
                     }
                 },
             )
@@ -399,10 +493,11 @@ class VoiceViewModel(
     fun stopPlayback() {
         if (_ui.value.phase != VoicePhase.PLAYING) return
         audioPlayer.stop()
-        finishPlayback()
+        finishPlayback(expectedScope = boundScope)
     }
 
-    private fun finishPlayback(error: String? = null) {
+    private fun finishPlayback(error: String? = null, expectedScope: ConnectionScope? = boundScope) {
+        if (!isCurrentScope(expectedScope)) return
         _ui.update { state ->
             state.copy(
                 phase = VoiceStateMachine.reduce(state.phase, VoiceEvent.PlaybackFinished),
@@ -411,7 +506,12 @@ class VoiceViewModel(
         }
     }
 
-    private fun markCapabilityMissing(capability: VoiceCapability, message: String) {
+    private fun markCapabilityMissing(
+        capability: VoiceCapability,
+        message: String,
+        expectedScope: ConnectionScope? = boundScope,
+    ) {
+        if (!isCurrentScope(expectedScope)) return
         _ui.update { state ->
             val capabilities = when (capability) {
                 VoiceCapability.SERVER_STT -> state.capabilities.copy(serverStt = false)
@@ -442,6 +542,10 @@ class VoiceViewModel(
     ) + current).take(MAX_HISTORY)
 
     override fun onCleared() {
+        capabilityJob?.cancel()
+        elevenLabsJob?.cancel()
+        transcriptionJob?.cancel()
+        speakJob?.cancel()
         fallbackJob?.cancel()
         recorder.cancel()
         audioPlayer.close()
@@ -490,12 +594,16 @@ class VoiceViewModel(
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 val container = TalariaApp.instance.container
                 return VoiceViewModel(
-                    api = container.clientFactory.api(),
                     context = TalariaApp.instance,
                     speech = container.speechCoordinator,
                     profileProvider = {
                         container.connectionStore.activeProfile()?.effectiveManagementProfile()
                     },
+                    apiProvider = { scope ->
+                        scope?.snapshot?.let { container.clientFactory.api(it) }
+                            ?: container.clientFactory.api()
+                    },
+                    scopeFlow = container.connectionStore.scope,
                 ) as T
             }
         }
