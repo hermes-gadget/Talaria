@@ -29,9 +29,11 @@ import androidx.compose.material.icons.outlined.ManageAccounts
 import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
@@ -44,10 +46,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -91,8 +95,13 @@ import com.hermesgadget.talaria.feature.voice.VoiceScreen
 import com.hermesgadget.talaria.feature.settings.NotificationSettingsScreen
 import com.hermesgadget.talaria.feature.terminal.TerminalScreen
 import com.hermesgadget.talaria.feature.you.YouScreen
+import com.hermesgadget.talaria.domain.model.normalizeManagementProfile
 import com.hermesgadget.talaria.domain.model.scopeId
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.core.net.toUri
 
 private const val FILES_PATH_ARGUMENT = "path"
@@ -109,6 +118,13 @@ private data class PendingDeepLink(
     val expectedScope: String?,
 )
 
+private data class DeepLinkScopeConfirmation(
+    val destination: PendingDeepLinkDestination,
+    val request: DeepLinkScopeRequest,
+    val expectedScope: String?,
+    val connectionName: String,
+)
+
 private fun parseDeepLinkDestination(raw: String): PendingDeepLinkDestination? {
     val uri = runCatching { raw.toUri() }.getOrNull()
     if (
@@ -121,20 +137,92 @@ private fun parseDeepLinkDestination(raw: String): PendingDeepLinkDestination? {
     return TalariaDeepLinkParser.parse(raw)?.let(PendingDeepLinkDestination::Parsed)
 }
 
-private suspend fun applyDeepLinkScope(connectionId: String?, profile: String?) {
+private fun currentScopeId(): String? {
+    val store = TalariaApp.instance.container.connectionStore
+    return store.scope.value?.scopeId ?: store.activeProfile()?.scopeId()
+}
+
+private suspend fun serverProfileExists(connectionId: String, requestedProfile: String): Boolean {
+    val normalized = normalizeManagementProfile(requestedProfile)
+    if (normalized.isBlank()) return true
     val container = TalariaApp.instance.container
-    val validConnectionId = connectionId?.takeIf { candidate ->
-        candidate.isNotBlank() && container.connectionStore.profiles.value.any { it.id == candidate }
+    val snapshot = container.clientFactory.snapshotFor(connectionId) ?: return false
+    return try {
+        withContext(Dispatchers.IO) {
+            container.clientFactory.api(snapshot).getProfiles().profiles.any { profile ->
+                normalizeManagementProfile(profile.name) == normalized
+            }
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        false
     }
-    if (validConnectionId != null) {
-        container.connectionRepository.setActive(validConnectionId)
+}
+
+private suspend fun validateDeepLinkScope(request: DeepLinkScopeRequest): DeepLinkScopeDecision {
+    val store = TalariaApp.instance.container.connectionStore
+    val active = store.activeProfile()
+    val decision = evaluateDeepLinkScope(
+        request = request,
+        activeConnectionId = active?.id,
+        activeProfile = active?.managementProfile,
+        savedConnectionIds = store.profiles.value.map { it.id }.toSet(),
+    )
+    if (decision == DeepLinkScopeDecision.REJECT) return decision
+
+    val requestedProfile = request.requestedProfile ?: return decision
+    val targetConnectionId = request.requestedConnectionId ?: active?.id
+        ?: return DeepLinkScopeDecision.REJECT
+    return if (serverProfileExists(targetConnectionId, requestedProfile)) {
+        decision
+    } else {
+        DeepLinkScopeDecision.REJECT
     }
-    // A profile is scoped to whichever connection is active after the optional
-    // connection switch. It must not be nested under the connection-id check:
-    // notification links often carry only `?profile=`.
-    profile?.takeIf(String::isNotBlank)?.let(container.connectionStore::setManagementProfile)
-    container.hermesRepository.clearCache()
-    container.wsAuthHelper.invalidate()
+}
+
+private suspend fun applyDeepLinkScope(
+    request: DeepLinkScopeRequest,
+    expectedScope: String?,
+): Boolean {
+    return try {
+        val container = TalariaApp.instance.container
+        if (currentScopeId() != expectedScope) return false
+        if (validateDeepLinkScope(request) == DeepLinkScopeDecision.REJECT) return false
+
+        val activeBefore = container.connectionStore.activeProfile()
+        val targetConnectionId = request.requestedConnectionId ?: activeBefore?.id
+        val connectionChanged = targetConnectionId != null && targetConnectionId != activeBefore?.id
+        if (connectionChanged) {
+            container.connectionRepository.setActive(checkNotNull(targetConnectionId))
+        }
+
+        val requestedProfile = request.requestedProfile
+        val profileChanged = requestedProfile != null &&
+            normalizeManagementProfile(container.connectionStore.activeProfile()?.managementProfile.orEmpty()) !=
+            normalizeManagementProfile(requestedProfile)
+        if (profileChanged) {
+            container.connectionStore.setManagementProfile(checkNotNull(requestedProfile))
+        }
+
+        if (connectionChanged || profileChanged) {
+            container.hermesRepository.clearCache()
+            container.wsAuthHelper.invalidate()
+        }
+        true
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        false
+    }
+}
+
+private fun deepLinkConnectionName(request: DeepLinkScopeRequest): String {
+    val store = TalariaApp.instance.container.connectionStore
+    val targetId = request.requestedConnectionId ?: store.activeProfile()?.id
+    return store.profiles.value.firstOrNull { it.id == targetId }?.name
+        ?: targetId
+        ?: "the selected connection"
 }
 
 private fun filesRoute(path: String?): String = path
@@ -158,7 +246,9 @@ fun TalariaNavRoot(
     val activeScopeId = connectionScope?.scopeId
         ?: (profiles.find { it.id == activeId } ?: profiles.firstOrNull())?.scopeId()
     var pendingDeepLink by remember { mutableStateOf<PendingDeepLink?>(null) }
+    var deepLinkConfirmation by remember { mutableStateOf<DeepLinkScopeConfirmation?>(null) }
     var connectProfile by remember { mutableStateOf<String?>(null) }
+    val deepLinkScope = rememberCoroutineScope()
 
     LaunchedEffect(activeScope) {
         val container = TalariaApp.instance.container
@@ -175,29 +265,98 @@ fun TalariaNavRoot(
     // once its graph exists.
     LaunchedEffect(deepLink) {
         val link = deepLink ?: return@LaunchedEffect
-        val destination = parseDeepLinkDestination(link) ?: return@LaunchedEffect
-        val container = TalariaApp.instance.container
+        val destination = parseDeepLinkDestination(link) ?: run {
+            onDeepLinkConsumed()
+            return@LaunchedEffect
+        }
         val parsed = (destination as? PendingDeepLinkDestination.Parsed)?.value
-        when (parsed) {
-            is TalariaDeepLink.Pairing -> {
-                applyDeepLinkScope(
-                    connectionId = parsed.connectionId,
-                    profile = parsed.profile,
-                )
+        val scopeRequest = when (parsed) {
+            is TalariaDeepLink.Pairing -> DeepLinkScopeRequest(parsed.connectionId, parsed.profile)
+            is TalariaDeepLink.Session -> DeepLinkScopeRequest(parsed.connectionId, parsed.profile)
+            else -> null
+        }
+        if (scopeRequest != null) {
+            connectProfile = null
+            when (validateDeepLinkScope(scopeRequest)) {
+                DeepLinkScopeDecision.REJECT -> {
+                    onDeepLinkConsumed()
+                    return@LaunchedEffect
+                }
+                DeepLinkScopeDecision.CONFIRM -> {
+                    deepLinkConfirmation = DeepLinkScopeConfirmation(
+                        destination = destination,
+                        request = scopeRequest,
+                        expectedScope = currentScopeId(),
+                        connectionName = deepLinkConnectionName(scopeRequest),
+                    )
+                    return@LaunchedEffect
+                }
+                DeepLinkScopeDecision.NO_CHANGE -> {
+                    if (!applyDeepLinkScope(scopeRequest, currentScopeId())) {
+                        onDeepLinkConsumed()
+                        return@LaunchedEffect
+                    }
+                }
             }
-            is TalariaDeepLink.Session -> {
-                applyDeepLinkScope(
-                    connectionId = parsed.connectionId,
-                    profile = parsed.profile,
-                )
+        } else {
+            when (parsed) {
+                is TalariaDeepLink.Connect -> connectProfile = parsed.profile
+                else -> connectProfile = null
             }
-            is TalariaDeepLink.Connect -> connectProfile = parsed.profile
-            else -> connectProfile = null
         }
         pendingDeepLink = PendingDeepLink(
             destination = destination,
-            expectedScope = container.connectionStore.scope.value?.scopeId
-                ?: container.connectionStore.activeProfile()?.scopeId(),
+            expectedScope = currentScopeId(),
+        )
+        onDeepLinkConsumed()
+    }
+
+    deepLinkConfirmation?.let { confirmation ->
+        val requestedProfile = confirmation.request.requestedProfile
+        val scopeDescription = buildString {
+            append("connection \"")
+            append(confirmation.connectionName)
+            append('"')
+            requestedProfile?.let {
+                append(" and management profile \"")
+                append(it)
+                append('"')
+            }
+        }
+        AlertDialog(
+            onDismissRequest = {
+                deepLinkConfirmation = null
+                onDeepLinkConsumed()
+            },
+            title = { Text("Confirm link scope") },
+            text = {
+                Text("This link requests $scopeDescription. Switch the active scope and open it?")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val pending = deepLinkConfirmation ?: return@TextButton
+                        deepLinkConfirmation = null
+                        deepLinkScope.launch {
+                            if (applyDeepLinkScope(pending.request, pending.expectedScope)) {
+                                pendingDeepLink = PendingDeepLink(
+                                    destination = pending.destination,
+                                    expectedScope = currentScopeId(),
+                                )
+                            }
+                            onDeepLinkConsumed()
+                        }
+                    },
+                ) { Text("Open") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        deepLinkConfirmation = null
+                        onDeepLinkConsumed()
+                    },
+                ) { Text("Cancel") }
+            },
         )
     }
 
@@ -208,6 +367,17 @@ fun TalariaNavRoot(
         val navController = rememberNavController()
         val start = if (profiles.isEmpty()) Routes.CONNECT else TopDest.Chats.route
         var currentTop by remember { mutableStateOf(TopDest.Chats.route) }
+
+        fun navigateToTopLevel(route: String) {
+            currentTop = route
+            navController.navigate(route) {
+                popUpTo(navController.graph.findStartDestination().id) {
+                    saveState = true
+                }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
 
     LaunchedEffect(shareText, shareImage) {
         if (!shareText.isNullOrBlank() || shareImage != null) {
@@ -249,8 +419,7 @@ fun TalariaNavRoot(
             item(
                 selected = currentTop == TopDest.Chats.route,
                 onClick = {
-                    currentTop = TopDest.Chats.route
-                    navController.navigate(TopDest.Chats.route) { launchSingleTop = true }
+                    navigateToTopLevel(TopDest.Chats.route)
                 },
                 icon = { Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = TopDest.Chats.label) },
                 label = { Text(TopDest.Chats.label) },
@@ -258,8 +427,7 @@ fun TalariaNavRoot(
             item(
                 selected = currentTop == TopDest.Activity.route,
                 onClick = {
-                    currentTop = TopDest.Activity.route
-                    navController.navigate(TopDest.Activity.route) { launchSingleTop = true }
+                    navigateToTopLevel(TopDest.Activity.route)
                 },
                 icon = { Icon(Icons.Outlined.NotificationsNone, contentDescription = TopDest.Activity.label) },
                 label = { Text(TopDest.Activity.label) },
@@ -267,8 +435,7 @@ fun TalariaNavRoot(
             item(
                 selected = currentTop == TopDest.Manage.route,
                 onClick = {
-                    currentTop = TopDest.Manage.route
-                    navController.navigate(TopDest.Manage.route) { launchSingleTop = true }
+                    navigateToTopLevel(TopDest.Manage.route)
                 },
                 icon = { Icon(Icons.Outlined.ManageAccounts, contentDescription = TopDest.Manage.label) },
                 label = { Text(TopDest.Manage.label) },
@@ -276,8 +443,7 @@ fun TalariaNavRoot(
             item(
                 selected = currentTop == TopDest.You.route,
                 onClick = {
-                    currentTop = TopDest.You.route
-                    navController.navigate(TopDest.You.route) { launchSingleTop = true }
+                    navigateToTopLevel(TopDest.You.route)
                 },
                 icon = { Icon(Icons.Outlined.PersonOutline, contentDescription = TopDest.You.label) },
                 label = { Text(TopDest.You.label) },
@@ -341,10 +507,9 @@ fun TalariaNavRoot(
                                     navController.navigate(Routes.SYSTEM)
                                 type.contains("chat", ignoreCase = true) ||
                                     type.contains("pty", ignoreCase = true) -> {
-                                    currentTop = TopDest.Chats.route
-                                    navController.navigate(TopDest.Chats.route)
+                                    navigateToTopLevel(TopDest.Chats.route)
                                 }
-                                else -> navController.navigate(TopDest.Manage.route)
+                                else -> navigateToTopLevel(TopDest.Manage.route)
                             }
                         },
                     )
@@ -462,19 +627,17 @@ fun TalariaNavRoot(
                             is TalariaDeepLink.Session -> navController.navigate(Routes.sessionDetail(target.id))
                             // Launcher long-press shortcuts (res/xml/shortcuts.xml).
                             TalariaDeepLink.Status -> {
-                                currentTop = TopDest.Manage.route
+                                navigateToTopLevel(TopDest.Manage.route)
                                 navController.navigate(Routes.STATUS)
                             }
                             TalariaDeepLink.Activity -> {
-                                currentTop = TopDest.Activity.route
-                                navController.navigate(TopDest.Activity.route) { launchSingleTop = true }
+                                navigateToTopLevel(TopDest.Activity.route)
                             }
                             TalariaDeepLink.Manage -> {
-                                currentTop = TopDest.Manage.route
-                                navController.navigate(TopDest.Manage.route) { launchSingleTop = true }
+                                navigateToTopLevel(TopDest.Manage.route)
                             }
                             TalariaDeepLink.Chat -> {
-                                currentTop = TopDest.Chats.route
+                                navigateToTopLevel(TopDest.Chats.route)
                                 navController.navigate(Routes.chat()) { launchSingleTop = true }
                             }
                         }
