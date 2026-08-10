@@ -48,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -209,6 +210,17 @@ fun TalariaNavRoot(
         val start = if (profiles.isEmpty()) Routes.CONNECT else TopDest.Chats.route
         var currentTop by remember { mutableStateOf(TopDest.Chats.route) }
 
+        fun navigateToTopLevel(route: String) {
+            currentTop = route
+            navController.navigate(route) {
+                popUpTo(navController.graph.findStartDestination().id) {
+                    saveState = true
+                }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+
     LaunchedEffect(shareText, shareImage) {
         if (!shareText.isNullOrBlank() || shareImage != null) {
             navController.navigate(Routes.chat()) { launchSingleTop = true }
@@ -249,8 +261,7 @@ fun TalariaNavRoot(
             item(
                 selected = currentTop == TopDest.Chats.route,
                 onClick = {
-                    currentTop = TopDest.Chats.route
-                    navController.navigate(TopDest.Chats.route) { launchSingleTop = true }
+                    navigateToTopLevel(TopDest.Chats.route)
                 },
                 icon = { Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = TopDest.Chats.label) },
                 label = { Text(TopDest.Chats.label) },
@@ -258,8 +269,7 @@ fun TalariaNavRoot(
             item(
                 selected = currentTop == TopDest.Activity.route,
                 onClick = {
-                    currentTop = TopDest.Activity.route
-                    navController.navigate(TopDest.Activity.route) { launchSingleTop = true }
+                    navigateToTopLevel(TopDest.Activity.route)
                 },
                 icon = { Icon(Icons.Outlined.NotificationsNone, contentDescription = TopDest.Activity.label) },
                 label = { Text(TopDest.Activity.label) },
@@ -267,8 +277,7 @@ fun TalariaNavRoot(
             item(
                 selected = currentTop == TopDest.Manage.route,
                 onClick = {
-                    currentTop = TopDest.Manage.route
-                    navController.navigate(TopDest.Manage.route) { launchSingleTop = true }
+                    navigateToTopLevel(TopDest.Manage.route)
                 },
                 icon = { Icon(Icons.Outlined.ManageAccounts, contentDescription = TopDest.Manage.label) },
                 label = { Text(TopDest.Manage.label) },
@@ -276,8 +285,7 @@ fun TalariaNavRoot(
             item(
                 selected = currentTop == TopDest.You.route,
                 onClick = {
-                    currentTop = TopDest.You.route
-                    navController.navigate(TopDest.You.route) { launchSingleTop = true }
+                    navigateToTopLevel(TopDest.You.route)
                 },
                 icon = { Icon(Icons.Outlined.PersonOutline, contentDescription = TopDest.You.label) },
                 label = { Text(TopDest.You.label) },
@@ -341,10 +349,9 @@ fun TalariaNavRoot(
                                     navController.navigate(Routes.SYSTEM)
                                 type.contains("chat", ignoreCase = true) ||
                                     type.contains("pty", ignoreCase = true) -> {
-                                    currentTop = TopDest.Chats.route
-                                    navController.navigate(TopDest.Chats.route)
+                                    navigateToTopLevel(TopDest.Chats.route)
                                 }
-                                else -> navController.navigate(TopDest.Manage.route)
+                                else -> navigateToTopLevel(TopDest.Manage.route)
                             }
                         },
                     )
@@ -462,19 +469,17 @@ fun TalariaNavRoot(
                             is TalariaDeepLink.Session -> navController.navigate(Routes.sessionDetail(target.id))
                             // Launcher long-press shortcuts (res/xml/shortcuts.xml).
                             TalariaDeepLink.Status -> {
-                                currentTop = TopDest.Manage.route
+                                navigateToTopLevel(TopDest.Manage.route)
                                 navController.navigate(Routes.STATUS)
                             }
                             TalariaDeepLink.Activity -> {
-                                currentTop = TopDest.Activity.route
-                                navController.navigate(TopDest.Activity.route) { launchSingleTop = true }
+                                navigateToTopLevel(TopDest.Activity.route)
                             }
                             TalariaDeepLink.Manage -> {
-                                currentTop = TopDest.Manage.route
-                                navController.navigate(TopDest.Manage.route) { launchSingleTop = true }
+                                navigateToTopLevel(TopDest.Manage.route)
                             }
                             TalariaDeepLink.Chat -> {
-                                currentTop = TopDest.Chats.route
+                                navigateToTopLevel(TopDest.Chats.route)
                                 navController.navigate(Routes.chat()) { launchSingleTop = true }
                             }
                         }
