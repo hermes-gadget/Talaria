@@ -49,6 +49,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -71,6 +72,8 @@ import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -90,6 +93,9 @@ private val MCP_EDITABLE_CONFIG_FIELDS = setOf(
     "headers",
     "oauth",
 )
+
+/** Serializes this client's MCP read/merge/write transactions. */
+private val mcpConfigWriteMutex = Mutex()
 
 @Composable
 fun McpScreen() {
@@ -124,6 +130,9 @@ fun McpScreen() {
     var authenticating by remember { mutableStateOf<String?>(null) }
     var actionMenuTarget by remember { mutableStateOf<String?>(null) }
     var formBusy by remember { mutableStateOf(false) }
+    var editBaseline by remember { mutableStateOf<JsonObject?>(null) }
+    var editBaselineLoading by remember { mutableStateOf(false) }
+    var editGeneration by remember { mutableLongStateOf(0L) }
     var installTarget by remember { mutableStateOf<McpCatalogEntry?>(null) }
     var catalogEnv by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var catalogBusy by remember { mutableStateOf<String?>(null) }
@@ -154,6 +163,9 @@ fun McpScreen() {
     }
 
     fun clearForm() {
+        editGeneration += 1
+        editBaseline = null
+        editBaselineLoading = false
         editTarget = null
         name = ""
         command = ""
@@ -165,6 +177,10 @@ fun McpScreen() {
     }
 
     fun beginEdit(server: McpServer) {
+        val requestedGeneration = editGeneration + 1
+        editGeneration = requestedGeneration
+        editBaseline = null
+        editBaselineLoading = true
         editTarget = server
         name = server.name
         command = server.command.orEmpty()
@@ -181,6 +197,25 @@ fun McpScreen() {
         actionMenuTarget = null
         testResult = null
         error = null
+        scope.launch {
+            runCatching {
+                api.getConfig()["mcp_servers"] as? JsonObject
+                    ?: error("Could not read the MCP configuration. Refresh and try again.")
+            }.fold(
+                onSuccess = { baseline ->
+                    if (editGeneration == requestedGeneration && editTarget?.name == server.name) {
+                        editBaseline = baseline
+                        editBaselineLoading = false
+                    }
+                },
+                onFailure = { failure ->
+                    if (editGeneration == requestedGeneration && editTarget?.name == server.name) {
+                        editBaselineLoading = false
+                        error = failure.message ?: "Could not read the MCP configuration"
+                    }
+                },
+            )
+        }
     }
 
     fun authenticate(serverName: String) = scope.launch {
@@ -245,12 +280,14 @@ fun McpScreen() {
     val bearerRequired = submittedAuth == "header" &&
         bearerToken.isBlank() &&
         selectedAuth != "header"
+    val editReady = editTarget == null || (!editBaselineLoading && editBaseline != null)
     val canSubmit = !formBusy &&
         submittedName.isNotBlank() &&
         (submittedCommand.isNotBlank() xor submittedUrl.isNotBlank()) &&
         !nameTaken &&
         formChanged &&
-        !bearerRequired
+        !bearerRequired &&
+        editReady
 
     fun submitForm() {
         if (!canSubmit) return
@@ -275,53 +312,69 @@ fun McpScreen() {
                     ).getOrThrow()
                     testResult = mcpAddSuccessTpl.format(submittedName)
                 } else {
-                    val rawConfig = api.getConfig()
-                    val rawServers = (rawConfig["mcp_servers"] as? JsonObject)
-                        ?: JsonObject(emptyMap())
-                    val serverEntries = rawServers.entries
-                        .associate { it.key to it.value }
-                        .toMutableMap()
-                    if (serverEntries.isEmpty()) {
-                        list.orEmpty().forEach { server ->
-                            serverEntries[server.name] = mcpServerConfigFromSummary(server)
+                    val baselineServers = editBaseline
+                        ?: error("The MCP configuration was not loaded. Refresh and try again.")
+                    mcpConfigWriteMutex.withLock {
+                        // Hermes currently exposes only a whole-map PUT and no
+                        // revision/ETag condition. Compare the edit-start
+                        // snapshot with a fresh read before constructing the
+                        // replacement so an observed concurrent change is
+                        // rejected instead of silently clobbered. The small
+                        // GET→PUT race remains until the server adds a
+                        // conditional write primitive.
+                        val rawConfig = api.getConfig()
+                        val rawServers = (rawConfig["mcp_servers"] as? JsonObject)
+                            ?: JsonObject(emptyMap())
+                        val changedServers = changedMcpServerNames(baselineServers, rawServers)
+                        check(changedServers.isEmpty()) {
+                            "MCP configuration changed while this edit was open " +
+                                "(${changedServers.sorted().joinToString()}). Refresh and retry."
                         }
-                    }
-                    val existingConfig = (serverEntries[target.name] as? JsonObject)
-                        ?: mcpServerConfigFromSummary(target)
-                    val updatedConfig = buildEditedMcpServerConfig(
-                        existing = existingConfig,
-                        selected = target,
-                        name = submittedName,
-                        command = submittedCommand,
-                        url = submittedUrl,
-                        args = submittedArgs,
-                        displayedEnv = submittedDisplayedEnv,
-                        env = submittedEnv,
-                        auth = submittedAuth,
-                        bearerToken = submittedBearerToken,
-                    )
-                    serverEntries.remove(target.name)
-                    serverEntries[submittedName] = updatedConfig
-                    val replacement = buildJsonObject {
-                        serverEntries.forEach { (serverName, serverConfig) ->
-                            put(serverName, serverConfig)
+
+                        val serverEntries = rawServers.entries
+                            .associate { it.key to it.value }
+                            .toMutableMap()
+                        val existingConfig = (serverEntries[target.name] as? JsonObject)
+                            ?: error("MCP server '${target.name}' no longer exists. Refresh and retry.")
+                        val updatedConfig = buildEditedMcpServerConfig(
+                            existing = existingConfig,
+                            selected = target,
+                            name = submittedName,
+                            command = submittedCommand,
+                            url = submittedUrl,
+                            args = submittedArgs,
+                            displayedEnv = submittedDisplayedEnv,
+                            env = submittedEnv,
+                            auth = submittedAuth,
+                            bearerToken = submittedBearerToken,
+                        )
+                        serverEntries.remove(target.name)
+                        check(submittedName == target.name || submittedName !in serverEntries) {
+                            "An MCP server named '$submittedName' was added while this edit was open. " +
+                                "Refresh and retry."
                         }
-                    }
-                    val normalizedBearer = normalizeBearerToken(submittedBearerToken)
-                    if (submittedAuth == "header" && normalizedBearer.isNotBlank()) {
-                        api.putEnv(
+                        serverEntries[submittedName] = updatedConfig
+                        val replacement = buildJsonObject {
+                            serverEntries.forEach { (serverName, serverConfig) ->
+                                put(serverName, serverConfig)
+                            }
+                        }
+                        val normalizedBearer = normalizeBearerToken(submittedBearerToken)
+                        if (submittedAuth == "header" && normalizedBearer.isNotBlank()) {
+                            api.putEnv(
+                                buildJsonObject {
+                                    put("key", mcpBearerEnvKey(submittedName))
+                                    put("value", normalizedBearer)
+                                },
+                            )
+                        }
+                        api.updateMcpServer(
                             buildJsonObject {
-                                put("key", mcpBearerEnvKey(submittedName))
-                                put("value", normalizedBearer)
+                                put("servers", replacement)
                             },
                         )
+                        repo.clearCache()
                     }
-                    api.updateMcpServer(
-                        buildJsonObject {
-                            put("servers", replacement)
-                        },
-                    )
-                    repo.clearCache()
                     testResult = mcpUpdateSuccessTpl.format(submittedName)
                 }
                 clearForm()
@@ -793,6 +846,14 @@ fun McpScreen() {
 
 private fun parseMcpArgs(raw: String): List<String> =
     raw.lines().map(String::trim).filter(String::isNotEmpty)
+
+/** Return every MCP entry that changed between the edit baseline and save. */
+internal fun changedMcpServerNames(
+    baseline: JsonObject,
+    current: JsonObject,
+): Set<String> = (baseline.keys + current.keys)
+    .filter { name -> baseline[name] != current[name] }
+    .toSet()
 
 /**
  * Browser navigation is a credential-bearing OAuth boundary. Remote hosts must
