@@ -341,9 +341,9 @@ internal class KanbanViewModel(
         onSuccess = onSuccess,
     )
 
-    fun patchKanbanTask(taskId: String, body: JsonObject) = mutate {
-        api.patchKanbanTask(taskId, body)
-    }
+    fun patchKanbanTask(taskId: String, body: JsonObject) = mutate(
+        block = { api.patchKanbanTask(taskId, body) },
+    )
 
     fun deleteKanbanTask(taskId: String) {
         val previous = currentContent() ?: return
