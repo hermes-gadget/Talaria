@@ -73,10 +73,13 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
-import androidx.core.net.toUri
 
 @Composable
-fun SessionDetailScreen(sessionId: String, onDeleted: (() -> Unit)? = null) {
+fun SessionDetailScreen(
+    sessionId: String,
+    onOpenSession: (String) -> Unit,
+    onDeleted: (() -> Unit)? = null,
+) {
     val repo = TalariaApp.instance.container.hermesRepository
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -119,12 +122,7 @@ fun SessionDetailScreen(sessionId: String, onDeleted: (() -> Unit)? = null) {
     LaunchedEffect(latestUi) {
         val result = (latestUi as? LatestDescendantUiState.Success)?.response ?: return@LaunchedEffect
         if (result.changed) {
-            context.startActivity(
-                Intent(
-                    Intent.ACTION_VIEW,
-                    "talaria://session/${Uri.encode(result.sessionId)}".toUri(),
-                ),
-            )
+            onOpenSession(result.sessionId)
         } else {
             message = "This is already the latest descendant"
         }

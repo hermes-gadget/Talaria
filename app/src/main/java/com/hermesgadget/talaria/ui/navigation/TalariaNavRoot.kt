@@ -392,6 +392,7 @@ fun TalariaNavRoot(
                 ) { entry ->
                     SessionDetailScreen(
                         sessionId = entry.arguments!!.getString("id")!!,
+                        onOpenSession = { navController.navigate(Routes.sessionDetail(it)) },
                         onDeleted = { navController.popBackStack() },
                     )
                 }
