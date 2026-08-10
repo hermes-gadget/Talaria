@@ -93,7 +93,7 @@ class ConfigSaveCoordinatorTest {
         assertTrue(after.message?.contains("could not verify") == true)
     }
 
-    private class FakeConfigServer {
+    private inner class FakeConfigServer {
         private var current: JsonObject = config("initial")
         private var putCalls = 0
         var verificationFailure: Throwable? = null
