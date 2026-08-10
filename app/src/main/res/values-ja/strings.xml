@@ -246,7 +246,8 @@
     <string name="chat_status_reconciled">再接続しました · トランスクリプトを更新</string>
     <string name="chat_status_retry">切断されました · 再試行可能</string>
     <string name="chat_status_consent_required">切断されました · HTTP同意が必要です</string>
-    <string name="chat_consent_required_message">このダッシュボードは %1$s で平文の http:// を使用しています。再接続するにはローカルネットワークへの暗号化されていないアクセスを許可しますか？</string>
+    <string name="chat_consent_required_message">このダッシュボードは %1$s で平文の http:// を使用しています。再接続するために、ローカルネットワークへの暗号化されていないアクセスを許可しますか？BASIC、BEARER、またはブラウザ OIDC 認証では、パスワード POST（/auth/password-login）、ベアラートークン、リフレッシュトークンが LAN 上で暗号化されずに送信されます。</string>
+    <string name="connect_cleartext_consent_message">このダッシュボードは %1$s で平文の http:// を使用しています。ローカルネットワークへの暗号化されていないアクセスを許可しますか？BASIC、BEARER、またはブラウザ OIDC 認証では、パスワード POST（/auth/password-login）、ベアラートークン、リフレッシュトークンが LAN 上で暗号化されずに送信されます。</string>
     <string name="chat_consent_allow_http">HTTPを許可</string>
     <string name="chat_approval_choice_button">承認: %1$s</string>
     <string name="chat_approval_confirm">%1$s を確認</string>

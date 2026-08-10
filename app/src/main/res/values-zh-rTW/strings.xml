@@ -246,7 +246,8 @@
     <string name="chat_status_reconciled">已重新連線 · 對話記錄已重新整理</string>
     <string name="chat_status_retry">已中斷連線 · 可重試</string>
     <string name="chat_status_consent_required">已中斷連線 · 需要 HTTP 許可</string>
-    <string name="chat_consent_required_message">此儀表板在 %1$s 上使用明文 http://。是否允許透過本機網路進行未加密存取以重新連線？</string>
+    <string name="chat_consent_required_message">此儀表板在 %1$s 上使用明文 http://。是否允許透過本機網路進行未加密存取以重新連線？使用 BASIC、BEARER 或瀏覽器 OIDC 驗證時，密碼 POST（/auth/password-login）、Bearer 權杖和重新整理權杖將透過區域網路以明文傳輸。</string>
+    <string name="connect_cleartext_consent_message">此儀表板在 %1$s 上使用明文 http://。是否允許透過本機網路進行未加密存取？使用 BASIC、BEARER 或瀏覽器 OIDC 驗證時，密碼 POST（/auth/password-login）、Bearer 權杖和重新整理權杖將透過區域網路以明文傳輸。</string>
     <string name="chat_consent_allow_http">允許 HTTP</string>
     <string name="chat_approval_choice_button">核准：%1$s</string>
     <string name="chat_approval_confirm">確認 %1$s</string>

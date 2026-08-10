@@ -73,7 +73,8 @@
     <string name="chat_status_reconciled">Reconnected · transcript refreshed</string>
     <string name="chat_status_retry">Disconnected · retry available</string>
     <string name="chat_status_consent_required">Disconnected · HTTP consent required</string>
-    <string name="chat_consent_required_message">This dashboard uses plain http:// at %1$s. Allow unencrypted local-network access to reconnect?</string>
+    <string name="chat_consent_required_message">This dashboard uses plain http:// at %1$s. Allow unencrypted local-network access to reconnect? With BASIC, BEARER, or browser OIDC authentication, the password POST (/auth/password-login), bearer tokens, and refresh tokens will be transmitted unencrypted over the LAN.</string>
+    <string name="connect_cleartext_consent_message">This dashboard uses plain http:// at %1$s. Allow unencrypted local-network access? With BASIC, BEARER, or browser OIDC authentication, the password POST (/auth/password-login), bearer tokens, and refresh tokens will be transmitted unencrypted over the LAN.</string>
     <string name="chat_consent_allow_http">Allow HTTP</string>
     <string name="chat_choices">Choices: %1$s</string>
     <string name="chat_secure_response">Secure response</string>

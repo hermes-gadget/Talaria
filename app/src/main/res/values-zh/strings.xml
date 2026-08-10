@@ -246,7 +246,8 @@
     <string name="chat_status_reconciled">已重新连接 · 会话记录已刷新</string>
     <string name="chat_status_retry">已断开 · 可以重试</string>
     <string name="chat_status_consent_required">已断开 · 需要 HTTP 许可</string>
-    <string name="chat_consent_required_message">此仪表板在 %1$s 上使用明文 http://。是否允许通过本地网络进行未加密访问以重新连接？</string>
+    <string name="chat_consent_required_message">此仪表板在 %1$s 上使用明文 http://。是否允许通过本地网络进行未加密访问以重新连接？使用 BASIC、BEARER 或浏览器 OIDC 身份验证时，密码 POST（/auth/password-login）、Bearer 令牌和刷新令牌将通过局域网以明文传输。</string>
+    <string name="connect_cleartext_consent_message">此仪表板在 %1$s 上使用明文 http://。是否允许通过本地网络进行未加密访问？使用 BASIC、BEARER 或浏览器 OIDC 身份验证时，密码 POST（/auth/password-login）、Bearer 令牌和刷新令牌将通过局域网以明文传输。</string>
     <string name="chat_consent_allow_http">允许 HTTP</string>
     <string name="chat_approval_choice_button">批准：%1$s</string>
     <string name="chat_approval_confirm">确认 %1$s</string>

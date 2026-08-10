@@ -256,7 +256,8 @@
     <string name="chat_status_reconciled">أُعيد الاتصال · تحديث النص</string>
     <string name="chat_status_retry">غير متصل · يمكن إعادة المحاولة</string>
     <string name="chat_status_consent_required">غير متصل · مطلوب موافقة HTTP</string>
-    <string name="chat_consent_required_message">تستخدم لوحة التحكم هذه http:// على %1$s. هل تسمح بالوصول غير المشفر عبر الشبكة المحلية لإعادة الاتصال؟</string>
+    <string name="chat_consent_required_message">تستخدم لوحة التحكم هذه http:// على %1$s. هل تسمح بالوصول غير المشفر عبر الشبكة المحلية لإعادة الاتصال؟ مع مصادقة BASIC أو BEARER أو OIDC عبر المتصفح، سيُرسل طلب POST لكلمة المرور (/auth/password-login) ورموز bearer ورموز التحديث دون تشفير عبر شبكة LAN.</string>
+    <string name="connect_cleartext_consent_message">تستخدم لوحة التحكم هذه http:// على %1$s. هل تسمح بالوصول غير المشفر عبر الشبكة المحلية؟ مع مصادقة BASIC أو BEARER أو OIDC عبر المتصفح، سيُرسل طلب POST لكلمة المرور (/auth/password-login) ورموز bearer ورموز التحديث دون تشفير عبر شبكة LAN.</string>
     <string name="chat_consent_allow_http">السماح بـ HTTP</string>
     <string name="chat_approval_choice_button">موافقة: %1$s</string>
     <string name="chat_approval_confirm">تأكيد %1$s</string>
