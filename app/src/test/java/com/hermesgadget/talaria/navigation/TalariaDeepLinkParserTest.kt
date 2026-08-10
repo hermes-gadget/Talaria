@@ -6,6 +6,9 @@ package com.hermesgadget.talaria.navigation
 
 import com.hermesgadget.talaria.ui.navigation.TalariaDeepLink
 import com.hermesgadget.talaria.ui.navigation.TalariaDeepLinkParser
+import com.hermesgadget.talaria.ui.navigation.DeepLinkScopeDecision
+import com.hermesgadget.talaria.ui.navigation.DeepLinkScopeRequest
+import com.hermesgadget.talaria.ui.navigation.evaluateDeepLinkScope
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -47,5 +50,44 @@ class TalariaDeepLinkParserTest {
     fun rejectsExtraSessionPathSegments() {
         assertNull(TalariaDeepLinkParser.parse("talaria://session/one/two"))
         assertNull(TalariaDeepLinkParser.parse("talaria://session/one%2Ftwo"))
+    }
+
+    @Test
+    fun rejectsUnknownConnectionBeforeConsideringProfile() {
+        assertEquals(
+            DeepLinkScopeDecision.REJECT,
+            evaluateDeepLinkScope(
+                request = DeepLinkScopeRequest("not-saved", "sensitive"),
+                activeConnectionId = "connection-1",
+                activeProfile = "default",
+                savedConnectionIds = setOf("connection-1"),
+            ),
+        )
+    }
+
+    @Test
+    fun requiresConfirmationForKnownScopeChange() {
+        assertEquals(
+            DeepLinkScopeDecision.CONFIRM,
+            evaluateDeepLinkScope(
+                request = DeepLinkScopeRequest("connection-2", "work"),
+                activeConnectionId = "connection-1",
+                activeProfile = "default",
+                savedConnectionIds = setOf("connection-1", "connection-2"),
+            ),
+        )
+    }
+
+    @Test
+    fun sameDefaultProfileDoesNotNeedConfirmation() {
+        assertEquals(
+            DeepLinkScopeDecision.NO_CHANGE,
+            evaluateDeepLinkScope(
+                request = DeepLinkScopeRequest(profile = "default"),
+                activeConnectionId = "connection-1",
+                activeProfile = "",
+                savedConnectionIds = setOf("connection-1"),
+            ),
+        )
     }
 }

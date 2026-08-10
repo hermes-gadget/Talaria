@@ -17,6 +17,7 @@
 
 package com.hermesgadget.talaria.ui.navigation
 
+import com.hermesgadget.talaria.domain.model.normalizeManagementProfile
 import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -89,6 +90,56 @@ sealed interface TalariaDeepLink {
     data object Status : TalariaDeepLink
     data object Activity : TalariaDeepLink
     data object Manage : TalariaDeepLink
+}
+
+data class DeepLinkScopeRequest(
+    val connectionId: String? = null,
+    val profile: String? = null,
+) {
+    val requestedConnectionId: String?
+        get() = connectionId?.trim()?.takeIf(String::isNotBlank)
+
+    val requestedProfile: String?
+        get() = profile?.trim()?.takeIf(String::isNotBlank)
+}
+
+enum class DeepLinkScopeDecision {
+    REJECT,
+    NO_CHANGE,
+    CONFIRM,
+}
+
+/**
+ * Decide whether a scoped link can be considered before any persisted scope is
+ * changed. Server-side profile existence is checked by the navigation host
+ * against the selected saved connection; this policy owns the local boundary.
+ */
+internal fun evaluateDeepLinkScope(
+    request: DeepLinkScopeRequest,
+    activeConnectionId: String?,
+    activeProfile: String?,
+    savedConnectionIds: Set<String>,
+): DeepLinkScopeDecision {
+    val requestedConnectionId = request.requestedConnectionId
+    if (requestedConnectionId != null && requestedConnectionId !in savedConnectionIds) {
+        return DeepLinkScopeDecision.REJECT
+    }
+
+    val targetConnectionId = requestedConnectionId ?: activeConnectionId
+    if (request.requestedProfile != null && targetConnectionId == null) {
+        return DeepLinkScopeDecision.REJECT
+    }
+
+    val connectionChanged = requestedConnectionId != null && requestedConnectionId != activeConnectionId
+    val requestedProfile = request.requestedProfile
+    val profileChanged = requestedProfile != null &&
+        normalizeManagementProfile(requestedProfile) !=
+        normalizeManagementProfile(activeProfile.orEmpty())
+    return if (connectionChanged || profileChanged) {
+        DeepLinkScopeDecision.CONFIRM
+    } else {
+        DeepLinkScopeDecision.NO_CHANGE
+    }
 }
 
 /** Strict parser for the app's `talaria://` notification and shortcut links. */

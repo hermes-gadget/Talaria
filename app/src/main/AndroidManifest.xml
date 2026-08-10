@@ -66,13 +66,21 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="talaria" />
                 <data android:host="chat" />
-                <data android:host="session" />
-                <data android:host="pairing" />
                 <data android:host="connect" />
                 <data android:host="status" />
                 <data android:host="activity" />
                 <data android:host="manage" />
                 <data android:host="voice" />
+            </intent-filter>
+            <!-- Scoped links are delivered by explicit app-owned notification
+                 PendingIntents. Keep them out of implicit/browsable resolution
+                 so another app or browser cannot inject a connection/profile
+                 scope through a talaria:// URL. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <data android:scheme="talaria" />
+                <data android:host="session" />
+                <data android:host="pairing" />
             </intent-filter>
         </activity>
 
