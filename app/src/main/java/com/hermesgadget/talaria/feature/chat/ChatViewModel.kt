@@ -76,9 +76,12 @@ import com.hermesgadget.talaria.core.util.ImageHandle
 import com.hermesgadget.talaria.core.util.PreparedImage
 import com.hermesgadget.talaria.core.util.suspendResult
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -109,6 +112,49 @@ enum class TranscriptMode { TERMINAL, READING }
 
 private const val MAX_ANSWER_BUFFER_CHARS = 256 * 1024
 private const val ANSWER_TRUNCATION_MARKER = "Earlier live output omitted; full history remains on server"
+private const val DRAFT_SAVE_DEBOUNCE_MS = 350L
+
+internal data class DraftPersistenceScope(
+    val scopeId: String,
+    val generation: Long,
+)
+
+/** Debounced draft writes stay bound to the scope that scheduled them. */
+internal class ScopeBoundDraftSaver(
+    private val coroutineScope: CoroutineScope,
+    private val persist: suspend (scopeId: String, text: String) -> Unit,
+    private val debounceMs: Long = DRAFT_SAVE_DEBOUNCE_MS,
+) {
+    private var activeScope: DraftPersistenceScope? = null
+    private var draftSaveJob: Job? = null
+
+    /** Cancel and join the previous scope's write before making this scope active. */
+    suspend fun rebind(scope: DraftPersistenceScope) {
+        activeScope = null
+        val oldJob = draftSaveJob
+        draftSaveJob = null
+        oldJob?.cancelAndJoin()
+        if (currentCoroutineContext().isActive) {
+            activeScope = scope
+        }
+    }
+
+    fun schedule(
+        scope: DraftPersistenceScope,
+        text: String,
+        delayMs: Long = debounceMs,
+    ) {
+        if (activeScope != scope) return
+        draftSaveJob?.cancel()
+        val boundScope = activeScope ?: return
+        draftSaveJob = coroutineScope.launch {
+            delay(delayMs)
+            if (!isActive || activeScope != boundScope) return@launch
+            persist(boundScope.scopeId, text)
+            if (!isActive || activeScope != boundScope) return@launch
+        }
+    }
+}
 
 internal val CHAT_REASONING_EFFORTS = listOf(
     "none",
@@ -304,8 +350,11 @@ class ChatViewModel(
     private var restoring = false
     private var sttJob: Job? = null
     private var slashCompletionJob: Job? = null
-    private var draftSaveJob: Job? = null
+    private val draftSaveScheduler = ScopeBoundDraftSaver(viewModelScope) { scopeId, text ->
+        chatRepository.saveDraft(scopeId, text)
+    }
     private var scopeLoadJob: Job? = null
+    private var scopeTransitionJob: Job? = null
     private var sessionPollJob: Job? = null
     private var sessionRefreshJob: Job? = null
     private var transcriptSignalJob: Job? = null
@@ -448,8 +497,7 @@ class ChatViewModel(
         val scopeId = activeProfile.scopeId()
         val connectionChanged = boundConnectionId != null && boundConnectionId != activeProfile.id
         if (boundConnectionScope == null || connectionChanged) {
-            resetForConnectionScope(scopeId)
-            loadProfileState(scopeId, resume)
+            beginScopeRebind(scopeId = scopeId, resume = resume)
             return
         }
         // A management-profile switch changes the Room/cache scope but must not
@@ -457,7 +505,11 @@ class ChatViewModel(
         if (boundConnectionScope != scopeId ||
             boundManagementProfile != activeProfile.effectiveManagementProfile()
         ) {
-            bindManagementProfile(scopeId, activeProfile.effectiveManagementProfile(), resume)
+            beginScopeRebind(
+                scopeId = scopeId,
+                managementProfile = activeProfile.effectiveManagementProfile(),
+                resume = resume,
+            )
             return
         }
         if (loadingConnectionScope) return
@@ -478,11 +530,50 @@ class ChatViewModel(
         reconnectDisconnected()
     }
 
+    private fun beginScopeRebind(
+        scopeId: String,
+        resume: String?,
+        managementProfile: String? = null,
+    ) {
+        scopeLoadJob?.cancel()
+        scopeTransitionJob?.cancel()
+        val generation = ++connectionScopeGeneration
+        val draftScope = DraftPersistenceScope(scopeId, generation)
+        scopeTransitionJob = viewModelScope.launch {
+            draftSaveScheduler.rebind(draftScope)
+            if (!isActive) return@launch
+            if (managementProfile == null) {
+                resetForConnectionScope(scopeId)
+                loadProfileState(scopeId, resume)
+            } else {
+                bindManagementProfile(scopeId, managementProfile, resume)
+            }
+        }
+    }
+
+    private fun isCurrentConnectionScope(
+        scopeId: String,
+        generation: Long,
+    ): Boolean = boundConnectionScope == scopeId && connectionScopeGeneration == generation
+
+    private fun currentDraftPersistenceScope(): DraftPersistenceScope? =
+        boundConnectionScope?.let { DraftPersistenceScope(it, connectionScopeGeneration) }
+
+    private fun scheduleDraftSave(
+        scope: DraftPersistenceScope?,
+        text: String,
+        delayMs: Long = DRAFT_SAVE_DEBOUNCE_MS,
+    ) {
+        scope ?: return
+        draftSaveScheduler.schedule(scope, text, delayMs)
+    }
+
     private fun loadProfileState(scopeId: String, resume: String?) {
+        val generation = connectionScopeGeneration
         loadingConnectionScope = true
         scopeLoadJob = viewModelScope.launch {
-            val restored = chatRepository.loadDraft()
-            if (boundConnectionScope != scopeId) return@launch
+            val restored = chatRepository.loadDraft(scopeId)
+            if (!isCurrentConnectionScope(scopeId, generation)) return@launch
             initialDraft = restored
             loadingConnectionScope = false
             if (!resume.isNullOrBlank()) {
@@ -562,17 +653,16 @@ class ChatViewModel(
         )
 
     private fun bindManagementProfile(scopeId: String, profileName: String, resume: String?) {
-        scopeLoadJob?.cancel()
-        connectionScopeGeneration += 1
         cancelVoiceInput()
         voiceRecorder.cancel()
         resetServerSttForScope(scopeId)
         boundConnectionScope = scopeId
         boundManagementProfile = profileName
+        val generation = connectionScopeGeneration
         loadingConnectionScope = true
         scopeLoadJob = viewModelScope.launch {
-            val restored = chatRepository.loadDraft()
-            if (boundConnectionScope != scopeId) return@launch
+            val restored = chatRepository.loadDraft(scopeId)
+            if (!isCurrentConnectionScope(scopeId, generation)) return@launch
             initialDraft = restored
             loadingConnectionScope = false
             if (!resume.isNullOrBlank()) {
@@ -591,7 +681,6 @@ class ChatViewModel(
 
     /** Tear down every socket and transient byte buffer before binding another Hermes home. */
     private fun resetForConnectionScope(scopeId: String) {
-        scopeLoadJob?.cancel()
         sessionPollJob?.cancel()
         sessionPollJob = null
         sessionRefreshJob?.cancel()
@@ -600,7 +689,6 @@ class ChatViewModel(
         transcriptSignalJob = null
         transcriptFallbackJob?.cancel()
         transcriptFallbackJob = null
-        connectionScopeGeneration += 1
         cancelVoiceInput()
         resetServerSttForScope(scopeId)
         slashCompletionJob?.cancel()
@@ -2015,6 +2103,7 @@ class ChatViewModel(
     }
 
     private fun applyDraft(tabId: String, text: String) {
+        val draftScope = currentDraftPersistenceScope()
         val slash = text.startsWith('/')
         val suggestions = SlashCommands.suggest(text, slashCatalog)
         val composer = ComposerRefs.analyze(text, knownComposerAgents())
@@ -2031,11 +2120,7 @@ class ChatViewModel(
         // typing does not hit the database on every key. The last edit of a
         // burst always flushes; a cancelled job's pending text is re-saved by
         // the next keystroke or by send/stop paths that save synchronously.
-        draftSaveJob?.cancel()
-        draftSaveJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(350)
-            chatRepository.saveDraft(text)
-        }
+        scheduleDraftSave(draftScope, text)
 
         slashCompletionJob?.cancel()
         val generation = ++slashRequestGeneration
@@ -2073,6 +2158,7 @@ class ChatViewModel(
 
     fun pickSlash(cmd: SlashCommand) {
         val tabId = _ui.value.active?.id ?: return
+        val draftScope = currentDraftPersistenceScope()
         val command = cmd.command.trimEnd()
         val replacement = if (
             cmd.argumentMode != SlashArgumentMode.NONE && !command.contains(' ')
@@ -2082,11 +2168,7 @@ class ChatViewModel(
         updateTab(tabId) { it.copy(draft = replacement) }
         _ui.update { it.copy(showSlashPalette = false, slashSuggestions = emptyList()) }
         updateComposerAnalysis(replacement)
-        draftSaveJob?.cancel()
-        draftSaveJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(350)
-            chatRepository.saveDraft(replacement)
-        }
+        scheduleDraftSave(draftScope, replacement)
     }
 
     private fun knownComposerAgents(): List<String> = buildList {
@@ -2227,8 +2309,7 @@ class ChatViewModel(
             )
         }
         _ui.update { it.copy(showSlashPalette = false) }
-        draftSaveJob?.cancel()
-        viewModelScope.launch { chatRepository.saveDraft("") }
+        scheduleDraftSave(currentDraftPersistenceScope(), "", delayMs = 0L)
     }
 
     private fun drainQueuedPrompt(tabId: String) {
@@ -2384,8 +2465,7 @@ class ChatViewModel(
             }
         }
         if (_ui.value.activeTabId == tabId && _ui.value.active?.draft.isNullOrEmpty()) {
-            draftSaveJob?.cancel()
-            viewModelScope.launch { chatRepository.saveDraft("") }
+            scheduleDraftSave(currentDraftPersistenceScope(), "", delayMs = 0L)
         }
     }
 
