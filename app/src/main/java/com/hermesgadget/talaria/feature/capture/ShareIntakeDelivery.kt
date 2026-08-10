@@ -54,26 +54,19 @@ internal class ShareIntakeDelivery(
             require(file.length() == item.sizeBytes) { "${item.displayName} changed before delivery" }
             file
         }
-        val managedReferences = mutableListOf<ManagedReference>()
-        val inlineImages = mutableListOf<Pair<ShareIntakeItem, File>>()
-        draft.items.zip(files).forEach { (item, file) ->
-            if (item.kind == ShareItemKind.IMAGE &&
-                file.length() <= ChatImageAttachments.MAX_TRANSPORT_BYTES
-            ) {
-                inlineImages += item to file
-            } else {
-                val path = safeManagedPath(draft.id, item)
-                upload(snapshot, path, item, file)
-                managedReferences += ManagedReference(item, path)
-            }
+        val plan = buildShareDeliveryPlan(draft, files)
+        val inlineImages = plan.inlineImages
+        val managedReferences = plan.managedUploads.map { upload ->
+            ManagedReference(upload.item, upload.path)
         }
         val prompt = SharePromptBuilder.build(draft, inlineImages.map { it.first }, managedReferences)
         require(WebSocketFrameBudget.textWithinLimit(prompt)) {
             "Shared text and instructions exceed the ${WebSocketFrameBudget.MAX_FRAME_BYTES} byte PTY limit"
         }
-        val filesById = draft.items.zip(files).associate { (item, file) -> item.id to file }
-        managedReferences.forEach { reference ->
-            upload(snapshot, reference.path, reference.item, filesById.getValue(reference.item.id))
+        // Classification and prompt validation must be side-effect free. Upload each
+        // managed item exactly once after the complete delivery payload is accepted.
+        plan.managedUploads.forEach { managed ->
+            upload(snapshot, managed.path, managed.item, managed.file)
         }
 
         val channelId = UUID.randomUUID().toString()
@@ -180,12 +173,51 @@ internal class ShareIntakeDelivery(
         return encoded.toString(StandardCharsets.US_ASCII.name())
     }
 
-    private fun safeManagedPath(taskId: String, item: ShareIntakeItem): String {
-        val task = taskId.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.take(32)
-        val itemId = item.id.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.take(16)
-        val name = ShareIntakePolicy.safeFilename(item.displayName).replace(' ', '_')
-        return "/talaria-share-intake-$task-$itemId-$name"
+}
+
+internal data class ShareDeliveryPlan(
+    val inlineImages: List<Pair<ShareIntakeItem, File>>,
+    val managedUploads: List<ManagedUpload>,
+)
+
+internal data class ManagedUpload(
+    val item: ShareIntakeItem,
+    val path: String,
+    val file: File,
+)
+
+/** Classify files without network or filesystem side effects. */
+internal fun buildShareDeliveryPlan(
+    draft: ShareIntakeDraft,
+    files: List<File>,
+): ShareDeliveryPlan {
+    require(draft.items.size == files.size) { "Each shared item must have one local file" }
+    val inlineImages = mutableListOf<Pair<ShareIntakeItem, File>>()
+    val managedUploads = mutableListOf<ManagedUpload>()
+    draft.items.zip(files).forEach { (item, file) ->
+        if (item.kind == ShareItemKind.IMAGE &&
+            file.length() <= ChatImageAttachments.MAX_TRANSPORT_BYTES
+        ) {
+            inlineImages += item to file
+        } else {
+            managedUploads += ManagedUpload(
+                item = item,
+                path = managedPathForShareItem(draft.id, item),
+                file = file,
+            )
+        }
     }
+    return ShareDeliveryPlan(
+        inlineImages = inlineImages,
+        managedUploads = managedUploads,
+    )
+}
+
+private fun managedPathForShareItem(taskId: String, item: ShareIntakeItem): String {
+    val task = taskId.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.take(32)
+    val itemId = item.id.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.take(16)
+    val name = ShareIntakePolicy.safeFilename(item.displayName).replace(' ', '_')
+    return "/talaria-share-intake-$task-$itemId-$name"
 }
 
 internal data class ManagedReference(
