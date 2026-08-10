@@ -16,6 +16,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import com.hermesgadget.talaria.MainActivity
 import com.hermesgadget.talaria.R
+import com.hermesgadget.talaria.core.data.prefs.SettingsStore
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.notifications.NotificationActionReceiver
 import com.hermesgadget.talaria.core.notifications.NotificationChannels
@@ -50,6 +51,11 @@ object CarConversationNotifier {
     /** Refresh message-center notifications to match the active conversations. */
     fun update(context: Context, snapshot: ConnectionSnapshot, conversations: List<CarConversation>) {
         val manager = NotificationManagerCompat.from(context)
+        val settings = SettingsStore(context.applicationContext)
+        if (!settings.notificationsEnabled) {
+            clear(context)
+            return
+        }
         if (!manager.areNotificationsEnabled()) return
 
         val currentIds = conversations.mapNotNull { conversation ->
