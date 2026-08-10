@@ -54,7 +54,7 @@ jobs:
       - name: Install SDK components
         run: |
           yes | sdkmanager --licenses > /dev/null
-          yes | sdkmanager "platforms;android-36" "build-tools;35.0.0"
+          yes | sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
 
       - name: Unit tests
         run: ./gradlew :app:testDebugUnitTest --no-daemon
@@ -95,7 +95,7 @@ jobs:
       - name: Install SDK components
         run: |
           yes | sdkmanager --licenses > /dev/null
-          yes | sdkmanager "platforms;android-36" "build-tools;35.0.0"
+          yes | sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
 
       - name: Strictly parse and validate version tag
         id: ver
@@ -174,7 +174,7 @@ jobs:
         run: |
           set -euo pipefail
           OUT="${{ steps.rename.outputs.artifact }}"
-          BT="$ANDROID_HOME/build-tools/35.0.0"
+          BT="$ANDROID_HOME/build-tools/36.0.0"
           # 1. Signature must verify (exit non-zero on failure — no '|| true').
           "$BT/apksigner" verify --print-certs "$OUT" > /tmp/certs.txt
           echo "== apksigner verify passed =="

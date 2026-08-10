@@ -69,9 +69,12 @@ class MainActivity : ComponentActivity() {
         // is a no-op on automotive devices.
         // Test hook: `am start ... --ez force_phone_ui true` keeps the
         // phone UI (e.g. to configure a connection on the AAOS emulator).
-        if (packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE) &&
-            !intent.getBooleanExtra(EXTRA_FORCE_PHONE_UI, false)
-        ) {
+        // Debug builds only — on release, the extra is ignored and the
+        // automotive hand-off is unconditional so no other app can force
+        // the full phone UI onto a head unit.
+        val forcePhoneUi = BuildConfig.DEBUG &&
+            intent.getBooleanExtra(EXTRA_FORCE_PHONE_UI, false)
+        if (packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE) && !forcePhoneUi) {
             startActivity(Intent(this, CarAppActivity::class.java))
             finish()
             return
@@ -107,6 +110,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // Keep getIntent() in sync with the latest delivery (deep links,
+        // shares, PiP returns); later code reading the activity intent must
+        // never observe a stale launch intent.
+        setIntent(intent)
         handleIntent(intent)
     }
 
@@ -170,19 +177,12 @@ class MainActivity : ComponentActivity() {
             pipChatRequested = false
             launchingPipActivity = false
         }
+        // NOTE: ACTION_SEND / SEND_MULTIPLE / PROCESS_TEXT are deliberately
+        // NOT handled here. The manifest routes all external shares to
+        // ShareCaptureActivity (staging, classification, bounds); MainActivity
+        // has no SEND intent-filter, so this branch would only be reachable
+        // via explicit intents and would bypass the intake pipeline.
         when (intent?.action) {
-            Intent.ACTION_SEND -> {
-                shareText = intent.getStringExtra(Intent.EXTRA_TEXT)
-                shareImage = null
-                if (intent.type?.startsWith("image/") == true) {
-                    shareImage = if (android.os.Build.VERSION.SDK_INT >= 33) {
-                        intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        intent.getParcelableExtra(Intent.EXTRA_STREAM)
-                    }
-                }
-            }
             Intent.ACTION_VIEW -> {
                 if (intent.data?.getQueryParameter("focus") == "composer") {
                     // The widget cannot host text input. Ask the full chat surface
