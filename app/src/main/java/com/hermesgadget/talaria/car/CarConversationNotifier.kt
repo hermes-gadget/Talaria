@@ -118,7 +118,7 @@ object CarConversationNotifier {
                 snapshot.managementProfile.takeIf { it.isNotBlank() }
                     ?.let { putExtra(NotificationActionReceiver.EXTRA_MANAGEMENT_PROFILE, it) }
             },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
         )
         val remoteInput = RemoteInput.Builder(NotificationActionReceiver.KEY_REPLY)
             .setLabel(context.getString(R.string.car_reply_to_hermes))
