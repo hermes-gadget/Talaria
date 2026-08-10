@@ -241,7 +241,10 @@ class SessionAdminViewModel(
         }
     }
 
-    fun bulkDeleteSelected(visibleIds: Collection<String>? = null) {
+    fun bulkDeleteSelected(
+        visibleIds: Collection<String>? = null,
+        onSuccess: () -> Unit = {},
+    ) {
         val content = contentOf(_ui.value) ?: return
         if (content.busy) return
         val ids = if (visibleIds == null) {
@@ -281,11 +284,12 @@ class SessionAdminViewModel(
                         message = message,
                         selectedIds = if (result.deleted == ids.size) emptySet() else ids.toSet(),
                     )
+                    onSuccess()
             }.onFailure { error -> setFailure(error.message ?: "Bulk delete failed") }
         }
     }
 
-    fun deleteEmpty() {
+    fun deleteEmpty(onSuccess: () -> Unit = {}) {
         if (contentOf(_ui.value)?.busy == true) return
         setBusy(true)
         viewModelScope.launch {
@@ -295,11 +299,12 @@ class SessionAdminViewModel(
                 }
             }.onSuccess { result ->
                 loadSnapshot("Deleted ${result.deleted} empty session(s)")
+                onSuccess()
             }.onFailure { error -> setFailure(error.message ?: "Could not delete empty sessions") }
         }
     }
 
-    fun importSessions(sessions: JsonArray) {
+    fun importSessions(sessions: JsonArray, onSuccess: () -> Unit = {}) {
         if (contentOf(_ui.value)?.busy == true) return
         if (sessions.isEmpty()) {
             setMessage("The selected file contains no sessions")
@@ -322,6 +327,7 @@ class SessionAdminViewModel(
                     "Imported ${result.imported} session(s)" +
                         if (details.isNotEmpty()) ", ${details.joinToString(", ")}" else "",
                 )
+                onSuccess()
             }.onFailure { error -> setFailure(error.message ?: "Session import failed") }
         }
     }

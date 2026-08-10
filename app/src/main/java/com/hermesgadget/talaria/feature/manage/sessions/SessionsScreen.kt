@@ -174,8 +174,7 @@ fun SessionsScreen(
                 }
             }.onSuccess { imported ->
                 importMessage = null
-                adminVm.importSessions(imported)
-                reload()
+                adminVm.importSessions(imported) { reload() }
             }.onFailure { error -> importMessage = "Invalid session import: ${error.message}" }
         }
     }
@@ -258,7 +257,7 @@ fun SessionsScreen(
                     // acknowledged (adminVm.bulkDeleteSelected -> loadSnapshot);
                     // reloading here races the async delete and can resurrect
                     // the just-deleted rows in the UI.
-                    adminVm.bulkDeleteSelected(visibleSessions.map { it.id })
+                    adminVm.bulkDeleteSelected(visibleSessions.map { it.id }) { reload() }
                 }) { Text("Delete") }
             },
             dismissButton = { TextButton(onClick = { confirmBulkDelete = false }) { Text("Cancel") } },
@@ -275,7 +274,7 @@ fun SessionsScreen(
                 TextButton(onClick = {
                     confirmEmptyDelete = false
                     // N0.8: reload only after the delete is acknowledged.
-                    adminVm.deleteEmpty()
+                    adminVm.deleteEmpty { reload() }
                 }) { Text("Delete") }
             },
             dismissButton = { TextButton(onClick = { confirmEmptyDelete = false }) { Text("Cancel") } },
