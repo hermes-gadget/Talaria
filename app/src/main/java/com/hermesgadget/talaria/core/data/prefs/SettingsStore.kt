@@ -278,6 +278,9 @@ class SettingsStore(context: Context) {
     fun setCachedStatusLine(scopeId: String, value: String) =
         prefs.edit { putString("cache_status_line_$scopeId", value) }
 
+    fun cachedStatusUpdatedAt(scopeId: String): Long =
+        prefs.getLong("cache_status_at_$scopeId", 0L)
+
     fun setCachedStatusUpdatedAt(scopeId: String, value: Long) =
         prefs.edit { putLong("cache_status_at_$scopeId", value) }
 

@@ -18,6 +18,7 @@
 package com.hermesgadget.talaria.widget
 
 import com.hermesgadget.talaria.R
+import android.appwidget.AppWidgetManager
 import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
@@ -37,6 +38,7 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import com.hermesgadget.talaria.TalariaApp
+import com.hermesgadget.talaria.domain.model.StatusResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -44,38 +46,39 @@ class TalariaStatusWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val settings = TalariaApp.instance.container.settingsStore
         val connectLabel = context.getString(R.string.widget_status_connect)
-        val gwUp = context.getString(R.string.widget_status_gw_up)
-        val gwDown = context.getString(R.string.widget_status_gw_down)
-        val snapshot = withContext(Dispatchers.IO) {
+        val widgetSnapshot = withContext(Dispatchers.IO) {
             val snapshot = TalariaApp.instance.container.clientFactory.snapshot()
             val scopeId = snapshot?.scopeId
                 ?: return@withContext WidgetSnapshot(connectLabel, 0, stale = false)
-            val live = runCatching {
-                val status = TalariaApp.instance.container.hermesRepository.refreshStatus(snapshot).getOrThrow()
-                val gw = if ((status.gateway?.running ?: status.gateway_running) == true) gwUp else gwDown
-                val line = "Hermes ${status.version ?: "?"} · $gw · sessions ${status.active_sessions ?: 0}"
-                // Refresh the offline cache while we have a fresh read.
-                settings.setCachedStatusLine(scopeId, line)
-                settings.setCachedStatusUpdatedAt(scopeId, System.currentTimeMillis())
-                line
-            }.getOrNull()
             val pending = settings.pendingPairingCount(scopeId)
             val cached = settings.cachedStatusLine(scopeId)
-            when {
-                live != null -> WidgetSnapshot(live, pending, stale = false)
-                cached != null -> WidgetSnapshot(cached, pending, stale = true)
-                else -> WidgetSnapshot(connectLabel, 0, stale = false)
+            if (cached == null) WidgetSnapshot(connectLabel, 0, stale = false)
+            else {
+                val updatedAt = settings.cachedStatusUpdatedAt(scopeId)
+                val age = (System.currentTimeMillis() - updatedAt).coerceAtLeast(0L)
+                WidgetSnapshot(cached, pending, stale = updatedAt <= 0L || age > CACHE_FRESHNESS_MS)
             }
         }
         provideContent {
             GlanceTheme {
-                StatusContent(snapshot, context)
+                StatusContent(widgetSnapshot, context)
             }
         }
     }
 }
 
+internal fun formatWidgetStatus(context: Context, status: StatusResponse): String {
+    val gateway = if ((status.gateway?.running ?: status.gateway_running) == true) {
+        context.getString(R.string.widget_status_gw_up)
+    } else {
+        context.getString(R.string.widget_status_gw_down)
+    }
+    return "Hermes ${status.version ?: "?"} · $gateway · sessions ${status.active_sessions ?: 0}"
+}
+
 private data class WidgetSnapshot(val line: String, val pendingPairing: Int, val stale: Boolean)
+
+private const val CACHE_FRESHNESS_MS = 5 * 60 * 1000L
 
 @Composable
 private fun StatusContent(snapshot: WidgetSnapshot, context: Context) {
@@ -103,4 +106,13 @@ private fun StatusContent(snapshot: WidgetSnapshot, context: Context) {
 
 class TalariaStatusWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = TalariaStatusWidget()
+
+    override fun onUpdate(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        appWidgetIds: IntArray,
+    ) {
+        super.onUpdate(context, appWidgetManager, appWidgetIds)
+        StatusWidgetRefreshScheduler.enqueue(context)
+    }
 }
