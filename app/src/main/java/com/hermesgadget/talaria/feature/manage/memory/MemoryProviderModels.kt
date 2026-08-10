@@ -81,6 +81,8 @@ data class MemoryProviderConfigUiState(
     val config: MemoryProviderConfig? = null,
     val values: Map<String, String> = emptyMap(),
     val savedValues: Map<String, String> = emptyMap(),
+    /** Increments whenever the user edits this provider's draft. */
+    val draftGeneration: Long = 0L,
     val loading: Boolean = false,
     val saving: Boolean = false,
     val error: String? = null,

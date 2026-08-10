@@ -58,6 +58,7 @@ class MemoryViewModel(
     private val _ui = MutableStateFlow(MemoryUiState())
     val ui: StateFlow<MemoryUiState> = _ui.asStateFlow()
     private val oauthJobs = mutableMapOf<String, Job>()
+    private val configJobs = mutableMapOf<String, Job>()
 
     init { refresh() }
 
@@ -94,6 +95,7 @@ class MemoryViewModel(
             current.copy(
                 configs = current.configs + (provider to existing.copy(
                     values = existing.values + (key to value),
+                    draftGeneration = existing.draftGeneration + 1,
                     error = null,
                 )),
             )
@@ -113,6 +115,7 @@ class MemoryViewModel(
             .associate { field -> field.key to configState.values[field.key].orEmpty() }
 
         if (values.isEmpty()) return
+        val submittedGeneration = configState.draftGeneration
         _ui.update { current ->
             current.copy(
                 configs = current.configs + (provider to configState.copy(saving = true, error = null)),
@@ -127,18 +130,29 @@ class MemoryViewModel(
                             val latest = current.configs[provider] ?: return@update current
                             val nextValues = latest.values.toMutableMap()
                             val nextSaved = latest.savedValues.toMutableMap()
+                            val latestConfig = latest.config ?: config
                             for ((key, value) in values) {
-                                val field = config.fields.firstOrNull { it.key == key }
+                                val field = latestConfig.fields.firstOrNull { it.key == key }
+                                val submittedValueStillCurrent =
+                                    latest.draftGeneration == submittedGeneration ||
+                                        memoryDraftValueMatchesSubmission(latest.values[key], value)
                                 if (field?.kind == MemoryProviderFieldKind.SECRET) {
-                                    nextValues[key] = ""
-                                } else {
+                                    // A secret is only cleared when the value
+                                    // visible now is the one that was sent.
+                                    // A newer value stays in the editor.
+                                    if (submittedValueStillCurrent) nextValues[key] = ""
+                                } else if (submittedValueStillCurrent) {
                                     nextSaved[key] = value
                                 }
                             }
-                            val nextFields = config.fields.map { field ->
-                                if (field.key in values && field.kind == MemoryProviderFieldKind.SECRET) {
+                            val nextFields = latestConfig.fields.map { field ->
+                                if (field.key !in values) {
+                                    field
+                                } else if (field.kind == MemoryProviderFieldKind.SECRET) {
+                                    // The submitted secret is stored server-side
+                                    // even when a newer draft remains visible.
                                     field.copy(isSet = true)
-                                } else if (field.key in values) {
+                                } else if (memoryFieldValueStillSubmitted(field, latest, values)) {
                                     field.copy(value = values[field.key].orEmpty())
                                 } else {
                                     field
@@ -146,7 +160,7 @@ class MemoryViewModel(
                             }
                             current.copy(
                                 configs = current.configs + (provider to latest.copy(
-                                    config = config.copy(fields = nextFields),
+                                    config = latestConfig.copy(fields = nextFields),
                                     values = nextValues,
                                     savedValues = nextSaved,
                                     saving = false,
@@ -285,43 +299,55 @@ class MemoryViewModel(
     }
 
     private fun loadConfig(name: String) {
+        configJobs[name]?.cancel()
         val previous = _ui.value.configs[name] ?: MemoryProviderConfigUiState()
+        val requestedGeneration = previous.draftGeneration
         _ui.update { current ->
             current.copy(
                 configs = current.configs + (name to previous.copy(loading = true, error = null)),
             )
         }
-        viewModelScope.launch {
-            runCatching { getMemoryProviderConfig(name, MEMORY_CONFIG_SURFACE) }
-                .fold(
-                    onSuccess = { config ->
-                        val values = config.fields.associate { field ->
-                            field.key to if (field.kind == MemoryProviderFieldKind.SECRET) "" else field.value
-                        }
-                        _ui.update { current ->
-                            current.copy(
-                                configs = current.configs + (name to MemoryProviderConfigUiState(
-                                    config = config,
-                                    values = values,
-                                    savedValues = values,
-                                    loading = false,
-                                )),
-                            )
-                        }
-                    },
-                    onFailure = { error ->
-                        _ui.update { current ->
-                            val latest = current.configs[name] ?: MemoryProviderConfigUiState()
-                            current.copy(
-                                configs = current.configs + (name to latest.copy(
-                                    loading = false,
-                                    error = error.message,
-                                )),
-                            )
-                        }
-                    },
-                )
+        val job = viewModelScope.launch {
+            try {
+                val config = getMemoryProviderConfig(name, MEMORY_CONFIG_SURFACE)
+                val values = config.fields.associate { field ->
+                    field.key to if (field.kind == MemoryProviderFieldKind.SECRET) "" else field.value
+                }
+                _ui.update { current ->
+                    val latest = current.configs[name] ?: MemoryProviderConfigUiState()
+                    if (!isMemoryConfigLoadCurrent(latest.draftGeneration, requestedGeneration)) {
+                        // Keep a draft edited while the request was in flight;
+                        // only clear its loading marker.
+                        current.copy(
+                            configs = current.configs + (name to latest.copy(loading = false)),
+                        )
+                    } else {
+                        current.copy(
+                            configs = current.configs + (name to MemoryProviderConfigUiState(
+                                config = config,
+                                values = values,
+                                savedValues = values,
+                                draftGeneration = requestedGeneration,
+                                loading = false,
+                            )),
+                        )
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _ui.update { current ->
+                    val latest = current.configs[name] ?: MemoryProviderConfigUiState()
+                    current.copy(
+                        configs = current.configs + (name to latest.copy(
+                            loading = false,
+                            error = error.message,
+                        )),
+                    )
+                }
+            }
         }
+        configJobs[name] = job
     }
 
     private fun probeOAuth(provider: String) {
@@ -427,7 +453,9 @@ class MemoryViewModel(
     override fun onCleared() {
         oauthJobs.values.forEach { it.cancel() }
         oauthJobs.clear()
-            }
+        configJobs.values.forEach { it.cancel() }
+        configJobs.clear()
+    }
 
     companion object {
         fun factory() = object : ViewModelProvider.Factory {
@@ -436,3 +464,19 @@ class MemoryViewModel(
         }
     }
 }
+
+internal fun memoryDraftValueMatchesSubmission(
+    currentValue: String?,
+    submittedValue: String,
+): Boolean = currentValue.orEmpty() == submittedValue
+
+internal fun isMemoryConfigLoadCurrent(
+    currentGeneration: Long,
+    requestedGeneration: Long,
+): Boolean = currentGeneration == requestedGeneration
+
+private fun memoryFieldValueStillSubmitted(
+    field: MemoryProviderConfigField,
+    latest: MemoryProviderConfigUiState,
+    values: Map<String, String>,
+): Boolean = memoryDraftValueMatchesSubmission(latest.values[field.key], values[field.key].orEmpty())
