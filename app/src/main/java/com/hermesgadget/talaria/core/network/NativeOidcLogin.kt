@@ -19,6 +19,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.InputStream
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.SocketTimeoutException
@@ -39,6 +40,47 @@ data class NativeOidcProvider(
     val name: String,
     val displayName: String,
 )
+
+/** Strict, bounded parser for the one HTTP request line accepted by the OIDC callback. */
+object NativeOidcRequestLine {
+    /** Includes the terminating LF; the request-line bytes themselves are capped below this. */
+    const val MAX_BYTES = 8 * 1024
+
+    data class Parsed(val target: String)
+
+    class TooLarge : IllegalArgumentException("Native OIDC request line exceeded $MAX_BYTES bytes")
+
+    class Malformed : IllegalArgumentException("Malformed native OIDC callback request line")
+
+    fun read(input: InputStream): Parsed {
+        val bytes = ByteArray(MAX_BYTES - 1)
+        var length = 0
+        while (true) {
+            val next = input.read()
+            when {
+                next < 0 -> throw Malformed()
+                next == '\n'.code -> break
+                length == bytes.size -> throw TooLarge()
+                next > 0x7e || next < 0x20 && next != '\r'.code -> throw Malformed()
+                else -> bytes[length++] = next.toByte()
+            }
+        }
+
+        if (length > 0 && bytes[length - 1] == '\r'.code.toByte()) length--
+        if (length == 0) throw Malformed()
+
+        val line = String(bytes, 0, length, Charsets.US_ASCII)
+        val parts = line.split(' ', limit = 3)
+        if (parts.size != 3 || parts[0] != "GET" || parts[1].isEmpty() || !isHttp11Version(parts[2])) {
+            throw Malformed()
+        }
+        if (parts[1].any { it.code < 0x21 || it.code > 0x7e }) throw Malformed()
+        return Parsed(parts[1])
+    }
+
+    private fun isHttp11Version(value: String): Boolean =
+        value.length == 8 && value.startsWith("HTTP/1.") && value.last() in '0'..'9'
+}
 
 /** Pure RFC 7636 helpers, separated so the security checks have JVM tests. */
 object NativeOidcPkce {
@@ -125,20 +167,29 @@ class NativeOidcLogin(
                 try {
                     server.accept().use { socket ->
                         socket.soTimeout = 3_000
-                        val requestLine = socket.getInputStream().bufferedReader().readLine().orEmpty()
-                        val target = requestLine.split(' ').getOrNull(1).orEmpty()
-                        if (target.contains("code=") || target.contains("error=")) {
-                            try {
-                                code = NativeOidcPkce.parseCallback(target, state)
-                                respondToBrowser(socket, success = true)
-                            } catch (failure: IllegalStateException) {
+                        try {
+                            val target = NativeOidcRequestLine.read(socket.getInputStream()).target
+                            if (target.contains("code=") || target.contains("error=")) {
+                                try {
+                                    code = NativeOidcPkce.parseCallback(target, state)
+                                    respondToBrowser(socket, success = true)
+                                } catch (failure: IllegalStateException) {
+                                    respondToBrowser(socket, success = false)
+                                    // A provider denial belongs to this flow and is
+                                    // terminal. Random/mismatched loopback traffic is
+                                    // ignored so it cannot cancel the real browser tab.
+                                    if (failure is NativeOidcPkce.ProviderRejected) throw failure
+                                }
+                            } else {
                                 respondToBrowser(socket, success = false)
-                                // A provider denial belongs to this flow and is
-                                // terminal. Random/mismatched loopback traffic is
-                                // ignored so it cannot cancel the real browser tab.
-                                if (failure is NativeOidcPkce.ProviderRejected) throw failure
                             }
-                        } else {
+                        } catch (_: NativeOidcRequestLine.TooLarge) {
+                            respondToBrowser(
+                                socket,
+                                success = false,
+                                status = "413 Request Entity Too Large",
+                            )
+                        } catch (_: NativeOidcRequestLine.Malformed) {
                             respondToBrowser(socket, success = false)
                         }
                     }
@@ -219,7 +270,7 @@ class NativeOidcLogin(
         )
     }
 
-    private fun respondToBrowser(socket: java.net.Socket, success: Boolean) {
+    private fun respondToBrowser(socket: java.net.Socket, success: Boolean, status: String? = null) {
         val title = if (success) "Signed in" else "Callback rejected"
         val message = if (success) {
             "You can close this tab and return to Talaria."
@@ -233,7 +284,7 @@ class NativeOidcLogin(
         """.trimIndent()
         val bytes = html.toByteArray()
         socket.getOutputStream().bufferedWriter().use { writer ->
-            writer.write("HTTP/1.1 ${if (success) "200 OK" else "400 Bad Request"}\r\n")
+            writer.write("HTTP/1.1 ${status ?: if (success) "200 OK" else "400 Bad Request"}\r\n")
             writer.write("Content-Type: text/html; charset=utf-8\r\n")
             writer.write("Content-Length: ${bytes.size}\r\n")
             writer.write("Connection: close\r\n\r\n")
