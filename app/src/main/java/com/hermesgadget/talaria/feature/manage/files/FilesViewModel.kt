@@ -24,7 +24,10 @@ import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.network.HermesApi
+import com.hermesgadget.talaria.core.network.decodeJsonResponse
 import com.hermesgadget.talaria.domain.model.ManagedFileEntry
+import com.hermesgadget.talaria.domain.model.ManagedFileReadResponse
+import com.hermesgadget.talaria.domain.model.MediaDataUrlResponse
 import com.hermesgadget.talaria.core.util.suspendResult
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -246,7 +249,8 @@ class FilesViewModel(
         viewModelScope.launch {
             suspendResult {
                 if (initialType == FilePreviewType.IMAGE) {
-                    val response = api.getMediaDataUrl(entry.path)
+                    val response = api.getMediaDataUrlBody(entry.path)
+                        .decodeJsonResponse<MediaDataUrlResponse>()
                     val parsed = parseManagedPreviewDataUrl(response.dataUrl)
                     PreviewPayload(
                         type = FilePreviewType.IMAGE,
@@ -257,7 +261,8 @@ class FilesViewModel(
                         name = entry.name,
                     )
                 } else {
-                    val response = api.readManagedFile(entry.path)
+                    val response = api.readManagedFileBody(entry.path)
+                        .decodeJsonResponse<ManagedFileReadResponse>()
                     val parsed = parseManagedPreviewDataUrl(response.dataUrl, response.size)
                     val name = response.name.ifBlank { entry.name }
                     val mimeType = normalizedMime(name, response.mimeType, parsed.mimeType)
@@ -834,9 +839,17 @@ class FilesViewModel(
 
     private suspend fun readPreviewBytes(path: String, type: FilePreviewType): ByteArray {
         return if (type == FilePreviewType.IMAGE) {
-            parseManagedPreviewDataUrl(api.getMediaDataUrl(path).dataUrl).bytes
+            parseManagedPreviewDataUrl(
+                api.getMediaDataUrlBody(path)
+                    .decodeJsonResponse<MediaDataUrlResponse>()
+                    .dataUrl,
+            ).bytes
         } else {
-            parseManagedPreviewDataUrl(api.readManagedFile(path).dataUrl).bytes
+            parseManagedPreviewDataUrl(
+                api.readManagedFileBody(path)
+                    .decodeJsonResponse<ManagedFileReadResponse>()
+                    .dataUrl,
+            ).bytes
         }
     }
 

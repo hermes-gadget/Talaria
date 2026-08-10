@@ -18,6 +18,7 @@ package com.hermesgadget.talaria.feature.manage.learning
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
 import com.hermesgadget.talaria.core.network.HermesClientFactory
 import com.hermesgadget.talaria.core.network.JsonConfig
+import com.hermesgadget.talaria.core.network.decodeJsonResponse
 import com.hermesgadget.talaria.domain.model.LearningCluster
 import com.hermesgadget.talaria.domain.model.LearningGraph
 import com.hermesgadget.talaria.domain.model.LearningStats
@@ -28,7 +29,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Request
 import okhttp3.HttpUrl
@@ -103,9 +103,8 @@ class LearningGraphSource(
                 check(response.isSuccessful) {
                     "Learning graph request failed (${response.code})"
                 }
-                val body = response.body?.string().orEmpty()
-                check(body.isNotBlank()) { "Hermes returned an empty learning graph" }
-                parse(json.parseToJsonElement(body).jsonObject)
+                val body = response.body ?: error("Hermes returned an empty learning graph")
+                parse(body.decodeJsonResponse<JsonObject>())
             }
         }
     }

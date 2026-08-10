@@ -27,6 +27,10 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import java.io.IOException
+
+/** A required single-use ticket could not be minted; callers must retry the socket. */
+class WsTicketException(message: String, cause: Throwable? = null) : IOException(message, cause)
 
 /**
  * Builds WebSocket auth query params matching dashboard `buildWsUrl`:
@@ -83,9 +87,20 @@ class WsAuthHelper(
 
                 if (authRequired) {
                     val ticketResult = suspendResult { api.wsTicket().ticket }
-                    ticketResult.exceptionOrNull()?.rethrowIfCancellationLike()
+                    val ticketFailure = ticketResult.exceptionOrNull()
+                    ticketFailure?.rethrowIfCancellationLike()
+                    if (ticketFailure != null) {
+                        throw WsTicketException(
+                            "WebSocket ticket request failed; retrying",
+                            ticketFailure,
+                        )
+                    }
                     val ticket = ticketResult.getOrNull()
                     if (!ticket.isNullOrBlank()) return@withLock "ticket=${ticket.trim()}"
+                    // A gated dashboard must never receive an empty auth query:
+                    // doing so turns a transient ticket response problem into a
+                    // terminal 4401 and bypasses the existing retry supervisor.
+                    throw WsTicketException("WebSocket ticket response was empty")
                 }
 
                 // Loopback dashboards embed the process session token in the SPA shell.

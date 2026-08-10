@@ -25,6 +25,7 @@ import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.util.BoundedImage
 import com.hermesgadget.talaria.core.util.ImageHandle
+import com.hermesgadget.talaria.core.network.decodeJsonResponse
 import com.hermesgadget.talaria.domain.model.FsDataUrl
 import com.hermesgadget.talaria.domain.model.FsTextFile
 import com.hermesgadget.talaria.domain.model.SessionMessage
@@ -127,7 +128,9 @@ class ArtifactsViewModel(
         TalariaApp.instance.container.hermesRepository.fsReadText(path)
     },
     private val readDataUrl: suspend (String) -> FsDataUrl = { path ->
-        TalariaApp.instance.container.clientFactory.api().fsReadDataUrl(path)
+        TalariaApp.instance.container.clientFactory.api()
+            .fsReadDataUrlBody(path)
+            .decodeJsonResponse<FsDataUrl>()
     },
     private val shareRequestBuilder: (suspend (ArtifactRecord) -> ArtifactShareRequest)? = null,
     private val shareFileManager: ShareFileManager? = null,

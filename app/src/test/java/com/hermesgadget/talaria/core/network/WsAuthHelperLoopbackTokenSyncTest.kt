@@ -31,6 +31,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
+import org.junit.Assert.assertThrows
 
 /**
  * REST auth uses the STORED token while WS auth uses the token freshly
@@ -158,6 +159,23 @@ class WsAuthHelperLoopbackTokenSyncTest {
         val auth = helper.authQueryParam(snapshot)
 
         assertEquals("ticket=one-time-ticket", auth)
+        verify(exactly = 0) { store.updateSessionToken(any(), any()) }
+    }
+
+    @Test
+    fun `required ticket failure is propagated and the next mint can succeed`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"auth_required": true}"""))
+        server.enqueue(MockResponse().setResponseCode(503).setBody("temporary outage"))
+        val snapshot = snapshot(storedToken = "stale-token")
+
+        assertThrows(WsTicketException::class.java) {
+            runBlocking { helper.authQueryParam(snapshot) }
+        }
+
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody("""{"ticket": "retry-ticket"}"""),
+        )
+        assertEquals("ticket=retry-ticket", helper.authQueryParam(snapshot))
         verify(exactly = 0) { store.updateSessionToken(any(), any()) }
     }
 }

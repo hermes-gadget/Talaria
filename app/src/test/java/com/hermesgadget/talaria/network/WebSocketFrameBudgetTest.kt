@@ -20,6 +20,8 @@ class WebSocketFrameBudgetTest {
         assertFalse(WebSocketFrameBudget.textWithinLimit("123456789", maxBytes = 8))
         assertTrue(WebSocketFrameBudget.textWithinLimit("éééé", maxBytes = 8))
         assertFalse(WebSocketFrameBudget.textWithinLimit("ééééé", maxBytes = 8))
+        assertTrue(WebSocketFrameBudget.textWithinLimit("🙂🙂", maxBytes = 8))
+        assertFalse(WebSocketFrameBudget.textWithinLimit("🙂🙂🙂", maxBytes = 8))
     }
 
     @Test

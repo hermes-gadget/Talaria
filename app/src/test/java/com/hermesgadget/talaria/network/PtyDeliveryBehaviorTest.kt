@@ -8,7 +8,13 @@
 package com.hermesgadget.talaria.network
 
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
+import com.hermesgadget.talaria.core.network.PtyBackoffPolicy
 import com.hermesgadget.talaria.core.network.PtyEvent
+import com.hermesgadget.talaria.core.network.PtyGenerationGate
+import com.hermesgadget.talaria.core.network.PtyTransportFactory
+import com.hermesgadget.talaria.core.network.PtyTransportState
+import com.hermesgadget.talaria.core.network.PtyTransportSupervisor
+import com.hermesgadget.talaria.core.network.PtyWebSocketTransportConnection
 import com.hermesgadget.talaria.core.network.PtyWebSocketSession
 import com.hermesgadget.talaria.core.network.WebSocketFrameBudget
 import com.hermesgadget.talaria.core.network.WsAuthHelper
@@ -19,8 +25,11 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -39,6 +48,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /** MockWebServer coverage for the current PTY event/send contract. */
 class PtyDeliveryBehaviorTest {
@@ -146,6 +158,70 @@ class PtyDeliveryBehaviorTest {
         assertOversizedFrame(binary = true)
     }
 
+    @Test
+    fun `PTY retries a failed ticket mint without opening an unauthenticated socket`() = runBlocking {
+        val attempts = AtomicInteger(0)
+        coEvery { wsAuth.authQueryParam(snapshot) } coAnswers {
+            if (attempts.incrementAndGet() == 1) {
+                throw IOException("temporary ticket outage")
+            }
+            "ticket=pty-retry"
+        }
+        val serverOpened = CompletableDeferred<Unit>()
+        server.enqueue(
+            MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    serverOpened.complete(Unit)
+                }
+
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    webSocket.close(code, reason)
+                }
+            }),
+        )
+
+        val transportScope = CoroutineScope(Dispatchers.Default)
+        val supervisor = PtyTransportSupervisor(
+            scope = transportScope,
+            factory = PtyTransportFactory { generation, gate: PtyGenerationGate ->
+                val session = PtyWebSocketSession(
+                    client = OkHttpClient(),
+                    wsAuth = wsAuth,
+                    snapshot = snapshot,
+                    generationId = generation,
+                    generationGate = gate,
+                )
+                PtyWebSocketTransportConnection(
+                    session = session,
+                    events = session.connect(channelId = "channel-ticket-retry"),
+                )
+            },
+            backoff = PtyBackoffPolicy(
+                maxAttempts = 2,
+                baseDelayMs = 25L,
+                maxDelayMs = 25L,
+                jitterRatio = 0.0,
+            ),
+        )
+
+        try {
+            supervisor.start()
+            withTimeout(5_000) {
+                while (supervisor.state.value !is PtyTransportState.Connected) delay(5L)
+            }
+            serverOpened.await()
+            assertEquals(2, attempts.get())
+            val request = withTimeout(5_000) {
+                server.takeRequest(5, TimeUnit.SECONDS)
+                    ?: error("PTY WebSocket request did not arrive")
+            }
+            assertEquals("pty-retry", request.requestUrl?.queryParameter("ticket"))
+        } finally {
+            supervisor.stop()
+            transportScope.cancel()
+        }
+    }
+
     private suspend fun assertOversizedFrame(binary: Boolean) {
         val serverSocket = CompletableDeferred<WebSocket>()
         val closeCode = CompletableDeferred<Int>()
@@ -200,6 +276,12 @@ class PtyDeliveryBehaviorTest {
             WebSocketFrameBudget.MESSAGE_TOO_BIG_CLOSE_CODE,
             withTimeout(5_000) { closeCode.await() },
         )
+        // The callback budget check must run before ANSI/UTF-8 conversion or
+        // any bounded output event is emitted. The server's complete message
+        // is intentionally larger than the client budget; OkHttp 4.12 may
+        // still have materialized it before this callback (see the explicit
+        // residual-risk note on WebSocketFrameBudget).
+        assertNull(events.tryReceive().getOrNull())
         collector.cancelAndJoin()
     }
 }

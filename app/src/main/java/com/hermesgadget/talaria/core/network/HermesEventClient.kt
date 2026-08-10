@@ -516,7 +516,7 @@ class HermesEventClient(
     private suspend fun openEvents(
         channel: String,
         lifecycleGeneration: Long,
-        retryOnAuthFailure: Boolean = false,
+        retryOnAuthFailure: Boolean = true,
     ) {
         val registration = beginSocket("events", lifecycleGeneration) ?: return
         val auth = authFor(registration, retryOnAuthFailure) ?: return
@@ -601,7 +601,7 @@ class HermesEventClient(
 
     private suspend fun openRpc(
         lifecycleGeneration: Long,
-        retryOnAuthFailure: Boolean = false,
+        retryOnAuthFailure: Boolean = true,
     ) {
         val registration = beginSocket("rpc", lifecycleGeneration) ?: return
         val auth = authFor(registration, retryOnAuthFailure) ?: return

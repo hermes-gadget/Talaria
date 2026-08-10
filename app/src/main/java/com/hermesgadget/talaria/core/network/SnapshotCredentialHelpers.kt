@@ -134,6 +134,7 @@ class SnapshotPasswordSessionManager(
             .followRedirects(false)
             .followSslRedirects(false)
             .addInterceptor(CleartextPolicyInterceptor(snapshot))
+            .addInterceptor(ResponseBodyLimitInterceptor())
             // Credential bootstrap follows the same per-hop origin and
             // cleartext checks as the main REST client.
             .addNetworkInterceptor(SnapshotOriginInterceptor(snapshot, currentSnapshot))
@@ -182,6 +183,7 @@ class SnapshotOidcTokenRefresher(
             .followRedirects(false)
             .followSslRedirects(false)
             .addInterceptor(CleartextPolicyInterceptor(snapshot))
+            .addInterceptor(ResponseBodyLimitInterceptor())
             .addNetworkInterceptor(
                 SnapshotOriginInterceptor(snapshot) {
                     store.snapshotFor(snapshot.connectionId)
