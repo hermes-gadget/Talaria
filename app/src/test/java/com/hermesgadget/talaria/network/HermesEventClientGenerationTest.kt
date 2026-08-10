@@ -42,6 +42,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -103,6 +104,31 @@ class HermesEventClientGenerationTest {
         )
         assertEquals("channel-a", requests.firstNotNullOf { it.requestUrl?.queryParameter("channel") })
         assertEquals("research", requests.firstNotNullOf { it.requestUrl?.queryParameter("profile") })
+    }
+
+    @Test
+    fun initialTicketFailuresRetryForBothEventsAndRpcWithoutOpeningUnauthenticatedSockets() = runBlocking {
+        val attempts = AtomicInteger(0)
+        coEvery { wsAuth.authQueryParam(snapshot) } coAnswers {
+            val attempt = attempts.incrementAndGet()
+            if (attempt <= 2) throw IOException("temporary ticket outage")
+            "ticket-retry-$attempt"
+        }
+        val eventsSocket = enqueueSocket()
+        val rpcSocket = enqueueSocket()
+        val eventClient = newClient(reconnectBackoff = longArrayOf(25L))
+
+        eventClient.start(channel = "channel-auth-retry", includeRpc = true)
+        awaitOpened(eventsSocket)
+        awaitOpened(rpcSocket)
+
+        val requests = listOf(awaitRequest(), awaitRequest())
+        assertEquals(4, attempts.get())
+        assertEquals(
+            setOf("api/events", "api/ws"),
+            requests.mapNotNull { it.requestUrl?.encodedPath?.trimStart('/') }.toSet(),
+        )
+        assertTrue(requests.all { it.requestUrl?.queryParameter("ticket")?.contains("retry-") == true })
     }
 
     @Test

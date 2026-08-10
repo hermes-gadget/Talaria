@@ -498,6 +498,14 @@ interface HermesApi {
         @Query("profile") profile: String? = null,
     ): FsDataUrl
 
+    /** Streamed variant used by media preview consumers; the client interceptor still counts it. */
+    @Streaming
+    @GET("api/fs/read-data-url")
+    suspend fun fsReadDataUrlBody(
+        @Query("path") path: String,
+        @Query("profile") profile: String? = null,
+    ): ResponseBody
+
     @POST("api/fs/write-text")
     suspend fun fsWriteText(
         @Body body: JsonObject,
@@ -748,11 +756,25 @@ interface HermesApi {
         @Query("profile") profile: String? = null,
     ): VoiceTranscriptionResponse
 
+    @Streaming
+    @POST("api/audio/transcribe")
+    suspend fun transcribeAudioBody(
+        @Body body: VoiceTranscriptionRequest,
+        @Query("profile") profile: String? = null,
+    ): ResponseBody
+
     @POST("api/audio/speak")
     suspend fun speakText(
         @Body body: VoiceSpeakRequest,
         @Query("profile") profile: String? = null,
     ): VoiceSpeakResponse
+
+    @Streaming
+    @POST("api/audio/speak")
+    suspend fun speakTextBody(
+        @Body body: VoiceSpeakRequest,
+        @Query("profile") profile: String? = null,
+    ): ResponseBody
 
     // --- v0.6 backlog: managed files + media (ROADMAP item 1) ---
 
@@ -767,6 +789,13 @@ interface HermesApi {
         @Query("path") path: String,
         @Query("profile") profile: String? = null,
     ): ManagedFileReadResponse
+
+    @Streaming
+    @GET("api/files/read")
+    suspend fun readManagedFileBody(
+        @Query("path") path: String,
+        @Query("profile") profile: String? = null,
+    ): ResponseBody
 
     @Streaming
     @GET("api/files/download")
@@ -807,6 +836,13 @@ interface HermesApi {
         @Query("path") path: String,
         @Query("profile") profile: String? = null,
     ): MediaDataUrlResponse
+
+    @Streaming
+    @GET("api/media")
+    suspend fun getMediaDataUrlBody(
+        @Query("path") path: String,
+        @Query("profile") profile: String? = null,
+    ): ResponseBody
 
     // --- v0.6 backlog: dashboard plugins + agent plugins (ROADMAP item 2) ---
 

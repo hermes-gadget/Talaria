@@ -22,6 +22,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.network.HermesApi
+import com.hermesgadget.talaria.core.network.decodeJsonResponse
 import com.hermesgadget.talaria.core.voice.SpeechCoordinator
 import com.hermesgadget.talaria.core.voice.SttEvent
 import com.hermesgadget.talaria.domain.model.VoiceCapability
@@ -29,7 +30,9 @@ import com.hermesgadget.talaria.domain.model.VoiceCapabilities
 import com.hermesgadget.talaria.domain.model.VoiceHistoryItem
 import com.hermesgadget.talaria.domain.model.VoiceHistoryKind
 import com.hermesgadget.talaria.domain.model.VoiceSpeakRequest
+import com.hermesgadget.talaria.domain.model.VoiceSpeakResponse
 import com.hermesgadget.talaria.domain.model.VoiceTranscriptionRequest
+import com.hermesgadget.talaria.domain.model.VoiceTranscriptionResponse
 import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
 import com.hermesgadget.talaria.core.util.suspendResult
 import kotlinx.coroutines.Dispatchers
@@ -221,10 +224,10 @@ class VoiceViewModel(
                         audio.file.delete()
                     }
                 }
-                val response = api.transcribeAudio(
+                val response = api.transcribeAudioBody(
                     VoiceTranscriptionRequest(dataUrl = dataUrl, mimeType = audio.mimeType),
                     profile = profileProvider(),
-                )
+                ).decodeJsonResponse<VoiceTranscriptionResponse>()
                 val transcript = response.transcript.trim()
                 if (!response.ok || transcript.isBlank()) {
                     throw IllegalStateException(response.error ?: "Hermes returned no transcript")
@@ -364,10 +367,10 @@ class VoiceViewModel(
         ) }
         viewModelScope.launch {
             suspendResult {
-                val response = api.speakText(
+                val response = api.speakTextBody(
                     VoiceSpeakRequest(text),
                     profile = profileProvider(),
-                )
+                ).decodeJsonResponse<VoiceSpeakResponse>()
                 if (!response.ok || response.dataUrl.isBlank()) {
                     throw IllegalStateException(response.error ?: "Hermes returned no audio")
                 }

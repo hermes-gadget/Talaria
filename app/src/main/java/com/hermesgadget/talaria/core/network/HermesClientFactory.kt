@@ -179,6 +179,11 @@ class HermesClientFactory(
             }
 
         val restBuilder = baseBuilder()
+        // Retrofit converters normally materialize the entire response before
+        // returning a typed value. This wrapper rejects an oversized declared
+        // body and aborts chunked/unknown-length reads at the endpoint budget
+        // before a converter or feature-level parser can retain more data.
+        restBuilder.addInterceptor(ResponseBodyLimitInterceptor())
         if (snapshot.httpLoggingEnabled) {
             restBuilder.addInterceptor(
                 HttpLoggingInterceptor().apply {
