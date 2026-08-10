@@ -17,11 +17,13 @@
 package com.hermesgadget.talaria.worker
 
 import android.content.Context
+import androidx.glance.appwidget.updateAll
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.notifications.NotificationScope
+import com.hermesgadget.talaria.widget.TalariaStatusWidget
 import kotlinx.coroutines.CancellationException
 
 /**
@@ -119,6 +121,7 @@ class HermesSyncWorker(
             )
             container.settingsStore.setCachedStatusUpdatedAt(scopeId, System.currentTimeMillis())
             container.settingsStore.setPendingPairingCount(scopeId, pending)
+            TalariaStatusWidget().updateAll(applicationContext)
             Result.success()
         } catch (cancelled: CancellationException) {
             throw cancelled
