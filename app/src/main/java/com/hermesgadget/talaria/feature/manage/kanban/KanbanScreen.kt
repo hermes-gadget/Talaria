@@ -179,6 +179,8 @@ internal data class KanbanTaskDetail(
     val comments: List<KanbanComment>,
     val log: KanbanLog,
     val runs: List<KanbanRunRow>,
+    val commentError: String? = null,
+    val commentBusy: Boolean = false,
 )
 
 internal data class KanbanContent(
@@ -264,15 +266,23 @@ internal class KanbanViewModel(
         }
     }
 
-    fun createKanbanBoard(slug: String, name: String, switch: Boolean) = mutate {
-        api.createKanbanBoard(
-            buildJsonObject {
-                put("slug", slug)
-                if (name.isNotBlank()) put("name", name)
-                put("switch", switch)
-            },
-        )
-    }
+    fun createKanbanBoard(
+        slug: String,
+        name: String,
+        switch: Boolean,
+        onSuccess: () -> Unit = {},
+    ) = mutate(
+        block = {
+            api.createKanbanBoard(
+                buildJsonObject {
+                    put("slug", slug)
+                    if (name.isNotBlank()) put("name", name)
+                    put("switch", switch)
+                },
+            )
+        },
+        onSuccess = onSuccess,
+    )
 
     fun switchKanbanBoard(slug: String) {
         val previous = currentContent() ?: return
@@ -291,41 +301,45 @@ internal class KanbanViewModel(
         body: String,
         assignee: String,
         status: String,
-    ) = mutate {
-        val request = KanbanTaskCreationRequest(title, body, assignee, status)
-        val createBody = buildJsonObject {
-            put("title", title)
-            if (body.isNotBlank()) put("body", body)
-            if (assignee.isNotBlank()) put("assignee", assignee)
-            put("triage", status == KANBAN_TRIAGE)
-        }
-        val pending = pendingTaskCreation
-        if (pending != null && pending.request != request) {
-            error(
-                "Task ${pending.taskId} still needs status reconciliation. " +
-                    "Retry that draft before creating another task.",
-            )
-        }
-        if (status in setOf(KANBAN_TRIAGE, KANBAN_TODO)) {
-            api.createKanbanTask(createBody)
-        } else {
-            val taskId = pending?.taskId ?: run {
-                val created = api.createKanbanTask(createBody)
-                val id = created.taskId()
-                require(id.isNotBlank()) { "Hermes did not return the created Kanban task id" }
-                pendingTaskCreation = PendingKanbanTaskCreation(request, id)
-                id
+        onSuccess: () -> Unit = {},
+    ) = mutate(
+        block = {
+            val request = KanbanTaskCreationRequest(title, body, assignee, status)
+            val createBody = buildJsonObject {
+                put("title", title)
+                if (body.isNotBlank()) put("body", body)
+                if (assignee.isNotBlank()) put("assignee", assignee)
+                put("triage", status == KANBAN_TRIAGE)
             }
-            try {
-                patchKanbanTaskStatusWithRetry(taskId, status)
-                pendingTaskCreation = null
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                throw KanbanTaskStatusReconciliationException(taskId, status, error)
+            val pending = pendingTaskCreation
+            if (pending != null && pending.request != request) {
+                error(
+                    "Task ${pending.taskId} still needs status reconciliation. " +
+                        "Retry that draft before creating another task.",
+                )
             }
-        }
-    }
+            if (status in setOf(KANBAN_TRIAGE, KANBAN_TODO)) {
+                api.createKanbanTask(createBody)
+            } else {
+                val taskId = pending?.taskId ?: run {
+                    val created = api.createKanbanTask(createBody)
+                    val id = created.taskId()
+                    require(id.isNotBlank()) { "Hermes did not return the created Kanban task id" }
+                    pendingTaskCreation = PendingKanbanTaskCreation(request, id)
+                    id
+                }
+                try {
+                    patchKanbanTaskStatusWithRetry(taskId, status)
+                    pendingTaskCreation = null
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    throw KanbanTaskStatusReconciliationException(taskId, status, error)
+                }
+            }
+        },
+        onSuccess = onSuccess,
+    )
 
     fun patchKanbanTask(taskId: String, body: JsonObject) = mutate {
         api.patchKanbanTask(taskId, body)
@@ -379,9 +393,11 @@ internal class KanbanViewModel(
         _run.value = null
     }
 
-    fun addKanbanTaskComment(taskId: String, body: String) {
-        if ((_task.value as? KanbanTaskState.Content) == null && _task.value != KanbanTaskState.Loading) return
+    fun addKanbanTaskComment(taskId: String, body: String, onSuccess: () -> Unit = {}) {
+        val current = _task.value as? KanbanTaskState.Content ?: return
+        if (current.value.commentBusy) return
         val generation = taskGeneration
+        _task.value = current.copy(value = current.value.copy(commentBusy = true, commentError = null))
         viewModelScope.launch {
             runCatching {
                 api.addKanbanTaskComment(
@@ -390,10 +406,18 @@ internal class KanbanViewModel(
                 )
             }.onSuccess {
                 if (generation != taskGeneration) return@onSuccess
+                onSuccess()
                 refresh()
                 openTask(taskId)
             }.onFailure { error ->
-                if (generation == taskGeneration) _task.value = KanbanTaskState.Failure(error.message)
+                if (generation != taskGeneration) return@onFailure
+                val latest = _task.value as? KanbanTaskState.Content ?: return@onFailure
+                _task.value = latest.copy(
+                    value = latest.value.copy(
+                        commentBusy = false,
+                        commentError = error.message,
+                    ),
+                )
             }
         }
     }
@@ -430,13 +454,16 @@ internal class KanbanViewModel(
         }
     }
 
-    private fun mutate(block: suspend () -> Unit) {
+    private fun mutate(block: suspend () -> Unit, onSuccess: () -> Unit = {}) {
         val previous = currentContent() ?: return
         if (previous.busy) return // re-entry guard: no overlapping mutations
         _ui.value = KanbanUiState.Content(previous.copy(busy = true, refreshing = false))
         viewModelScope.launch {
             runCatching { block() }
-                .onSuccess { refresh() }
+                .onSuccess {
+                    refresh()
+                    onSuccess()
+                }
                 .onFailure { error ->
                     _ui.value = KanbanUiState.Failure(error.message, currentContent()?.copy(busy = false))
                 }
@@ -538,23 +565,34 @@ internal fun KanbanScreen(vm: KanbanViewModel = viewModel(factory = KanbanViewMo
                         onValueChange = { boardSlug = it },
                         label = { Text(stringResource(R.string.kanban_board_slug)) },
                         singleLine = true,
+                        enabled = !busy,
                     )
                     OutlinedTextField(
                         value = boardName,
                         onValueChange = { boardName = it },
                         label = { Text(stringResource(R.string.kanban_board_name)) },
                         singleLine = true,
+                        enabled = !busy,
                     )
+                    error?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error)
+                    }
                 }
             },
             confirmButton = {
                 TextButton(
                     enabled = boardSlug.isNotBlank() && !busy,
                     onClick = {
-                        showBoardDialog = false
-                        vm.createKanbanBoard(boardSlug.trim(), boardName.trim(), switch = true)
-                        boardSlug = ""
-                        boardName = ""
+                        vm.createKanbanBoard(
+                            slug = boardSlug.trim(),
+                            name = boardName.trim(),
+                            switch = true,
+                            onSuccess = {
+                                showBoardDialog = false
+                                boardSlug = ""
+                                boardName = ""
+                            },
+                        )
                     },
                 ) { Text(stringResource(R.string.kanban_create_board)) }
             },
@@ -578,35 +616,43 @@ internal fun KanbanScreen(vm: KanbanViewModel = viewModel(factory = KanbanViewMo
                         onValueChange = { taskTitle = it },
                         label = { Text(stringResource(R.string.kanban_task_title)) },
                         singleLine = true,
+                        enabled = !busy,
                     )
                     OutlinedTextField(
                         value = taskBody,
                         onValueChange = { taskBody = it },
                         label = { Text(stringResource(R.string.kanban_task_body)) },
                         minLines = 3,
+                        enabled = !busy,
                     )
                     OutlinedTextField(
                         value = taskAssignee,
                         onValueChange = { taskAssignee = it },
                         label = { Text(stringResource(R.string.kanban_task_assignee)) },
                         singleLine = true,
+                        enabled = !busy,
                     )
+                    error?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error)
+                    }
                 }
             },
             confirmButton = {
                 TextButton(
                     enabled = taskTitle.isNotBlank() && !busy,
                     onClick = {
-                        createTaskStatus = null
                         vm.createKanbanTask(
                             title = taskTitle.trim(),
                             body = taskBody.trim(),
                             assignee = taskAssignee.trim(),
                             status = status,
+                            onSuccess = {
+                                createTaskStatus = null
+                                taskTitle = ""
+                                taskBody = ""
+                                taskAssignee = ""
+                            },
                         )
-                        taskTitle = ""
-                        taskBody = ""
-                        taskAssignee = ""
                     },
                 ) { Text(stringResource(R.string.kanban_add_task)) }
             },
@@ -726,7 +772,9 @@ internal fun KanbanScreen(vm: KanbanViewModel = viewModel(factory = KanbanViewMo
                         vm.patchKanbanTask(taskId, buildJsonObject { put("status", status) })
                     }
                 },
-                onAddComment = { body -> selectedTaskId?.let { vm.addKanbanTaskComment(it, body) } },
+                onAddComment = { body, onSuccess ->
+                    selectedTaskId?.let { vm.addKanbanTaskComment(it, body, onSuccess) }
+                },
                 onInspectRun = vm::getKanbanRun,
                 onTerminateRun = { runId -> selectedTaskId?.let { vm.terminateKanbanRun(runId, it) } },
                 onDelete = { selectedTaskId?.let { deleteTaskId = it } },
@@ -917,7 +965,7 @@ private fun TaskDetailSheet(
     busy: Boolean,
     onClose: () -> Unit,
     onStatusSelected: (String) -> Unit,
-    onAddComment: (String) -> Unit,
+    onAddComment: (String, () -> Unit) -> Unit,
     onInspectRun: (String) -> Unit,
     onTerminateRun: (String) -> Unit,
     onDelete: () -> Unit,
@@ -982,6 +1030,9 @@ private fun TaskDetailSheet(
                     ) { Text(summary) }
                 }
                 CollapsibleSection(title = stringResource(R.string.kanban_comments_section)) {
+                    detail.commentError?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error)
+                    }
                     if (detail.comments.isEmpty()) {
                         Text(stringResource(R.string.kanban_no_comments))
                     } else {
@@ -1005,12 +1056,12 @@ private fun TaskDetailSheet(
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text(stringResource(R.string.kanban_comment_hint)) },
                         minLines = 2,
+                        enabled = !busy && !detail.commentBusy,
                     )
                     Button(
-                        enabled = comment.isNotBlank() && !busy,
+                        enabled = comment.isNotBlank() && !busy && !detail.commentBusy,
                         onClick = {
-                            onAddComment(comment.trim())
-                            comment = ""
+                            onAddComment(comment.trim()) { comment = "" }
                         },
                     ) { Text(stringResource(R.string.kanban_send_comment)) }
                 }
