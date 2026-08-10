@@ -181,10 +181,10 @@ class HermesRepository(
     fun observeSessions(): Flow<List<CachedSessionEntity>> = db.sessions().observeSessions(connId())
     fun observeActivity(): Flow<List<ActivityEventEntity>> = db.activity().observe(connId())
 
-    suspend fun refreshStatus(): Result<StatusResponse> {
-        val snapshot = clientFactory.snapshot()
+    suspend fun refreshStatus(snapshot: ConnectionSnapshot? = null): Result<StatusResponse> {
+        val captured = snapshot ?: clientFactory.snapshot()
         return withContext(Dispatchers.IO) {
-            suspendResult { clientFactory.api(snapshot).getStatus(profile = snapshot?.managementProfile) }
+            suspendResult { clientFactory.api(captured).getStatus(profile = captured?.managementProfile) }
         }
     }
 

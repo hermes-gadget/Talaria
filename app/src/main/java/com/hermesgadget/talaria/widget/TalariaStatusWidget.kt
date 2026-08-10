@@ -37,7 +37,6 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import com.hermesgadget.talaria.TalariaApp
-import com.hermesgadget.talaria.domain.model.scopeId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -48,10 +47,11 @@ class TalariaStatusWidget : GlanceAppWidget() {
         val gwUp = context.getString(R.string.widget_status_gw_up)
         val gwDown = context.getString(R.string.widget_status_gw_down)
         val snapshot = withContext(Dispatchers.IO) {
-            val scopeId = TalariaApp.instance.container.connectionStore.activeProfile()?.scopeId()
+            val snapshot = TalariaApp.instance.container.clientFactory.snapshot()
+            val scopeId = snapshot?.scopeId
                 ?: return@withContext WidgetSnapshot(connectLabel, 0, stale = false)
             val live = runCatching {
-                val status = TalariaApp.instance.container.hermesRepository.refreshStatus().getOrThrow()
+                val status = TalariaApp.instance.container.hermesRepository.refreshStatus(snapshot).getOrThrow()
                 val gw = if ((status.gateway?.running ?: status.gateway_running) == true) gwUp else gwDown
                 val line = "Hermes ${status.version ?: "?"} · $gw · sessions ${status.active_sessions ?: 0}"
                 // Refresh the offline cache while we have a fresh read.
