@@ -66,6 +66,7 @@ import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -209,6 +210,28 @@ internal sealed interface KanbanRunState {
     data class Failure(val message: String?) : KanbanRunState
 }
 
+private data class KanbanTaskCreationRequest(
+    val title: String,
+    val body: String,
+    val assignee: String,
+    val status: String,
+)
+
+private data class PendingKanbanTaskCreation(
+    val request: KanbanTaskCreationRequest,
+    val taskId: String,
+)
+
+private class KanbanTaskStatusReconciliationException(
+    taskId: String,
+    status: String,
+    cause: Throwable,
+) : IllegalStateException(
+    "Task $taskId was created in $KANBAN_TODO, but moving it to $status failed. " +
+        "Retry to reconcile it; another task will not be created.",
+    cause,
+)
+
 internal class KanbanViewModel(
     private val api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
 ) : ViewModel() {
@@ -220,6 +243,8 @@ internal class KanbanViewModel(
 
     private val _run = MutableStateFlow<KanbanRunState?>(null)
     val run: StateFlow<KanbanRunState?> = _run.asStateFlow()
+
+    private var pendingTaskCreation: PendingKanbanTaskCreation? = null
 
     init {
         refresh()
@@ -267,20 +292,38 @@ internal class KanbanViewModel(
         assignee: String,
         status: String,
     ) = mutate {
-        val created = api.createKanbanTask(
-            buildJsonObject {
-                put("title", title)
-                if (body.isNotBlank()) put("body", body)
-                if (assignee.isNotBlank()) put("assignee", assignee)
-                put("triage", status == KANBAN_TRIAGE)
-            },
-        )
-        val taskId = created.taskObject()?.string("id").orEmpty()
-        if (taskId.isNotBlank() && status !in setOf(KANBAN_TRIAGE, KANBAN_TODO)) {
-            api.patchKanbanTask(
-                taskId,
-                buildJsonObject { put("status", status) },
+        val request = KanbanTaskCreationRequest(title, body, assignee, status)
+        val createBody = buildJsonObject {
+            put("title", title)
+            if (body.isNotBlank()) put("body", body)
+            if (assignee.isNotBlank()) put("assignee", assignee)
+            put("triage", status == KANBAN_TRIAGE)
+        }
+        val pending = pendingTaskCreation
+        if (pending != null && pending.request != request) {
+            error(
+                "Task ${pending.taskId} still needs status reconciliation. " +
+                    "Retry that draft before creating another task.",
             )
+        }
+        if (status in setOf(KANBAN_TRIAGE, KANBAN_TODO)) {
+            api.createKanbanTask(createBody)
+        } else {
+            val taskId = pending?.taskId ?: run {
+                val created = api.createKanbanTask(createBody)
+                val id = created.taskId()
+                require(id.isNotBlank()) { "Hermes did not return the created Kanban task id" }
+                pendingTaskCreation = PendingKanbanTaskCreation(request, id)
+                id
+            }
+            try {
+                patchKanbanTaskStatusWithRetry(taskId, status)
+                pendingTaskCreation = null
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                throw KanbanTaskStatusReconciliationException(taskId, status, error)
+            }
         }
     }
 
@@ -397,6 +440,21 @@ internal class KanbanViewModel(
                 .onFailure { error ->
                     _ui.value = KanbanUiState.Failure(error.message, currentContent()?.copy(busy = false))
                 }
+        }
+    }
+
+    private suspend fun patchKanbanTaskStatusWithRetry(taskId: String, status: String) {
+        val body = buildJsonObject { put("status", status) }
+        try {
+            api.patchKanbanTask(taskId, body)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            try {
+                api.patchKanbanTask(taskId, body)
+            } catch (retryError: CancellationException) {
+                throw retryError
+            }
         }
     }
 
@@ -1233,6 +1291,11 @@ private fun JsonObject.objectObjectIntMap(key: String): Map<String, Map<String, 
 
 private fun JsonElement.asPrimitiveString(): String =
     (this as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull.orEmpty()
+
+private fun JsonElement.taskId(): String {
+    val root = asObject() ?: return ""
+    return root.string("id").ifBlank { taskObject()?.string("id").orEmpty() }
+}
 
 private fun JsonElement.taskObject(): JsonObject? =
     (this as? JsonObject)?.get("task") as? JsonObject
