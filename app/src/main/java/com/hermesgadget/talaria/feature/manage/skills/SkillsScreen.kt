@@ -177,7 +177,7 @@ fun SkillsScreen(vm: SkillsViewModel = viewModel(factory = SkillsViewModel.facto
                     editor = editor,
                     busy = content.busy,
                     onDismiss = vm::closeEditor,
-                    onSave = vm::saveContent,
+                    onSave = { name, fields, onResult -> vm.saveContent(name, fields, onResult) },
                 )
                 is SkillEditorState.Loading -> AlertDialog(
                     onDismissRequest = vm::closeEditor,
@@ -224,7 +224,7 @@ fun SkillsScreen(vm: SkillsViewModel = viewModel(factory = SkillsViewModel.facto
                     busy = content.busy,
                     onDismiss = vm::closeToolsetConfig,
                     onProviderSelect = vm::putToolsetProvider,
-                    onSaveEnv = vm::putToolsetEnv,
+                    onSaveEnv = { name, values, onResult -> vm.putToolsetEnv(name, values, onResult) },
                     onModelSelect = vm::putToolsetModel,
                     onPostSetup = vm::runToolsetPostSetup,
                 )
@@ -468,7 +468,7 @@ private fun ToolsetConfigDialog(
     busy: Boolean,
     onDismiss: () -> Unit,
     onProviderSelect: (String, String) -> Unit,
-    onSaveEnv: (String, Map<String, String>) -> Unit,
+    onSaveEnv: (String, Map<String, String>, (Boolean) -> Unit) -> Unit,
     onModelSelect: (String, String, String?) -> Unit,
     onPostSetup: (String, String) -> Unit,
 ) {
@@ -567,8 +567,13 @@ private fun ToolsetConfigDialog(
                                     }.toMap()
                                     TextButton(
                                         onClick = {
-                                            onSaveEnv(config.name, values)
-                                            drafts = drafts - values.keys
+                                            onSaveEnv(config.name, values) { succeeded ->
+                                                drafts = clearSubmittedToolsetDrafts(
+                                                    currentDrafts = drafts,
+                                                    submitted = values,
+                                                    succeeded = succeeded,
+                                                )
+                                            }
                                         },
                                         enabled = values.isNotEmpty() && !busy,
                                     ) {
@@ -745,7 +750,7 @@ private fun SkillContentEditor(
     editor: SkillEditorState.Ready,
     busy: Boolean,
     onDismiss: () -> Unit,
-    onSave: (String, SkillContentFields) -> Unit,
+    onSave: (String, SkillContentFields, (Boolean) -> Unit) -> Unit,
 ) {
     var name by remember(editor.targetName) { mutableStateOf(editor.fields.name) }
     var description by remember(editor.targetName) { mutableStateOf(editor.fields.description) }
@@ -788,7 +793,15 @@ private fun SkillContentEditor(
         },
         confirmButton = {
             TextButton(
-                onClick = { onSave(editor.targetName, SkillContentFields(name, description, body)) },
+                onClick = {
+                    val submitted = SkillContentFields(name, description, body)
+                    onSave(editor.targetName, submitted) { succeeded ->
+                        val current = SkillContentFields(name, description, body)
+                        if (shouldCloseSkillEditorAfterSave(submitted, current, succeeded)) {
+                            onDismiss()
+                        }
+                    }
+                },
                 enabled = !busy,
             ) { Text("Save") }
         },

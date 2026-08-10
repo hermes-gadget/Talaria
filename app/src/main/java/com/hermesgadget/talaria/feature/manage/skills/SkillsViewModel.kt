@@ -132,6 +132,21 @@ data class SkillContentFields(
     val body: String,
 )
 
+internal fun clearSubmittedToolsetDrafts(
+    currentDrafts: Map<String, String>,
+    submitted: Map<String, String>,
+    succeeded: Boolean,
+): Map<String, String> {
+    if (!succeeded) return currentDrafts
+    return currentDrafts.filter { (key, value) -> submitted[key] != value }
+}
+
+internal fun shouldCloseSkillEditorAfterSave(
+    submitted: SkillContentFields,
+    current: SkillContentFields,
+    succeeded: Boolean,
+): Boolean = succeeded && submitted == current
+
 sealed interface SkillEditorState {
     data object Closed : SkillEditorState
     data class Loading(val name: String) : SkillEditorState
@@ -265,15 +280,20 @@ class SkillsViewModel(
         }
     }
 
-    fun putToolsetEnv(name: String, values: Map<String, String>) {
+    fun putToolsetEnv(
+        name: String,
+        values: Map<String, String>,
+        onResult: (Boolean) -> Unit = {},
+    ) {
         val env = buildJsonObject {
             values.forEach { (key, value) -> put(key, value) }
         }
-        runToolsetAction(name, "Could not update toolset") {
-            gateway.putToolsetEnv(
-                name,
-                buildJsonObject { put("env", env) },
-            )
+        runToolsetAction(
+            name = name,
+            errorFallback = "Could not update toolset",
+            onResult = onResult,
+        ) {
+            gateway.putToolsetEnv(name, buildJsonObject { put("env", env) })
         }
     }
 
@@ -363,12 +383,17 @@ class SkillsViewModel(
 
     fun closeEditor() = updateContent { it.copy(editor = SkillEditorState.Closed) }
 
-    fun saveContent(targetName: String, fields: SkillContentFields) {
+    fun saveContent(
+        targetName: String,
+        fields: SkillContentFields,
+        onResult: (Boolean) -> Unit = {},
+    ) {
         val validation = validateSkillContent(fields)
         if (validation != null) {
             updateContent {
                 it.copy(editor = SkillEditorState.Ready(targetName, fields, validationError = validation))
             }
+            onResult(false)
             return
         }
         updateContent { it.copy(busy = true, message = null) }
@@ -379,12 +404,15 @@ class SkillsViewModel(
                         it.copy(
                             busy = false,
                             message = response.message ?: "Skill saved",
-                            editor = SkillEditorState.Closed,
                         )
                     }
+                    onResult(true)
                     refreshSkillsOnly()
                 },
-                onFailure = { error -> updateContent { it.copy(busy = false, message = error.message ?: "Could not save skill") } },
+                onFailure = { error ->
+                    updateContent { it.copy(busy = false, message = error.message ?: "Could not save skill") }
+                    onResult(false)
+                },
             )
         }
     }
@@ -402,13 +430,18 @@ class SkillsViewModel(
     private fun runToolsetAction(
         name: String,
         errorFallback: String,
+        onResult: (Boolean) -> Unit = {},
         action: suspend () -> Result<JsonElement>,
     ) {
         setBusy(true)
         viewModelScope.launch {
             action().fold(
-                onSuccess = { loadToolsetConfig(name) },
+                onSuccess = {
+                    onResult(true)
+                    loadToolsetConfig(name)
+                },
                 onFailure = { error ->
+                    onResult(false)
                     updateContent {
                         it.copy(busy = false, message = error.message ?: errorFallback)
                     }
