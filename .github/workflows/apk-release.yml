@@ -101,36 +101,12 @@ jobs:
         id: ver
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          echo "Tag: ${TAG}"
-          # Strict semver-ish: vMAJ.MIN.PATCH or vMAJ.MIN.PATCH-rcN (N in 1..8).
-          # Anything else (dirty suffix, missing patch, letters) FAILS the job.
-          if [[ ! "${TAG}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-rc([1-8]))?$ ]]; then
-            echo "::error::Unsupported version tag '${TAG}'. Expected vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-rcN (N=1..8)."
-            exit 1
-          fi
-          MAJ="${BASH_REMATCH[1]}"; MIN="${BASH_REMATCH[2]}"; PAT="${BASH_REMATCH[3]}"
-          RC="${BASH_REMATCH[5]:-}"
-          # Strip leading zeros to keep arithmetic sane and reject "08"-style.
-          MAJ=$((10#$MAJ)); MIN=$((10#$MIN)); PAT=$((10#$PAT))
-          # Monotonic scheme: MAJ*100000 + MIN*1000 + PAT*10 + suffix,
-          # suffix 1..8 = prerelease candidate (rcN), 9 = stable.
-          # v0.8.3-rc1 -> 8031 < v0.8.3 -> 8039 < v0.8.4 -> 8049.
-          SUFFIX=9
-          if [ -n "${RC}" ]; then SUFFIX="${RC}"; fi
-          CODE=$((MAJ * 100000 + MIN * 1000 + PAT * 10 + SUFFIX))
-          # Floor above legacy Obtainium debug builds (versionCode 2 and 201);
-          # reject any tag that cannot clear it (e.g. v0.0.x).
-          if [ "${CODE}" -lt 202 ]; then
-            echo "::error::versionCode ${CODE} for tag '${TAG}' is below the legacy floor (202). Use a later version."
-            exit 1
-          fi
-          VERSION="${MAJ}.${MIN}.${PAT}"
-          if [ -n "${RC}" ]; then VERSION="${VERSION}-rc${RC}"; fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "code=${CODE}" >> "$GITHUB_OUTPUT"
-          echo "rc=${RC:-}" >> "$GITHUB_OUTPUT"
-          echo "Resolved versionName=${VERSION} versionCode=${CODE}"
+          # Logic lives in .github/scripts/version-code.sh (unit-tested by
+          # version-code-fixtures.sh); out-of-range components are rejected
+          # before arithmetic so distinct tags can never collide.
+          bash .github/scripts/version-code.sh "${GITHUB_REF_NAME}" \
+            | tee "$GITHUB_OUTPUT"
+          echo "Resolved tag ${GITHUB_REF_NAME} -> $(grep -c . "$GITHUB_OUTPUT") outputs"
 
       - name: Decode CI upload keystore
         env:
