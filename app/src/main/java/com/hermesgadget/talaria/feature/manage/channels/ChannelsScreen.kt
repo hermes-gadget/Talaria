@@ -58,6 +58,8 @@ import com.hermesgadget.talaria.domain.model.MessagingPlatform
 import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
+import com.hermesgadget.talaria.ui.components.openSafeExternalWebUri
+import com.hermesgadget.talaria.ui.components.safeExternalWebUri
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.buildJsonObject
@@ -377,11 +379,13 @@ private fun TelegramOnboardingCard(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                state.deepLink?.let {
+                state.deepLink?.takeIf { safeExternalWebUri(it) != null }?.let {
                     PayloadBlock(
                         label = stringResource(R.string.messaging_deep_link),
                         value = it,
-                        onOpen = { runCatching { uriHandler.openUri(it) } },
+                        onOpen = {
+                            openSafeExternalWebUri(it) { uri -> uriHandler.openUri(uri.toString()) }
+                        },
                     )
                 }
                 state.qrPayload?.let {

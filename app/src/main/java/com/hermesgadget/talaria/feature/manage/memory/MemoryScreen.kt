@@ -61,6 +61,8 @@ import com.hermesgadget.talaria.domain.model.MemoryState
 import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
+import com.hermesgadget.talaria.ui.components.openSafeExternalWebUri
+import com.hermesgadget.talaria.ui.components.safeExternalWebUri
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import com.hermesgadget.talaria.ui.theme.LocalSpacing
 
@@ -353,8 +355,10 @@ private fun MemoryProviderConfigForm(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(config.label, style = MaterialTheme.typography.titleSmall)
-            if (config.docsUrl.isNotBlank()) {
-                TextButton(onClick = { uriHandler.openUri(config.docsUrl) }) {
+            if (safeExternalWebUri(config.docsUrl) != null) {
+                TextButton(onClick = {
+                    openSafeExternalWebUri(config.docsUrl) { uri -> uriHandler.openUri(uri.toString()) }
+                }) {
                     Text(stringResource(R.string.memory_documentation))
                 }
             }

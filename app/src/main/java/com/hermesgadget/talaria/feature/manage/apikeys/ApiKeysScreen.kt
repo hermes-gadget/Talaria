@@ -48,10 +48,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.domain.model.EnvVarInfo
+import com.hermesgadget.talaria.ui.components.openSafeExternalWebUri
+import com.hermesgadget.talaria.ui.components.safeExternalWebUri
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import com.hermesgadget.talaria.ui.components.UnsavedChangesGuard
 import kotlinx.coroutines.launch
-import androidx.core.net.toUri
 
 @Composable
 fun ApiKeysScreen() {
@@ -173,9 +174,11 @@ fun ApiKeysScreen() {
                             info.description?.takeIf { it.isNotBlank() }?.let {
                                 Text(it, style = MaterialTheme.typography.bodySmall)
                             }
-                            info.url?.takeIf { it.isNotBlank() }?.let { url ->
+                            info.url?.takeIf { safeExternalWebUri(it) != null }?.let { url ->
                                 TextButton(onClick = {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
+                                    openSafeExternalWebUri(url) { uri ->
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                                    }
                                 }) { Text("Signup / docs") }
                             }
                             TextButton(onClick = {
