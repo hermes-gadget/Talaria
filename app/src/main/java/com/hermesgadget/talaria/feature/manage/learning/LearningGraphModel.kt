@@ -17,8 +17,10 @@ package com.hermesgadget.talaria.feature.manage.learning
 
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
 import com.hermesgadget.talaria.core.network.HermesClientFactory
+import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.JsonConfig
 import com.hermesgadget.talaria.core.network.decodeJsonResponse
+import com.hermesgadget.talaria.core.util.suspendResult
 import com.hermesgadget.talaria.domain.model.LearningCluster
 import com.hermesgadget.talaria.domain.model.LearningGraph
 import com.hermesgadget.talaria.domain.model.LearningStats
@@ -93,24 +95,27 @@ class LearningGraphSource(
 ) {
     private val json = JsonConfig.json
 
-    suspend fun load(): Result<LearningGraphSnapshot> = withContext(Dispatchers.IO) {
-        runCatching {
-            val request = Request.Builder()
-                .url(graphUrl())
-                .get()
-                .build()
-            clientFactory.okHttp().newCall(request).execute().use { response ->
-                check(response.isSuccessful) {
-                    "Learning graph request failed (${response.code})"
+    suspend fun load(snapshot: ConnectionSnapshot? = null): Result<LearningGraphSnapshot> =
+        withContext(Dispatchers.IO) {
+            suspendResult {
+                val requestSnapshot = snapshot ?: clientFactory.snapshot()
+                val request = Request.Builder()
+                    .url(graphUrl(requestSnapshot))
+                    .get()
+                    .build()
+                clientFactory.okHttp(requestSnapshot).newCall(request).execute().use { response ->
+                    check(response.isSuccessful) {
+                        "Learning graph request failed (${response.code})"
+                    }
+                    val body = response.body ?: error("Hermes returned an empty learning graph")
+                    parse(body.decodeJsonResponse<JsonObject>())
                 }
-                val body = response.body ?: error("Hermes returned an empty learning graph")
-                parse(body.decodeJsonResponse<JsonObject>())
             }
         }
-    }
 
-    private fun graphUrl(): HttpUrl {
-        val base = connectionStore.activeProfile()?.baseUrl?.trimEnd('/')
+    private fun graphUrl(snapshot: ConnectionSnapshot? = null): HttpUrl {
+        val base = snapshot?.baseUrl?.trimEnd('/')
+            ?: connectionStore.activeProfile()?.baseUrl?.trimEnd('/')
             ?: "http://10.0.2.2:9119"
         return base.toHttpUrl().newBuilder()
             .addPathSegments("api/learning/graph")

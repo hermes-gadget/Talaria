@@ -6,7 +6,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.repo.HermesRepository
+import com.hermesgadget.talaria.core.network.ConnectionScope
+import com.hermesgadget.talaria.core.network.ConnectionScopeObserver
+import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.domain.model.LearningNodeDetail
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,40 +34,86 @@ class LearningViewModel(
         clientFactory = TalariaApp.instance.container.clientFactory,
         connectionStore = TalariaApp.instance.container.connectionStore,
     ),
+    private val scopeFlow: StateFlow<ConnectionScope?>? = null,
 ) : ViewModel() {
     private val _ui = MutableStateFlow(LearningUiState())
     val ui: StateFlow<LearningUiState> = _ui.asStateFlow()
 
     /** Monotonic generation for identity-safe async loads (N0.8). */
     private var loadGeneration = 0L
+    private var boundScope: ConnectionScope? = scopeFlow?.value
+    private var scopeObserver: ConnectionScopeObserver? = null
+    private var graphJob: Job? = null
+    private var detailJob: Job? = null
+    private var mutationJob: Job? = null
 
-    init { refresh() }
+    init {
+        scopeObserver = scopeFlow?.let { flow ->
+            ConnectionScopeObserver(flow, viewModelScope) { next -> rebind(next) }
+        }
+        if (scopeFlow == null || boundScope != null) refresh()
+    }
+
+    private fun rebind(next: ConnectionScope?) {
+        boundScope = next
+        loadGeneration += 1
+        graphJob?.cancel()
+        detailJob?.cancel()
+        mutationJob?.cancel()
+        _ui.value = LearningUiState(loading = next != null)
+        if (next != null) refresh()
+    }
+
+    private fun isCurrentScope(expected: ConnectionScope?): Boolean =
+        scopeObserver?.isCurrent(expected) != false
 
     fun refresh() {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val snapshot = expectedScope?.snapshot
+        graphJob?.cancel()
         _ui.update { it.copy(loading = true, error = null) }
-        viewModelScope.launch {
-            graphSource.load().fold(
-                onSuccess = { graph -> _ui.update { it.copy(graph = graph, loading = false) } },
-                onFailure = { error -> _ui.update { it.copy(loading = false, error = error.message) } },
+        graphJob = viewModelScope.launch {
+            graphSource.load(snapshot).fold(
+                onSuccess = { graph ->
+                    if (isCurrentScope(expectedScope)) {
+                        _ui.update { it.copy(graph = graph, loading = false) }
+                    }
+                },
+                onFailure = { error ->
+                    if (isCurrentScope(expectedScope)) {
+                        _ui.update { it.copy(loading = false, error = error.message) }
+                    }
+                },
             )
         }
     }
 
     fun open(node: LearningMapNode) {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
         val generation = ++loadGeneration
         val nodeId = node.id
+        detailJob?.cancel()
         _ui.update { it.copy(selected = node, detail = null, draft = "", busy = true, error = null) }
-        viewModelScope.launch {
-            repo.getLearningNode(nodeId).fold(
+        detailJob = viewModelScope.launch {
+            if (!isCurrentScope(expectedScope)) return@launch
+            repo.getLearningNode(nodeId, expectedScope?.snapshot).fold(
                 onSuccess = { detail ->
                     // N0.8: a stale response for a previously opened node must
                     // never overwrite the currently selected node's detail.
-                    if (generation == loadGeneration && _ui.value.selected?.id == nodeId) {
+                    if (generation == loadGeneration &&
+                        isCurrentScope(expectedScope) &&
+                        _ui.value.selected?.id == nodeId
+                    ) {
                         _ui.update { it.copy(detail = detail, draft = detail.content, busy = false) }
                     }
                 },
                 onFailure = { error ->
-                    if (generation == loadGeneration && _ui.value.selected?.id == nodeId) {
+                    if (generation == loadGeneration &&
+                        isCurrentScope(expectedScope) &&
+                        _ui.value.selected?.id == nodeId
+                    ) {
                         _ui.update { it.copy(busy = false, error = error.message) }
                     }
                 },
@@ -72,43 +122,63 @@ class LearningViewModel(
     }
 
     fun updateDraft(value: String) = _ui.update { it.copy(draft = value) }
-    fun close() = _ui.update { it.copy(selected = null, detail = null, confirmDelete = false, error = null) }
+    fun close() {
+        loadGeneration += 1
+        detailJob?.cancel()
+        _ui.update { it.copy(selected = null, detail = null, confirmDelete = false, error = null) }
+    }
     fun requestDelete() = _ui.update { it.copy(confirmDelete = true) }
     fun cancelDelete() = _ui.update { it.copy(confirmDelete = false) }
 
     fun save() {
         val node = _ui.value.selected ?: return
         val draft = _ui.value.draft
-        mutate { repo.updateLearningNode(node.id, draft) }
+        mutate { snapshot -> repo.updateLearningNode(node.id, draft, snapshot) }
     }
 
     fun confirmDelete() {
         val node = _ui.value.selected ?: return
         _ui.update { it.copy(confirmDelete = false) }
-        mutate { repo.deleteLearningNode(node.id) }
+        mutate { snapshot -> repo.deleteLearningNode(node.id, snapshot) }
     }
 
-    private fun mutate(block: suspend () -> Result<com.hermesgadget.talaria.domain.model.LearningGraph>) {
+    private fun mutate(
+        block: suspend (ConnectionSnapshot?) -> Result<com.hermesgadget.talaria.domain.model.LearningGraph>,
+    ) {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val snapshot = expectedScope?.snapshot
+        mutationJob?.cancel()
         _ui.update { it.copy(busy = true, error = null) }
-        viewModelScope.launch {
-            block().fold(
+        mutationJob = viewModelScope.launch {
+            if (!isCurrentScope(expectedScope)) return@launch
+            block(snapshot).fold(
                 onSuccess = { fallbackGraph ->
-                    graphSource.load().fold(
+                    if (!isCurrentScope(expectedScope)) return@fold
+                    graphSource.load(snapshot).fold(
                         onSuccess = { graph ->
-                            _ui.update { LearningUiState(graph = graph, loading = false) }
+                            if (isCurrentScope(expectedScope)) {
+                                _ui.update { LearningUiState(graph = graph, loading = false) }
+                            }
                         },
                         onFailure = { error ->
-                            _ui.update {
-                                LearningUiState(
-                                    graph = LearningGraphSnapshot.fromTyped(fallbackGraph),
-                                    loading = false,
-                                    error = "Saved, but the enriched graph could not be reloaded: ${error.message}",
-                                )
+                            if (isCurrentScope(expectedScope)) {
+                                _ui.update {
+                                    LearningUiState(
+                                        graph = LearningGraphSnapshot.fromTyped(fallbackGraph),
+                                        loading = false,
+                                        error = "Saved, but the enriched graph could not be reloaded: ${error.message}",
+                                    )
+                                }
                             }
                         },
                     )
                 },
-                onFailure = { error -> _ui.update { it.copy(busy = false, error = error.message) } },
+                onFailure = { error ->
+                    if (isCurrentScope(expectedScope)) {
+                        _ui.update { it.copy(busy = false, error = error.message) }
+                    }
+                },
             )
         }
     }
@@ -116,7 +186,16 @@ class LearningViewModel(
     companion object {
         fun factory() = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T = LearningViewModel() as T
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                val container = TalariaApp.instance.container
+                return LearningViewModel(
+                    graphSource = LearningGraphSource(
+                        clientFactory = container.clientFactory,
+                        connectionStore = container.connectionStore,
+                    ),
+                    scopeFlow = container.connectionStore.scope,
+                ) as T
+            }
         }
     }
 }

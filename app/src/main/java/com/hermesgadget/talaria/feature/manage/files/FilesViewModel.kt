@@ -24,6 +24,8 @@ import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.network.HermesApi
+import com.hermesgadget.talaria.core.network.ConnectionScope
+import com.hermesgadget.talaria.core.network.ConnectionScopeObserver
 import com.hermesgadget.talaria.core.network.decodeJsonResponse
 import com.hermesgadget.talaria.domain.model.ManagedFileEntry
 import com.hermesgadget.talaria.domain.model.ManagedFileReadResponse
@@ -147,37 +149,80 @@ data class FilesUiState(
 
 /** Managed Hermes host file browser and transfer surface (ROADMAP items 1 and 19). */
 class FilesViewModel(
-    private val api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
+    api: HermesApi? = null,
     private val cacheDirectory: File = TalariaApp.instance.cacheDir,
     private val shareFileManager: ShareFileManager? = null,
+    private val apiProvider: (ConnectionScope?) -> HermesApi = { scope ->
+        scope?.snapshot?.let { TalariaApp.instance.container.clientFactory.api(it) }
+            ?: TalariaApp.instance.container.clientFactory.api()
+    },
+    private val scopeFlow: StateFlow<ConnectionScope?>? = null,
 ) : ViewModel() {
+    private val fixedApi = api
+    private var boundApi: HermesApi = api ?: apiProvider(scopeFlow?.value)
+    private var boundScope: ConnectionScope? = scopeFlow?.value
+    private var scopeObserver: ConnectionScopeObserver? = null
     private val _ui = MutableStateFlow(FilesUiState())
     val ui: StateFlow<FilesUiState> = _ui.asStateFlow()
 
     private var uploadResolver: ContentResolver? = null
     private var directoryJob: Job? = null
+    private var previewJob: Job? = null
     private var directoryGeneration = 0L
     private var requestedDirectoryPath: String? = null
     private var downloadJob: Job? = null
     private var saveJob: Job? = null
+    private var editJob: Job? = null
+    private var shareJob: Job? = null
+    private var actionJob: Job? = null
+    private var uploadJob: Job? = null
     private var downloadGeneration = 0L
     private val defaultShareFileManager by lazy { ShareFileManager(cacheDirectory) }
 
     init {
-        open(null)
+        scopeObserver = scopeFlow?.let { flow ->
+            ConnectionScopeObserver(flow, viewModelScope) { next -> rebind(next) }
+        }
+        if (scopeFlow == null || boundScope != null) open(null)
     }
+
+    private fun rebind(next: ConnectionScope?) {
+        boundScope = next
+        boundApi = fixedApi ?: apiProvider(next)
+        directoryGeneration += 1
+        requestedDirectoryPath = null
+        directoryJob?.cancel()
+        previewJob?.cancel()
+        downloadGeneration += 1
+        downloadJob?.cancel()
+        saveJob?.cancel()
+        editJob?.cancel()
+        shareJob?.cancel()
+        actionJob?.cancel()
+        uploadJob?.cancel()
+        uploadResolver = null
+        deleteOwnedDownload()
+        _ui.value = FilesUiState(loading = next != null)
+        if (next != null) open(null)
+    }
+
+    private fun isCurrentScope(expected: ConnectionScope?): Boolean =
+        scopeObserver?.isCurrent(expected) != false
 
     /** Lists the managed root when [path] is null, or a managed directory otherwise. */
     fun open(path: String?) {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
         val requestedPath = path?.takeIf { it.isNotBlank() }
+        val requestApi = boundApi
         val generation = ++directoryGeneration
         requestedDirectoryPath = requestedPath
         directoryJob?.cancel()
         _ui.update { it.copy(loading = true, error = null) }
         directoryJob = viewModelScope.launch {
             try {
-                val response = api.listManagedFiles(path = requestedPath)
-                if (!isCurrentDirectoryRequest(generation, requestedPath)) return@launch
+                val response = requestApi.listManagedFiles(path = requestedPath)
+                if (!isCurrentDirectoryRequest(generation, requestedPath, expectedScope)) return@launch
                 _ui.update {
                     it.copy(
                         path = response.path.takeIf { value -> value.isNotBlank() }
@@ -195,7 +240,7 @@ class FilesViewModel(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                if (isCurrentDirectoryRequest(generation, requestedPath)) {
+                if (isCurrentDirectoryRequest(generation, requestedPath, expectedScope)) {
                     _ui.update {
                         it.copy(
                             loading = false,
@@ -221,6 +266,9 @@ class FilesViewModel(
     }
 
     fun openFile(entry: ManagedFileEntry) {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestApi = boundApi
         val initialType = previewTypeFor(entry.name, entry.mimeType)
         _ui.update {
             it.copy(
@@ -246,10 +294,10 @@ class FilesViewModel(
             )
         }
 
-        viewModelScope.launch {
+        previewJob = viewModelScope.launch {
             suspendResult {
                 if (initialType == FilePreviewType.IMAGE) {
-                    val response = api.getMediaDataUrlBody(entry.path)
+                    val response = requestApi.getMediaDataUrlBody(entry.path)
                         .decodeJsonResponse<MediaDataUrlResponse>()
                     val parsed = parseManagedPreviewDataUrl(response.dataUrl)
                     PreviewPayload(
@@ -261,7 +309,7 @@ class FilesViewModel(
                         name = entry.name,
                     )
                 } else {
-                    val response = api.readManagedFileBody(entry.path)
+                    val response = requestApi.readManagedFileBody(entry.path)
                         .decodeJsonResponse<ManagedFileReadResponse>()
                     val parsed = parseManagedPreviewDataUrl(response.dataUrl, response.size)
                     val name = response.name.ifBlank { entry.name }
@@ -282,7 +330,7 @@ class FilesViewModel(
                 }
             }.fold(
                 onSuccess = { payload ->
-                    updateCurrentPreview(entry.path) {
+                    updateCurrentPreview(entry.path, expectedScope) {
                         it.copy(
                             previewLoading = false,
                             preview = ManagedFilePreview(
@@ -303,7 +351,7 @@ class FilesViewModel(
                     }
                 },
                 onFailure = { error ->
-                    updateCurrentPreview(entry.path) {
+                    updateCurrentPreview(entry.path, expectedScope) {
                         it.copy(
                             previewLoading = false,
                             previewError = error.message ?: appString(R.string.files_error_read_file),
@@ -340,26 +388,30 @@ class FilesViewModel(
     fun cancelSave() = _ui.update { it.copy(confirmSave = false) }
 
     fun confirmSave() {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestApi = boundApi
         val state = _ui.value
         val file = state.preview ?: return
         if (!state.confirmSave || !state.editing || file.binary || state.saving) return
         val draft = state.editDraft
         val path = file.path
         _ui.update { it.copy(confirmSave = false, saving = true, previewError = null) }
-        viewModelScope.launch {
+        editJob?.cancel()
+        editJob = viewModelScope.launch {
             try {
                 val draftBytes = draft.toByteArray(Charsets.UTF_8)
                 require(draftBytes.size.toLong() <= INLINE_UPLOAD_LIMIT_BYTES) {
                     "Edited file exceeds the ${INLINE_UPLOAD_LIMIT_BYTES / (1024 * 1024)} MiB limit"
                 }
-                api.uploadManagedFile(
+                requestApi.uploadManagedFile(
                     managedUploadBody(
                         path = path,
                         dataUrl = dataUrlFor(draftBytes, "text/plain"),
                         overwrite = true,
                     ),
                 )
-                updateCurrentPreview(path) {
+                updateCurrentPreview(path, expectedScope) {
                     it.copy(
                         preview = file.copy(
                             size = draftBytes.size.toLong(),
@@ -379,7 +431,7 @@ class FilesViewModel(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                updateCurrentPreview(path) {
+                updateCurrentPreview(path, expectedScope) {
                     it.copy(
                         saving = false,
                         previewError = error.message ?: appString(R.string.files_error_save_file),
@@ -390,12 +442,16 @@ class FilesViewModel(
     }
 
     fun sharePreview() {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestApi = boundApi
         val state = _ui.value
         val file = state.preview ?: return
         val type = state.previewType ?: return
         if (state.previewLoading || state.shareLoading) return
         _ui.update { it.copy(shareLoading = true, sharePayload = null, shareError = null) }
-        viewModelScope.launch {
+        shareJob?.cancel()
+        shareJob = viewModelScope.launch {
             suspendResult {
                 withContext(Dispatchers.IO) {
                     val coroutineContext = currentCoroutineContext()
@@ -403,7 +459,7 @@ class FilesViewModel(
                         FilePreviewType.TEXT -> ByteArrayInputStream(file.text.toByteArray(Charsets.UTF_8))
                         FilePreviewType.IMAGE,
                         FilePreviewType.BINARY,
-                        -> ByteArrayInputStream(state.previewBytes ?: readPreviewBytes(file.path, type))
+                        -> ByteArrayInputStream(state.previewBytes ?: readPreviewBytes(file.path, type, requestApi))
                     }
                     val output = (shareFileManager ?: defaultShareFileManager).createShareFile(
                         prefix = "hermes-file-",
@@ -419,7 +475,7 @@ class FilesViewModel(
                 }
             }.fold(
                 onSuccess = { payload ->
-                    if (_ui.value.preview?.path == file.path) {
+                    if (isCurrentScope(expectedScope) && _ui.value.preview?.path == file.path) {
                         _ui.update {
                             it.copy(shareLoading = false, sharePayload = payload, shareError = null)
                         }
@@ -428,7 +484,7 @@ class FilesViewModel(
                     }
                 },
                 onFailure = { error ->
-                    updateCurrentPreview(file.path) {
+                    updateCurrentPreview(file.path, expectedScope) {
                         it.copy(
                             shareLoading = false,
                             shareError = error.message ?: appString(R.string.files_error_prepare_share),
@@ -472,6 +528,7 @@ class FilesViewModel(
     }
 
     fun prepareUpload(uri: Uri, resolver: ContentResolver) {
+        if (scopeFlow != null && boundScope == null) return
         val displayName = contentDisplayName(resolver, uri)
             .ifBlank { appString(R.string.files_upload_default_name) }
         val targetPath = runCatching { joinManagedPath(_ui.value.path, displayName) }
@@ -497,6 +554,9 @@ class FilesViewModel(
     }
 
     fun confirmUpload(overwrite: Boolean) {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestApi = boundApi
         val candidate = _ui.value.uploadCandidate ?: return
         val resolver = uploadResolver ?: return
         val totalBytes = contentLength(resolver, candidate.uri)
@@ -512,19 +572,22 @@ class FilesViewModel(
             )
         }
         uploadResolver = null
-        viewModelScope.launch {
+        uploadJob?.cancel()
+        uploadJob = viewModelScope.launch {
             suspendResult {
                 withContext(Dispatchers.IO) {
-                    uploadCandidate(candidate, resolver, overwrite, totalBytes)
+                    uploadCandidate(candidate, resolver, overwrite, totalBytes, requestApi, expectedScope)
                 }
             }.fold(
                 onSuccess = {
+                    if (!isCurrentScope(expectedScope)) return@fold
                     _ui.update {
                         it.copy(uploadState = FileUploadState.Complete(candidate.displayName))
                     }
                     refresh()
                 },
                 onFailure = { error ->
+                    if (!isCurrentScope(expectedScope)) return@fold
                     _ui.update {
                         it.copy(
                             uploadState = FileUploadState.Failed(
@@ -552,6 +615,9 @@ class FilesViewModel(
     }
 
     private fun download(path: String, displayName: String, size: Long, mimeType: String) {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestApi = boundApi
         if (_ui.value.downloadState is FileDownloadState.Downloading ||
             _ui.value.downloadState is FileDownloadState.Saving
         ) return
@@ -573,11 +639,11 @@ class FilesViewModel(
             try {
                 val ready = withContext(Dispatchers.IO) {
                     val coroutineContext = currentCoroutineContext()
-                    api.downloadManagedFile(path).use { response ->
+                    requestApi.downloadManagedFile(path).use { response ->
                         val total = response.contentLength().takeIf { it > 0L }
                             ?: size.takeIf { it > 0L }
                             ?: -1L
-                        if (generation == downloadGeneration) {
+                        if (generation == downloadGeneration && isCurrentScope(expectedScope)) {
                             _ui.update {
                                 it.copy(
                                     downloadState = FileDownloadState.Downloading(
@@ -593,7 +659,7 @@ class FilesViewModel(
                             source = response.byteStream(),
                             declaredBytes = total,
                             onProgress = { copied, reportedTotal ->
-                                if (generation == downloadGeneration) {
+                                if (generation == downloadGeneration && isCurrentScope(expectedScope)) {
                                     _ui.update {
                                         it.copy(
                                             downloadState = FileDownloadState.Downloading(
@@ -610,20 +676,20 @@ class FilesViewModel(
                     }
                     FileDownloadState.Ready(output ?: error("Download did not produce a file"), displayName, mimeType)
                 }
-                if (generation == downloadGeneration) {
+                if (generation == downloadGeneration && isCurrentScope(expectedScope)) {
                     _ui.update { it.copy(downloadState = ready) }
                 } else {
                     (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(ready.file)
                 }
             } catch (cancelled: CancellationException) {
                 output?.let { (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(it) }
-                if (generation == downloadGeneration) {
+                if (generation == downloadGeneration && isCurrentScope(expectedScope)) {
                     _ui.update { it.copy(downloadState = FileDownloadState.Idle) }
                 }
                 throw cancelled
             } catch (error: Throwable) {
                 output?.let { (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(it) }
-                if (generation == downloadGeneration) {
+                if (generation == downloadGeneration && isCurrentScope(expectedScope)) {
                     _ui.update {
                         it.copy(
                             downloadState = FileDownloadState.Failed(
@@ -637,6 +703,8 @@ class FilesViewModel(
     }
 
     fun saveDownload(uri: Uri, resolver: ContentResolver) {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
         val payload = currentDownloadPayload() ?: return
         downloadGeneration += 1
         val generation = downloadGeneration
@@ -658,7 +726,7 @@ class FilesViewModel(
                         payload.file.inputStream().use { source ->
                             val total = payload.file.length()
                             val progress = ProgressThrottler(onProgress = { copied, reportedTotal ->
-                                if (generation == downloadGeneration) {
+                                if (generation == downloadGeneration && isCurrentScope(expectedScope)) {
                                     _ui.update {
                                         it.copy(
                                             downloadState = FileDownloadState.Saving(
@@ -684,20 +752,20 @@ class FilesViewModel(
                         }
                     }
                 }
-                if (generation != downloadGeneration) return@launch
+                if (generation != downloadGeneration || !isCurrentScope(expectedScope)) return@launch
                 (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(payload.file)
                 _ui.update {
                     it.copy(downloadState = FileDownloadState.Complete(payload.displayName))
                 }
             } catch (cancelled: CancellationException) {
                 (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(payload.file)
-                if (generation == downloadGeneration) {
+                if (generation == downloadGeneration && isCurrentScope(expectedScope)) {
                     _ui.update { it.copy(downloadState = FileDownloadState.Idle) }
                 }
                 throw cancelled
             } catch (error: Throwable) {
                 (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(payload.file)
-                if (generation == downloadGeneration) {
+                if (generation == downloadGeneration && isCurrentScope(expectedScope)) {
                     _ui.update {
                         it.copy(
                             downloadState = FileDownloadState.Failed(
@@ -724,21 +792,27 @@ class FilesViewModel(
     }
 
     fun createDirectory(name: String) {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestApi = boundApi
         val target = runCatching { joinManagedPath(_ui.value.path, name) }.getOrElse {
             _ui.update { state -> state.copy(actionError = appString(R.string.files_error_create_folder)) }
             return
         }
         if (_ui.value.actionLoading) return
         _ui.update { it.copy(actionLoading = true, actionError = null) }
-        viewModelScope.launch {
+        actionJob?.cancel()
+        actionJob = viewModelScope.launch {
             suspendResult {
-                api.createManagedDir(buildJsonObject { put("path", target) })
+                requestApi.createManagedDir(buildJsonObject { put("path", target) })
             }.fold(
                 onSuccess = {
+                    if (!isCurrentScope(expectedScope)) return@fold
                     _ui.update { it.copy(actionLoading = false, actionError = null) }
                     refresh()
                 },
                 onFailure = { error ->
+                    if (!isCurrentScope(expectedScope)) return@fold
                     _ui.update {
                         it.copy(
                             actionLoading = false,
@@ -752,11 +826,16 @@ class FilesViewModel(
     }
 
     fun delete(entry: ManagedFileEntry) {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestApi = boundApi
         if (_ui.value.actionLoading) return
         _ui.update { it.copy(actionLoading = true, actionError = null) }
-        viewModelScope.launch {
-            suspendResult { api.deleteManagedFile(entry.path) }.fold(
+        actionJob?.cancel()
+        actionJob = viewModelScope.launch {
+            suspendResult { requestApi.deleteManagedFile(entry.path) }.fold(
                 onSuccess = {
+                    if (!isCurrentScope(expectedScope)) return@fold
                     _ui.update { state ->
                         state.copy(
                             actionLoading = false,
@@ -770,6 +849,7 @@ class FilesViewModel(
                     refresh()
                 },
                 onFailure = { error ->
+                    if (!isCurrentScope(expectedScope)) return@fold
                     _ui.update {
                         it.copy(
                             actionLoading = false,
@@ -786,6 +866,8 @@ class FilesViewModel(
         resolver: ContentResolver,
         overwrite: Boolean,
         totalBytes: Long,
+        requestApi: HermesApi,
+        expectedScope: ConnectionScope?,
     ) {
         val mimeType = candidate.mimeType
             ?.takeIf { it.isNotBlank() }
@@ -793,9 +875,9 @@ class FilesViewModel(
             ?: "application/octet-stream".toMediaType()
         if (totalBytes in 0L..INLINE_UPLOAD_LIMIT_BYTES) {
             val bytes = readContent(resolver, candidate.uri, totalBytes) { copied, total ->
-                updateUploadProgress(candidate.displayName, FileTransferPhase.PREPARING, copied, total)
+                updateUploadProgress(candidate.displayName, FileTransferPhase.PREPARING, copied, total, expectedScope)
             }
-            api.uploadManagedFile(
+            requestApi.uploadManagedFile(
                 managedUploadBody(
                     path = candidate.targetPath,
                     dataUrl = dataUrlFor(bytes, mimeType.toString()),
@@ -809,9 +891,9 @@ class FilesViewModel(
                 mediaType = mimeType,
                 length = totalBytes,
             ) { copied, total ->
-                updateUploadProgress(candidate.displayName, FileTransferPhase.SENDING, copied, total)
+                updateUploadProgress(candidate.displayName, FileTransferPhase.SENDING, copied, total, expectedScope)
             }
-            api.uploadManagedFileStream(
+            requestApi.uploadManagedFileStream(
                 path = candidate.targetPath.toRequestBody("text/plain".toMediaType()),
                 overwrite = overwrite.toString().toRequestBody("text/plain".toMediaType()),
                 file = MultipartBody.Part.createFormData("file", candidate.displayName, body),
@@ -824,7 +906,9 @@ class FilesViewModel(
         phase: FileTransferPhase,
         copied: Long,
         total: Long,
+        expectedScope: ConnectionScope?,
     ) {
+        if (!isCurrentScope(expectedScope)) return
         _ui.update {
             it.copy(
                 uploadState = FileUploadState.Running(
@@ -837,16 +921,20 @@ class FilesViewModel(
         }
     }
 
-    private suspend fun readPreviewBytes(path: String, type: FilePreviewType): ByteArray {
+    private suspend fun readPreviewBytes(
+        path: String,
+        type: FilePreviewType,
+        requestApi: HermesApi,
+    ): ByteArray {
         return if (type == FilePreviewType.IMAGE) {
             parseManagedPreviewDataUrl(
-                api.getMediaDataUrlBody(path)
+                requestApi.getMediaDataUrlBody(path)
                     .decodeJsonResponse<MediaDataUrlResponse>()
                     .dataUrl,
             ).bytes
         } else {
             parseManagedPreviewDataUrl(
-                api.readManagedFileBody(path)
+                requestApi.readManagedFileBody(path)
                     .decodeJsonResponse<ManagedFileReadResponse>()
                     .dataUrl,
             ).bytes
@@ -855,9 +943,10 @@ class FilesViewModel(
 
     private fun updateCurrentPreview(
         path: String,
+        expectedScope: ConnectionScope?,
         transform: (FilesUiState) -> FilesUiState,
     ) = _ui.update { state ->
-        if (state.preview?.path == path) transform(state) else state
+        if (isCurrentScope(expectedScope) && state.preview?.path == path) transform(state) else state
     }
 
     private fun managedUploadBody(path: String, dataUrl: String, overwrite: Boolean) =
@@ -867,8 +956,14 @@ class FilesViewModel(
             put("overwrite", overwrite)
         }
 
-    private fun isCurrentDirectoryRequest(generation: Long, requestedPath: String?): Boolean =
-        generation == directoryGeneration && requestedPath == requestedDirectoryPath
+    private fun isCurrentDirectoryRequest(
+        generation: Long,
+        requestedPath: String?,
+        expectedScope: ConnectionScope?,
+    ): Boolean =
+        generation == directoryGeneration &&
+            requestedPath == requestedDirectoryPath &&
+            isCurrentScope(expectedScope)
 
     private fun currentDownloadPayload(): DownloadPayload? = when (val state = _ui.value.downloadState) {
         is FileDownloadState.Ready -> DownloadPayload(state.file, state.displayName, state.mimeType)
@@ -894,15 +989,29 @@ class FilesViewModel(
     override fun onCleared() {
         downloadGeneration += 1
         directoryJob?.cancel()
+        previewJob?.cancel()
         downloadJob?.cancel()
         saveJob?.cancel()
+        editJob?.cancel()
+        shareJob?.cancel()
+        actionJob?.cancel()
+        uploadJob?.cancel()
         deleteOwnedDownload()
             }
 
     companion object {
         fun factory() = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T = FilesViewModel() as T
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                val container = TalariaApp.instance.container
+                return FilesViewModel(
+                    apiProvider = { scope ->
+                        scope?.snapshot?.let { container.clientFactory.api(it) }
+                            ?: container.clientFactory.api()
+                    },
+                    scopeFlow = container.connectionStore.scope,
+                ) as T
+            }
         }
     }
 }

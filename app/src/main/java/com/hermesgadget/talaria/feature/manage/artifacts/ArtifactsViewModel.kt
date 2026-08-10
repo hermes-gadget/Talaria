@@ -23,6 +23,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
+import com.hermesgadget.talaria.core.network.ConnectionScope
+import com.hermesgadget.talaria.core.network.ConnectionScopeObserver
+import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.util.BoundedImage
 import com.hermesgadget.talaria.core.util.ImageHandle
 import com.hermesgadget.talaria.core.network.decodeJsonResponse
@@ -139,6 +142,11 @@ class ArtifactsViewModel(
     private val defaultDispatcher: CoroutineDispatcher = Dispatchers.Default,
     /** Injectable so unit tests can drive file/image IO deterministically. */
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val scopeFlow: StateFlow<ConnectionScope?>? = null,
+    private val loadSessionsSnapshot: (suspend (ConnectionSnapshot?) -> Result<SessionsPage>)? = null,
+    private val loadMessagesSnapshot: (suspend (ConnectionSnapshot?, String) -> Result<List<SessionMessage>>)? = null,
+    private val readTextSnapshot: (suspend (ConnectionSnapshot?, String) -> Result<FsTextFile>)? = null,
+    private val readDataUrlSnapshot: (suspend (ConnectionSnapshot?, String) -> FsDataUrl)? = null,
 ) : ViewModel() {
     private val _ui = MutableStateFlow(ArtifactsUiState())
     val ui: StateFlow<ArtifactsUiState> = _ui.asStateFlow()
@@ -152,16 +160,43 @@ class ArtifactsViewModel(
     private var shareJob: Job? = null
     private var cachedArtifactRevision: String? = null
     private var cachedArtifacts: List<ArtifactRecord> = emptyList()
+    private var boundScope: ConnectionScope? = scopeFlow?.value
+    private var scopeObserver: ConnectionScopeObserver? = null
     private val defaultShareFileManager by lazy {
         ShareFileManager(TalariaApp.instance.cacheDir)
     }
 
     init {
         runCatching { (shareFileManager ?: defaultShareFileManager).cleanupStaleFiles() }
-        refresh()
+        scopeObserver = scopeFlow?.let { flow ->
+            ConnectionScopeObserver(flow, viewModelScope) { next -> rebind(next) }
+        }
+        if (scopeFlow == null || boundScope != null) refresh()
+    }
+
+    private fun rebind(next: ConnectionScope?) {
+        boundScope = next
+        artifactLoadGeneration += 1
+        previewGeneration += 1
+        artifactLoadJob?.cancel()
+        shareJob?.cancel()
+        cancelPreview()
+        cachedArtifactRevision = null
+        cachedArtifacts = emptyList()
+        _ui.value = ArtifactsUiState(load = ArtifactLoadState.Loading)
+        if (next != null) refresh()
+    }
+
+    private fun isCurrentScope(expected: ConnectionScope?): Boolean =
+        scopeObserver?.isCurrent(expected) != false
+
+    private fun ensureCurrentScope(expected: ConnectionScope?) {
+        if (!isCurrentScope(expected)) throw CancellationException("Stale artifact scope")
     }
 
     fun refresh() {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
         artifactLoadGeneration += 1
         val generation = artifactLoadGeneration
         artifactLoadJob?.cancel()
@@ -179,14 +214,14 @@ class ArtifactsViewModel(
         }
         artifactLoadJob = viewModelScope.launch {
             try {
-                val artifacts = loadArtifacts()
-                if (generation == artifactLoadGeneration) {
+                val artifacts = loadArtifacts(expectedScope)
+                if (generation == artifactLoadGeneration && isCurrentScope(expectedScope)) {
                     _ui.update { it.copy(load = ArtifactLoadState.Ready(artifacts), page = 0) }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                if (generation == artifactLoadGeneration) {
+                if (generation == artifactLoadGeneration && isCurrentScope(expectedScope)) {
                     _ui.update {
                         it.copy(
                             load = ArtifactLoadState.Failed(error.message ?: "Could not load artifacts"),
@@ -207,6 +242,9 @@ class ArtifactsViewModel(
     }
 
     fun openPreview(artifact: ArtifactRecord) {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestSnapshot = expectedScope?.snapshot
         previewJob?.cancel()
         BoundedImage.delete(previewHandle)
         previewHandle = null
@@ -224,9 +262,12 @@ class ArtifactsViewModel(
         }
         previewJob = viewModelScope.launch {
             try {
+                ensureCurrentScope(expectedScope)
                 val preview = when (artifact.kind) {
                     ArtifactKind.TEXT -> {
-                        val file = readText(artifact.path).getOrThrow()
+                        val file = (readTextSnapshot?.invoke(requestSnapshot, artifact.path)
+                            ?: readText(artifact.path)).getOrThrow()
+                        ensureCurrentScope(expectedScope)
                         require(file.byteSize <= 0L || file.byteSize <= MAX_ARTIFACT_PREVIEW_BYTES) {
                             "Artifact preview is too large"
                         }
@@ -240,7 +281,9 @@ class ArtifactsViewModel(
                     }
 
                     ArtifactKind.IMAGE -> {
-                        val file = readDataUrl(artifact.path)
+                        val file = readDataUrlSnapshot?.invoke(requestSnapshot, artifact.path)
+                            ?: readDataUrl(artifact.path)
+                        ensureCurrentScope(expectedScope)
                         val bounded = boundedDataUrl(file.dataUrl, file.byteSize)
                         val decoded = decodeDataUrl(bounded)
                         val prepared = withContext(ioDispatcher) {
@@ -252,7 +295,7 @@ class ArtifactsViewModel(
                                 dispatcher = ioDispatcher,
                             )
                         }
-                        if (!isCurrentPreview(generation, artifact)) {
+                        if (!isCurrentPreview(generation, artifact, expectedScope)) {
                             BoundedImage.delete(prepared.handle)
                             throw CancellationException("Stale artifact preview")
                         }
@@ -266,7 +309,9 @@ class ArtifactsViewModel(
                     }
 
                     ArtifactKind.ARCHIVE -> {
-                        val file = readDataUrl(artifact.path)
+                        val file = readDataUrlSnapshot?.invoke(requestSnapshot, artifact.path)
+                            ?: readDataUrl(artifact.path)
+                        ensureCurrentScope(expectedScope)
                         boundedDataUrl(file.dataUrl, file.byteSize)
                         ArtifactPreview.Binary(
                             artifact = artifact,
@@ -275,13 +320,13 @@ class ArtifactsViewModel(
                         )
                     }
                 }
-                if (isCurrentPreview(generation, artifact)) {
+                if (isCurrentPreview(generation, artifact, expectedScope)) {
                     _ui.update { it.copy(preview = preview, previewLoading = false) }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                if (isCurrentPreview(generation, artifact)) {
+                if (isCurrentPreview(generation, artifact, expectedScope)) {
                     _ui.update {
                         it.copy(
                             previewLoading = false,
@@ -306,21 +351,28 @@ class ArtifactsViewModel(
     }
 
     fun share(artifact: ArtifactRecord) {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
         if (_ui.value.sharing) return
         shareJob?.cancel()
         _ui.update { it.copy(sharing = true, shareError = null, shareRequest = null) }
         shareJob = viewModelScope.launch {
             try {
-                val request = shareRequestBuilder?.invoke(artifact) ?: prepareShare(artifact)
-                _ui.update { it.copy(sharing = false, shareRequest = request) }
+                ensureCurrentScope(expectedScope)
+                val request = shareRequestBuilder?.invoke(artifact) ?: prepareShare(artifact, expectedScope)
+                if (isCurrentScope(expectedScope)) {
+                    _ui.update { it.copy(sharing = false, shareRequest = request) }
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                _ui.update {
-                    it.copy(
-                        sharing = false,
-                        shareError = error.message ?: "Could not share ${artifact.label}",
-                    )
+                if (isCurrentScope(expectedScope)) {
+                    _ui.update {
+                        it.copy(
+                            sharing = false,
+                            shareError = error.message ?: "Could not share ${artifact.label}",
+                        )
+                    }
                 }
             }
         }
@@ -330,10 +382,13 @@ class ArtifactsViewModel(
         _ui.update { it.copy(shareRequest = null) }
     }
 
-    private suspend fun loadArtifacts(): List<ArtifactRecord> = coroutineScope {
+    private suspend fun loadArtifacts(expectedScope: ConnectionScope?): List<ArtifactRecord> = coroutineScope {
         // The desktop browser intentionally scans a recent bounded session slice;
         // doing the same keeps a mobile refresh responsive on large Hermes homes.
-        val page = loadSessions().getOrThrow()
+        ensureCurrentScope(expectedScope)
+        val requestSnapshot = expectedScope?.snapshot
+        val page = (loadSessionsSnapshot?.invoke(requestSnapshot) ?: loadSessions()).getOrThrow()
+        ensureCurrentScope(expectedScope)
         val sessions = page.sessions.take(ARTIFACT_SESSION_LIMIT)
         val revision = artifactRevision(page)
         if (revision == cachedArtifactRevision) return@coroutineScope cachedArtifacts
@@ -341,7 +396,10 @@ class ArtifactsViewModel(
         sessions.map { session ->
             async {
                 permits.withPermit {
-                    loadMessages(session.id).getOrNull()?.let { messages ->
+                    ensureCurrentScope(expectedScope)
+                    (loadMessagesSnapshot?.invoke(requestSnapshot, session.id)
+                        ?: loadMessages(session.id)).getOrNull()?.let { messages ->
+                        ensureCurrentScope(expectedScope)
                         // The transcript is owned only by this short-lived task;
                         // extraction returns bounded records before the task ends.
                         withContext(defaultDispatcher) {
@@ -357,6 +415,7 @@ class ArtifactsViewModel(
                 accumulator.addAll(request.await())
             }
             val sorted = withContext(defaultDispatcher) { accumulator.sorted() }
+            ensureCurrentScope(expectedScope)
             cachedArtifactRevision = revision
             cachedArtifacts = sorted
             sorted
@@ -373,10 +432,15 @@ class ArtifactsViewModel(
         previewArtifactPath = null
     }
 
-    private fun isCurrentPreview(generation: Long, artifact: ArtifactRecord): Boolean =
+    private fun isCurrentPreview(
+        generation: Long,
+        artifact: ArtifactRecord,
+        expectedScope: ConnectionScope?,
+    ): Boolean =
         generation == previewGeneration &&
             artifact.id == previewArtifactId &&
-            artifact.path == previewArtifactPath
+            artifact.path == previewArtifactPath &&
+            isCurrentScope(expectedScope)
 
     override fun onCleared() {
         artifactLoadJob?.cancel()
@@ -413,7 +477,12 @@ class ArtifactsViewModel(
             .sortedWith(compareByDescending<ArtifactRecord> { it.timestamp.orEmpty() }.thenBy { it.path })
     }
 
-    private suspend fun prepareShare(artifact: ArtifactRecord): ArtifactShareRequest = withContext(ioDispatcher) {
+    private suspend fun prepareShare(
+        artifact: ArtifactRecord,
+        expectedScope: ConnectionScope?,
+    ): ArtifactShareRequest = withContext(ioDispatcher) {
+        ensureCurrentScope(expectedScope)
+        val requestSnapshot = expectedScope?.snapshot
         val app = TalariaApp.instance
         val safeName = artifact.label
             .replace(Regex("[^A-Za-z0-9._-]+"), "_")
@@ -423,7 +492,9 @@ class ArtifactsViewModel(
         val manager = shareFileManager ?: defaultShareFileManager
         val (file, mimeType) = when (artifact.kind) {
             ArtifactKind.TEXT -> {
-                val text = readText(artifact.path).getOrThrow()
+                val text = (readTextSnapshot?.invoke(requestSnapshot, artifact.path)
+                    ?: readText(artifact.path)).getOrThrow()
+                ensureCurrentScope(expectedScope)
                 val bytes = text.text.toByteArray(Charsets.UTF_8)
                 require(bytes.size.toLong() <= MAX_SHARE_FILE_BYTES) {
                     "Artifact is too large to share"
@@ -436,7 +507,9 @@ class ArtifactsViewModel(
                 ) to (text.mimeType ?: "text/plain")
             }
             ArtifactKind.IMAGE, ArtifactKind.ARCHIVE -> {
-                val data = readDataUrl(artifact.path)
+                val data = readDataUrlSnapshot?.invoke(requestSnapshot, artifact.path)
+                    ?: readDataUrl(artifact.path)
+                ensureCurrentScope(expectedScope)
                 val decoded = decodeDataUrl(boundedDataUrl(data.dataUrl, data.byteSize))
                 require(decoded.bytes.isNotEmpty()) { "${artifact.label} is empty" }
                 if (artifact.kind == ArtifactKind.IMAGE) {
@@ -479,7 +552,29 @@ class ArtifactsViewModel(
     companion object {
         fun factory() = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T = ArtifactsViewModel() as T
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                val container = TalariaApp.instance.container
+                val repository = container.hermesRepository
+                return ArtifactsViewModel(
+                    scopeFlow = container.connectionStore.scope,
+                    loadSessionsSnapshot = { snapshot ->
+                        repository.getSessionsPage(
+                            limit = ARTIFACT_SESSION_LIMIT,
+                            offset = 0,
+                            snapshot = snapshot,
+                        )
+                    },
+                    loadMessagesSnapshot = { snapshot, sessionId ->
+                        repository.loadMessages(sessionId, snapshot)
+                    },
+                    readTextSnapshot = { snapshot, path -> repository.fsReadText(path, snapshot) },
+                    readDataUrlSnapshot = { snapshot, path ->
+                        val api = snapshot?.let { container.clientFactory.api(it) }
+                            ?: container.clientFactory.api()
+                        api.fsReadDataUrlBody(path).decodeJsonResponse<FsDataUrl>()
+                    },
+                ) as T
+            }
         }
 
         private fun suffixFor(artifact: ArtifactRecord): String = when (artifact.kind) {

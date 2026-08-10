@@ -94,15 +94,16 @@ class HermesRepository(
     private fun connId() = connectionStore.activeProfile()?.scopeId() ?: "none"
 
     /** Capture the destination, REST facade, and cache scope as one operation boundary. */
-    private fun captureOperation(): BoundOperation {
-        val snapshot = clientFactory.snapshot() ?: ConnectionSnapshot.anonymous()
-        return BoundOperation(snapshot = snapshot, api = clientFactory.api(snapshot))
+    private fun captureOperation(snapshot: ConnectionSnapshot? = null): BoundOperation {
+        val captured = snapshot ?: clientFactory.snapshot() ?: ConnectionSnapshot.anonymous()
+        return BoundOperation(snapshot = captured, api = clientFactory.api(captured))
     }
 
     private suspend fun <T> withBoundOperation(
+        snapshot: ConnectionSnapshot? = null,
         block: suspend (BoundOperation) -> T,
     ): Result<T> {
-        val operation = captureOperation()
+        val operation = captureOperation(snapshot)
         return withContext(Dispatchers.IO) {
             suspendResult { block(operation) }
         }
@@ -150,18 +151,23 @@ class HermesRepository(
     }
 
     private fun invalidate(snapshot: ConnectionSnapshot, vararg keys: String) {
-        keys.forEach { cache.invalidate("${snapshot.scopeId}:$it") }
+        val scope = cacheScope(snapshot)
+        keys.forEach { cache.invalidate("$scope:$it") }
     }
+
+    private fun cacheScope(snapshot: ConnectionSnapshot?): String =
+        snapshot?.let { "${it.scopeId}|${it.baseUrl}" } ?: "none"
 
     private suspend fun <T> cached(
         key: String,
         ttlMs: Long = DEFAULT_CACHE_TTL_MS,
+        snapshot: ConnectionSnapshot? = null,
         fetch: suspend (HermesApi) -> T,
     ): Result<T> {
-        val snapshot = clientFactory.snapshot()
-        val scope = snapshot?.scopeId ?: "none"
+        val captured = snapshot ?: clientFactory.snapshot()
+        val scope = cacheScope(captured)
         return cache.readThrough("$scope:$key", ttlMs) {
-            withContext(Dispatchers.IO) { fetch(clientFactory.api(snapshot)) }
+            withContext(Dispatchers.IO) { fetch(clientFactory.api(captured)) }
         }
     }
 
@@ -296,8 +302,9 @@ class HermesRepository(
         source: String? = null,
         limit: Int = 50,
         offset: Int = 0,
+        snapshot: ConnectionSnapshot? = null,
     ): Result<com.hermesgadget.talaria.domain.model.SessionsPage> {
-        val operation = captureOperation()
+        val operation = captureOperation(snapshot)
         return withContext(Dispatchers.IO) {
             suspendResult { fetchSessionsPage(operation, source = source, limit = limit, offset = offset) }
         }
@@ -350,8 +357,11 @@ class HermesRepository(
         }
     }
 
-    suspend fun loadMessages(sessionId: String): Result<List<SessionMessage>> {
-        return loadMessagesSnapshot(sessionId).map { it.messages }
+    suspend fun loadMessages(
+        sessionId: String,
+        snapshot: ConnectionSnapshot? = null,
+    ): Result<List<SessionMessage>> {
+        return loadMessagesSnapshot(sessionId, snapshot = snapshot).map { it.messages }
     }
 
     /**
@@ -363,24 +373,25 @@ class HermesRepository(
     suspend fun loadMessagesSnapshot(
         sessionId: String,
         profileName: String? = null,
+        snapshot: ConnectionSnapshot? = null,
     ): Result<TranscriptSnapshot> {
-        val operation = captureOperation()
-        val snapshot = operation.snapshot
+        val operation = captureOperation(snapshot)
+        val boundSnapshot = operation.snapshot
         return withContext(Dispatchers.IO) {
             suspendResult {
-                val profile = profileName ?: snapshot.managementProfile
+                val profile = profileName ?: boundSnapshot.managementProfile
                 val response = operation.api
                     .getSessionMessages(sessionId, profile = profile)
                 val fingerprint = TranscriptFingerprintFactory.from(response)
-                val key = "${snapshot.connectionId}|$profile|$sessionId"
+                val key = "${boundSnapshot.connectionId}|$profile|${boundSnapshot.baseUrl}|$sessionId"
                 val previous = transcriptFingerprints.peek(
                     key,
                     TRANSCRIPT_FINGERPRINT_TTL_MS,
                 ) as? TranscriptFingerprint
                 val contentChanged = TranscriptFingerprintFactory.contentChanged(previous, fingerprint)
 
-                if (contentChanged && profile == snapshot.managementProfile) {
-                    val cid = snapshot.scopeId
+                if (contentChanged && profile == boundSnapshot.managementProfile) {
+                    val cid = boundSnapshot.scopeId
                     val rows = response.messages.mapIndexed { index, message ->
                         CachedMessageEntity(
                             key = "$sessionId-$index",
@@ -761,12 +772,13 @@ class HermesRepository(
         result
     }
 
-    suspend fun getModelInfo(): Result<ModelInfo> = withBoundOperation { operation ->
-        val el = operation.api.getModelInfo()
-        runCatching { json.decodeFromJsonElement<ModelInfo>(el) }.getOrElse {
-            ModelInfo(model = el.jsonObject["model"]?.toString()?.trim('"'))
+    suspend fun getModelInfo(snapshot: ConnectionSnapshot? = null): Result<ModelInfo> =
+        withBoundOperation(snapshot) { operation ->
+            val el = operation.api.getModelInfo()
+            runCatching { json.decodeFromJsonElement<ModelInfo>(el) }.getOrElse {
+                ModelInfo(model = el.jsonObject["model"]?.toString()?.trim('"'))
+            }
         }
-    }
 
     suspend fun getModelOptions(): Result<List<ModelOption>> = withBoundOperation { operation ->
         val el = operation.api.getModelOptions()
@@ -793,7 +805,8 @@ class HermesRepository(
         provider: String,
         modelId: String,
         confirmExpensive: Boolean = false,
-    ): Result<ModelAssignmentResult> = withBoundOperation { operation ->
+        snapshot: ConnectionSnapshot? = null,
+    ): Result<ModelAssignmentResult> = withBoundOperation(snapshot) { operation ->
             val response = operation.api.setModel(buildJsonObject {
                 put("scope", "main")
                 put("provider", provider)
@@ -810,16 +823,16 @@ class HermesRepository(
     }
 
     /** Provider-grouped model catalog for the Models screen (roadmap 15.12). */
-    suspend fun getModelProviders(): Result<List<ModelProvider>> = cached("model_providers") {
-        api ->
-        val el = api.getModelOptions()
-        when (el) {
-            is JsonObject -> el["providers"]?.jsonArray
-                ?.mapNotNull { suspendResult { json.decodeFromJsonElement<ModelProvider>(it) }.getOrNull() }
-                ?: emptyList()
-            else -> emptyList()
+    suspend fun getModelProviders(snapshot: ConnectionSnapshot? = null): Result<List<ModelProvider>> =
+        cached("model_providers", snapshot = snapshot) { api ->
+            val el = api.getModelOptions()
+            when (el) {
+                is JsonObject -> el["providers"]?.jsonArray
+                    ?.mapNotNull { suspendResult { json.decodeFromJsonElement<ModelProvider>(it) }.getOrNull() }
+                    ?: emptyList()
+                else -> emptyList()
+            }
         }
-    }
 
     suspend fun getToolsets(): Result<List<ToolsetInfo>> = cached("toolsets") {
         api ->
@@ -1090,8 +1103,16 @@ class HermesRepository(
         )
     }
 
-    suspend fun fsReadText(path: String): Result<FsTextFile> = withBoundOperation { operation ->
-        operation.api.fsReadText(path, profile = operation.snapshot.managementProfile)
+    suspend fun fsReadText(
+        path: String,
+        snapshot: ConnectionSnapshot? = null,
+    ): Result<FsTextFile> {
+        val operation = captureOperation(snapshot)
+        return withContext(Dispatchers.IO) {
+            suspendResult {
+                operation.api.fsReadText(path, profile = operation.snapshot.managementProfile)
+            }
+        }
     }
 
     /** Re-read before saving so a remote edit does not silently overwrite a newer file. */
@@ -1117,12 +1138,16 @@ class HermesRepository(
 
     suspend fun getLearningGraph(): Result<LearningGraph> = cached("learning_graph") { api -> api.getLearningGraph() }
 
-    suspend fun getLearningNode(id: String) = withBoundOperation { operation ->
-        operation.api.getLearningNode(id, profile = operation.snapshot.managementProfile)
+    suspend fun getLearningNode(id: String, snapshot: ConnectionSnapshot? = null) =
+        withBoundOperation(snapshot) { operation ->
+            operation.api.getLearningNode(id, profile = operation.snapshot.managementProfile)
     }
 
-    suspend fun updateLearningNode(id: String, content: String): Result<LearningGraph> =
-        withBoundOperation { operation ->
+    suspend fun updateLearningNode(
+        id: String,
+        content: String,
+        snapshot: ConnectionSnapshot? = null,
+    ): Result<LearningGraph> = withBoundOperation(snapshot) { operation ->
             operation.api.updateLearningNode(buildJsonObject {
                 put("id", id)
                 put("content", content)
@@ -1131,8 +1156,10 @@ class HermesRepository(
             operation.api.getLearningGraph(profile = operation.snapshot.managementProfile)
         }
 
-    suspend fun deleteLearningNode(id: String): Result<LearningGraph> =
-        withBoundOperation { operation ->
+    suspend fun deleteLearningNode(
+        id: String,
+        snapshot: ConnectionSnapshot? = null,
+    ): Result<LearningGraph> = withBoundOperation(snapshot) { operation ->
             operation.api.deleteLearningNode(
                 buildJsonObject { put("id", id) },
                 profile = operation.snapshot.managementProfile,

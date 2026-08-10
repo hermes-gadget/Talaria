@@ -20,9 +20,14 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.repo.HermesRepository
+import com.hermesgadget.talaria.core.network.ConnectionScope
+import com.hermesgadget.talaria.core.network.ConnectionScopeObserver
 import com.hermesgadget.talaria.core.network.HermesApi
+import com.hermesgadget.talaria.core.util.suspendResult
 import com.hermesgadget.talaria.domain.model.ModelProvider
 import com.hermesgadget.talaria.domain.model.effectiveManagementProfile
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -168,17 +173,59 @@ data class ModelsUiState(
 /** Model management: provider catalog, MoA settings, auxiliary assignments, and onboarding defaults. */
 class ModelsViewModel(
     private val repo: HermesRepository = TalariaApp.instance.container.hermesRepository,
-    private val api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
+    api: HermesApi? = null,
     private val profileProvider: () -> String? = {
         TalariaApp.instance.container.connectionStore.activeProfile()?.effectiveManagementProfile()
     },
+    private val apiProvider: (ConnectionScope?) -> HermesApi = { scope ->
+        scope?.snapshot?.let { TalariaApp.instance.container.clientFactory.api(it) }
+            ?: TalariaApp.instance.container.clientFactory.api()
+    },
+    private val scopeFlow: StateFlow<ConnectionScope?>? = null,
 ) : ViewModel() {
+    private val fixedApi = api
+    private var boundApi: HermesApi = api ?: apiProvider(scopeFlow?.value)
+    private var boundScope: ConnectionScope? = scopeFlow?.value
+    private var scopeObserver: ConnectionScopeObserver? = null
+    private val workJobs = mutableSetOf<Job>()
     private val _ui = MutableStateFlow(ModelsUiState())
     val ui: StateFlow<ModelsUiState> = _ui.asStateFlow()
 
-    init { refresh() }
+    init {
+        scopeObserver = scopeFlow?.let { flow ->
+            ConnectionScopeObserver(flow, viewModelScope) { next -> rebind(next) }
+        }
+        if (scopeFlow == null || boundScope != null) refresh()
+    }
+
+    private fun rebind(next: ConnectionScope?) {
+        boundScope = next
+        boundApi = fixedApi ?: apiProvider(next)
+        cancelWork()
+        _ui.value = ModelsUiState(loading = next != null)
+        if (next != null) refresh()
+    }
+
+    private fun isCurrentScope(expected: ConnectionScope?): Boolean =
+        scopeObserver?.isCurrent(expected) != false
+
+    private fun cancelWork() {
+        workJobs.toList().forEach { it.cancel() }
+        workJobs.clear()
+    }
+
+    private fun launchWork(block: suspend CoroutineScope.() -> Unit): Job =
+        viewModelScope.launch(block = block).also { job ->
+            workJobs += job
+            job.invokeOnCompletion { workJobs -= job }
+        }
 
     fun refresh() {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestApi = boundApi
+        val profile = profile()
+        cancelWork()
         _ui.update {
             it.copy(
                 loading = true,
@@ -193,55 +240,82 @@ class ModelsViewModel(
                 recommendedErrors = emptyMap(),
             )
         }
-        viewModelScope.launch {
-            val profile = profile()
+        launchWork {
             launch {
-                repo.getModelInfo().onSuccess { info ->
-                    _ui.update { it.copy(currentModel = info.model, currentProvider = info.provider) }
+                if (!isCurrentScope(expectedScope)) return@launch
+                repo.getModelInfo(expectedScope?.snapshot).onSuccess { info ->
+                    if (isCurrentScope(expectedScope)) {
+                        _ui.update { it.copy(currentModel = info.model, currentProvider = info.provider) }
+                    }
                 }
             }
             launch {
-                repo.getModelProviders().fold(
-                    onSuccess = { list -> _ui.update { it.copy(loading = false, providers = list) } },
-                    onFailure = { e -> _ui.update { it.copy(loading = false, error = e.message) } },
+                if (!isCurrentScope(expectedScope)) return@launch
+                repo.getModelProviders(expectedScope?.snapshot).fold(
+                    onSuccess = { list ->
+                        if (isCurrentScope(expectedScope)) {
+                            _ui.update { it.copy(loading = false, providers = list) }
+                        }
+                    },
+                    onFailure = { e ->
+                        if (isCurrentScope(expectedScope)) {
+                            _ui.update { it.copy(loading = false, error = e.message) }
+                        }
+                    },
                 )
             }
-            launch { loadAuxiliaryModels(profile) }
-            launch { loadMoaConfig(profile) }
+            launch { loadAuxiliaryModels(requestApi, profile, expectedScope) }
+            launch { loadMoaConfig(requestApi, profile, expectedScope) }
         }
     }
 
     fun getAuxiliaryModels() {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestApi = boundApi
+        val requestProfile = profile()
         _ui.update { it.copy(auxiliaryLoading = true, auxiliaryError = null) }
-        viewModelScope.launch { loadAuxiliaryModels(profile()) }
+        launchWork { loadAuxiliaryModels(requestApi, requestProfile, expectedScope) }
     }
 
     fun getMoaConfig() {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestApi = boundApi
+        val requestProfile = profile()
         _ui.update { it.copy(moaLoading = true, moaError = null, moaSaved = false) }
-        viewModelScope.launch { loadMoaConfig(profile()) }
+        launchWork { loadMoaConfig(requestApi, requestProfile, expectedScope) }
     }
 
     fun putMoaConfig(config: MoaConfigDraft) {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestApi = boundApi
+        val profile = profile()
         _ui.update { it.copy(moaSaving = true, moaError = null, moaSaved = false) }
-        viewModelScope.launch {
-            runCatching { api.putMoaConfig(config.toJson(), profile()) }.fold(
+        launchWork {
+            suspendResult { requestApi.putMoaConfig(config.toJson(), profile) }.fold(
                 onSuccess = { response ->
-                    _ui.update {
-                        it.copy(
-                            moa = parseMoaConfig(response) ?: config,
-                            moaSaving = false,
-                            moaSaved = true,
-                            moaError = null,
-                        )
+                    if (isCurrentScope(expectedScope)) {
+                        _ui.update {
+                            it.copy(
+                                moa = parseMoaConfig(response) ?: config,
+                                moaSaving = false,
+                                moaSaved = true,
+                                moaError = null,
+                            )
+                        }
                     }
                 },
                 onFailure = { e ->
-                    _ui.update {
-                        it.copy(
-                            moaSaving = false,
-                            moaSaved = false,
-                            moaError = e.message,
-                        )
+                    if (isCurrentScope(expectedScope)) {
+                        _ui.update {
+                            it.copy(
+                                moaSaving = false,
+                                moaSaved = false,
+                                moaError = e.message,
+                            )
+                        }
                     }
                 },
             )
@@ -252,15 +326,19 @@ class ModelsViewModel(
     fun getRecommendedDefaultModel(provider: String) {
         val slug = provider.trim()
         if (slug.isBlank()) return
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
+        val requestApi = boundApi
         _ui.update {
             it.copy(
                 recommendedLoading = it.recommendedLoading + slug,
                 recommendedErrors = it.recommendedErrors - slug,
             )
         }
-        viewModelScope.launch {
-            runCatching { api.getRecommendedDefaultModel(slug) }.fold(
+        launchWork {
+            suspendResult { requestApi.getRecommendedDefaultModel(slug) }.fold(
                 onSuccess = { response ->
+                    if (!isCurrentScope(expectedScope)) return@fold
                     val recommendation = parseRecommendedDefault(response)
                     _ui.update {
                         it.copy(
@@ -273,6 +351,7 @@ class ModelsViewModel(
                     }
                 },
                 onFailure = { e ->
+                    if (!isCurrentScope(expectedScope)) return@fold
                     _ui.update {
                         it.copy(
                             recommendedLoading = it.recommendedLoading - slug,
@@ -287,10 +366,19 @@ class ModelsViewModel(
     }
 
     fun setModel(provider: String, model: String, confirmExpensive: Boolean = false) {
+        val expectedScope = boundScope
+        if (scopeFlow != null && expectedScope == null) return
         _ui.update { it.copy(setting = model, message = null) }
-        viewModelScope.launch {
-            repo.setModel(provider, model, confirmExpensive).fold(
+        launchWork {
+            if (!isCurrentScope(expectedScope)) return@launchWork
+            repo.setModel(
+                provider = provider,
+                modelId = model,
+                confirmExpensive = confirmExpensive,
+                snapshot = expectedScope?.snapshot,
+            ).fold(
                 onSuccess = { result ->
+                    if (!isCurrentScope(expectedScope)) return@fold
                     if (result.confirmRequired) {
                         _ui.update {
                             it.copy(
@@ -314,7 +402,11 @@ class ModelsViewModel(
                         refresh()
                     }
                 },
-                onFailure = { e -> _ui.update { it.copy(setting = null, message = "Failed: ${e.message}") } },
+                onFailure = { e ->
+                    if (isCurrentScope(expectedScope)) {
+                        _ui.update { it.copy(setting = null, message = "Failed: ${e.message}") }
+                    }
+                },
             )
         }
     }
@@ -331,40 +423,57 @@ class ModelsViewModel(
 
     fun clearMessage() = _ui.update { it.copy(message = null) }
 
-    private fun profile(): String? = profileProvider()?.takeIf { it.isNotBlank() }
+    private fun profile(): String? =
+        (boundScope?.managementProfile ?: profileProvider())?.takeIf { it.isNotBlank() }
 
-    private suspend fun loadAuxiliaryModels(profile: String?) {
-        runCatching { api.getAuxiliaryModels(profile) }.fold(
+    private suspend fun loadAuxiliaryModels(
+        requestApi: HermesApi,
+        profile: String?,
+        expectedScope: ConnectionScope?,
+    ) {
+        suspendResult { requestApi.getAuxiliaryModels(profile) }.fold(
             onSuccess = { response ->
-                _ui.update {
-                    it.copy(
-                        auxiliary = parseAuxiliaryModels(response),
-                        auxiliaryLoading = false,
-                        auxiliaryError = null,
-                    )
+                if (isCurrentScope(expectedScope)) {
+                    _ui.update {
+                        it.copy(
+                            auxiliary = parseAuxiliaryModels(response),
+                            auxiliaryLoading = false,
+                            auxiliaryError = null,
+                        )
+                    }
                 }
             },
             onFailure = { e ->
-                _ui.update {
-                    it.copy(auxiliaryLoading = false, auxiliaryError = e.message)
+                if (isCurrentScope(expectedScope)) {
+                    _ui.update {
+                        it.copy(auxiliaryLoading = false, auxiliaryError = e.message)
+                    }
                 }
             },
         )
     }
 
-    private suspend fun loadMoaConfig(profile: String?) {
-        runCatching { api.getMoaConfig(profile) }.fold(
+    private suspend fun loadMoaConfig(
+        requestApi: HermesApi,
+        profile: String?,
+        expectedScope: ConnectionScope?,
+    ) {
+        suspendResult { requestApi.getMoaConfig(profile) }.fold(
             onSuccess = { response ->
-                _ui.update {
-                    it.copy(
-                        moa = parseMoaConfig(response),
-                        moaLoading = false,
-                        moaError = null,
-                    )
+                if (isCurrentScope(expectedScope)) {
+                    _ui.update {
+                        it.copy(
+                            moa = parseMoaConfig(response),
+                            moaLoading = false,
+                            moaError = null,
+                        )
+                    }
                 }
             },
             onFailure = { e ->
-                _ui.update { it.copy(moaLoading = false, moaError = e.message) }
+                if (isCurrentScope(expectedScope)) {
+                    _ui.update { it.copy(moaLoading = false, moaError = e.message) }
+                }
             },
         )
     }
@@ -372,7 +481,16 @@ class ModelsViewModel(
     companion object {
         fun factory() = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T = ModelsViewModel() as T
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                val container = TalariaApp.instance.container
+                return ModelsViewModel(
+                    apiProvider = { scope ->
+                        scope?.snapshot?.let { container.clientFactory.api(it) }
+                            ?: container.clientFactory.api()
+                    },
+                    scopeFlow = container.connectionStore.scope,
+                ) as T
+            }
         }
     }
 }

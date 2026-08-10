@@ -22,6 +22,7 @@ import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.hermesgadget.talaria.core.network.AuthInterceptor
+import com.hermesgadget.talaria.core.network.ConnectionScope
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.JsonConfig
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
@@ -166,6 +167,10 @@ class SecureConnectionStore internal constructor(
     val profiles: StateFlow<List<ConnectionProfile>> = _profiles.asStateFlow()
     private val _activeId = MutableStateFlow<String?>(null)
     val activeId: StateFlow<String?> = _activeId.asStateFlow()
+    private val _scope = MutableStateFlow<ConnectionScope?>(null)
+    /** Current immutable transport/profile scope and its invalidation generation. */
+    val scope: StateFlow<ConnectionScope?> = _scope.asStateFlow()
+    private var scopeGeneration = 0L
     private val _state = MutableStateFlow<SecureConnectionStoreState>(
         SecureConnectionStoreState.RecoverableCorruption(
             SecureStoreDiagnostics("INITIALIZING", "startup", "none"),
@@ -187,6 +192,7 @@ class SecureConnectionStore internal constructor(
         prefs = null
         _profiles.value = emptyList()
         _activeId.value = null
+        publishScopeLocked()
         if (!runCatching { storage.confirmedReset() }.getOrDefault(false)) {
             _state.value = SecureConnectionStoreState.RecoverableCorruption(
                 SecureStoreDiagnostics("RESET_INTERRUPTED", "reset", "commit"),
@@ -247,6 +253,7 @@ class SecureConnectionStore internal constructor(
         _profiles.value = list
         _activeId.value = nextActiveId
         _state.value = SecureConnectionStoreState.Available(list.size)
+        publishScopeLocked()
     }
 
     @SuppressLint("UseKtx")
@@ -256,6 +263,7 @@ class SecureConnectionStore internal constructor(
             "Could not select the Hermes connection"
         }
         _activeId.value = id
+        publishScopeLocked()
     }
 
     fun updateSessionToken(id: String, token: String) = synchronized(mutationLock) {
@@ -348,6 +356,7 @@ class SecureConnectionStore internal constructor(
         _profiles.value = nextProfiles
         _activeId.value = nextActiveId
         _state.value = SecureConnectionStoreState.Available(nextProfiles.size)
+        publishScopeLocked()
     }
 
     @SuppressLint("UseKtx")
@@ -375,10 +384,12 @@ class SecureConnectionStore internal constructor(
             _profiles.value = migrated
             _activeId.value = active
             _state.value = SecureConnectionStoreState.Available(migrated.size)
+            publishScopeLocked()
         } catch (failure: Throwable) {
             prefs = null
             _profiles.value = emptyList()
             _activeId.value = null
+            publishScopeLocked()
             val root = (failure as? SecureStoreAccessException)?.cause ?: failure
             val diagnostics = SecureStoreDiagnostics(
                 code = if ((failure as? SecureStoreAccessException)?.kind == SecureStoreFailureKind.PERMANENT ||
@@ -393,6 +404,19 @@ class SecureConnectionStore internal constructor(
                 SecureConnectionStoreState.RecoverableCorruption(diagnostics)
             }
         }
+    }
+
+    /** Must be called while [mutationLock] is held. */
+    private fun publishScopeLocked() {
+        val nextSnapshot = activeSnapshot()
+        val previousSnapshot = _scope.value?.snapshot
+        if (nextSnapshot == null) {
+            if (previousSnapshot != null) scopeGeneration += 1
+            _scope.value = null
+            return
+        }
+        if (previousSnapshot != nextSnapshot || _scope.value == null) scopeGeneration += 1
+        _scope.value = ConnectionScope(nextSnapshot, scopeGeneration)
     }
 
     private fun readSecretsSafely(id: String, profile: ConnectionProfile?): ConnectionSecrets? = try {
