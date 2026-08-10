@@ -64,6 +64,7 @@ data class ShareCaptureItemUi(
 enum class ShareDeliveryUiState {
     IDLE,
     SENDING,
+    DELIVERY_UNKNOWN,
     DELIVERED,
 }
 
@@ -235,7 +236,7 @@ class ShareCaptureViewModel(
             showError("Connect to a Hermes profile before sending")
             return
         }
-        if (ui.value.deliveryState == ShareDeliveryUiState.SENDING) return
+        if (current.deliveryState != ShareDraftDeliveryState.DRAFT) return
         if (current.text.isBlank() && current.items.isEmpty()) {
             showError("Add text or a file before sending")
             return
@@ -519,10 +520,17 @@ class ShareCaptureViewModel(
                 selectedTargetKey = selected,
                 profileName = current.managementProfile,
                 suggestions = ShareIntakePolicy.urlSuggestions(current.text),
-                error = it.error ?: current.deliveryMessage,
+                error = it.error ?: current.deliveryMessage ?: if (
+                    current.deliveryState == ShareDraftDeliveryState.DELIVERY_UNKNOWN
+                ) {
+                    TalariaApp.instance.getString(R.string.capture_delivery_unknown)
+                } else {
+                    null
+                },
                 deliveryState = when (current.deliveryState) {
                     ShareDraftDeliveryState.DRAFT -> ShareDeliveryUiState.IDLE
                     ShareDraftDeliveryState.SENDING -> ShareDeliveryUiState.SENDING
+                    ShareDraftDeliveryState.DELIVERY_UNKNOWN -> ShareDeliveryUiState.DELIVERY_UNKNOWN
                 },
             )
         }

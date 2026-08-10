@@ -25,6 +25,7 @@ import kotlinx.serialization.encodeToString
 enum class ShareDraftDeliveryState {
     DRAFT,
     SENDING,
+    DELIVERY_UNKNOWN,
 }
 
 @Serializable
@@ -84,11 +85,11 @@ class ShareIntakeStore(
             ?: return null.also { prefs.edit(commit = true) { remove(key(scopeId)) } }
         if (isExpired(draft)) return null.also { remove(draft) }
         // A process can die after the durable state changes to SENDING but
-        // before the PTY acknowledgement. Keep it visible and never replay it
-        // automatically, because the server may already have accepted it.
+        // before the PTY acknowledgement. Keep it visible but permanently
+        // non-resendable, because the server may already have accepted it.
         return if (draft.deliveryState == ShareDraftDeliveryState.SENDING) {
             draft.copy(
-                deliveryState = ShareDraftDeliveryState.DRAFT,
+                deliveryState = ShareDraftDeliveryState.DELIVERY_UNKNOWN,
                 deliveryMessage = appContext.getString(R.string.capture_delivery_unknown),
             ).also(::save)
         } else {

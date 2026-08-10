@@ -234,7 +234,7 @@ fun ShareCaptureScreen(
                         onClick = viewModel::send,
                         modifier = Modifier.weight(1f),
                         enabled = !ui.importing &&
-                            ui.deliveryState != ShareDeliveryUiState.SENDING &&
+                            ui.deliveryState == ShareDeliveryUiState.IDLE &&
                             (ui.text.isNotBlank() || ui.items.isNotEmpty()),
                     ) {
                         Text(

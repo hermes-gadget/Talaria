@@ -21,7 +21,7 @@ import java.util.UUID
 @Config(sdk = [35], application = Application::class)
 class ShareIntakeStoreTest {
     @Test
-    fun `sending draft is recovered for review after process death`() {
+    fun `sending draft is recovered as delivery unknown after process death`() {
         val scope = "share-test-${UUID.randomUUID()}"
         val store = ShareIntakeStore(
             context = ApplicationProvider.getApplicationContext(),
@@ -40,7 +40,7 @@ class ShareIntakeStoreTest {
         val recovered = store.load(scope)
 
         assertNotNull(recovered)
-        assertEquals(ShareDraftDeliveryState.DRAFT, recovered?.deliveryState)
+        assertEquals(ShareDraftDeliveryState.DELIVERY_UNKNOWN, recovered?.deliveryState)
         assertEquals(
             "Delivery status is unknown; review this draft before retrying.",
             recovered?.deliveryMessage,
