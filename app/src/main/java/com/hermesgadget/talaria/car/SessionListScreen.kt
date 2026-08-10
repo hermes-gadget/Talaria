@@ -19,6 +19,7 @@ package com.hermesgadget.talaria.car
 import androidx.car.app.CarContext
 import androidx.car.app.CarToast
 import androidx.car.app.Screen
+import androidx.car.app.constraints.ConstraintManager
 import androidx.car.app.model.Action
 import androidx.car.app.model.CarIcon
 import androidx.car.app.model.CarText
@@ -149,32 +150,43 @@ class SessionListScreen(
             }
         }
 
+        // The list limit covers every item in the template, including the
+        // create/quick-start rows. Reserve those slots before rendering
+        // conversations so a busy instance cannot exceed the host's limit.
+        val maxContentItems = carContext
+            .getCarService(ConstraintManager::class.java)
+            .getContentLimit(ConstraintManager.CONTENT_LIMIT_TYPE_LIST)
+            .coerceAtLeast(0)
+        var remainingContentItems = maxContentItems
         val itemList = ItemList.Builder()
 
         if (hostAccess.canPerformActions) {
             // 1) Create-agent entry. The framework's reply affordance is the
             //    mic — speaking the first prompt creates the session.
-            itemList.addItem(
-                ConversationItem.Builder(
-                    CREATE_AGENT_ID,
-                    CarText.create(carContext.getString(R.string.car_create_agent)),
-                    createPerson,
-                    listOf(
-                        CarMessage.Builder()
-                            .setSender(hermesPerson)
-                            .setBody(CarText.create(carContext.getString(R.string.car_create_agent_body)))
-                            .setReceivedTimeEpochMillis(System.currentTimeMillis())
-                            .setRead(true)
-                            .build(),
-                    ),
-                    newAgentCallback(),
+            if (remainingContentItems > 0) {
+                itemList.addItem(
+                    ConversationItem.Builder(
+                        CREATE_AGENT_ID,
+                        CarText.create(carContext.getString(R.string.car_create_agent)),
+                        createPerson,
+                        listOf(
+                            CarMessage.Builder()
+                                .setSender(hermesPerson)
+                                .setBody(CarText.create(carContext.getString(R.string.car_create_agent_body)))
+                                .setReceivedTimeEpochMillis(System.currentTimeMillis())
+                                .setRead(true)
+                                .build(),
+                        ),
+                        newAgentCallback(),
+                    )
+                        .setIcon(CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_car_add)).build())
+                        .build(),
                 )
-                    .setIcon(CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_car_add)).build())
-                    .build(),
-            )
+                remainingContentItems--
+            }
 
             // 2) Quick-start one-tap actions (no dictation needed while driving).
-            quickStarts.forEach { quick ->
+            quickStarts.take(remainingContentItems).forEach { quick ->
                 itemList.addItem(
                     Row.Builder()
                         .setTitle(quick.title)
@@ -182,8 +194,9 @@ class SessionListScreen(
                         .setOnClickListener { startQuickAction(quick) }
                         .build(),
                 )
+                remainingContentItems--
             }
-        } else {
+        } else if (remainingContentItems > 0) {
             itemList.addItem(
                 Row.Builder()
                     .setTitle(carContext.getString(R.string.car_phone_confirmation))
@@ -191,10 +204,11 @@ class SessionListScreen(
                     .setImage(CarIcon.APP_ICON)
                     .build(),
             )
+            remainingContentItems--
         }
 
         // 3) Active agent conversations.
-        conversations.orEmpty().forEach { conversation ->
+        conversations.orEmpty().take(remainingContentItems).forEach { conversation ->
             val session = conversation.session
             if (hostAccess.canPerformActions) {
                 itemList.addItem(
