@@ -25,7 +25,6 @@ import com.hermesgadget.talaria.core.network.PtyEvent
 import com.hermesgadget.talaria.core.network.PtyGenerationGate
 import com.hermesgadget.talaria.core.network.PtyWebSocketSession
 import com.hermesgadget.talaria.core.network.WsAuthHelper
-import com.hermesgadget.talaria.domain.model.scopeId
 import kotlinx.coroutines.flow.Flow
 import java.util.UUID
 
@@ -55,13 +54,10 @@ class ChatRepository(
         return session to session.connect(resumeSessionId, channelId, cols, rows, attachToken)
     }
 
-    suspend fun saveDraft(text: String) {
-        val id = connectionStore.activeProfile()?.scopeId() ?: return
-        db.drafts().upsert(ChatDraftEntity(id, text))
+    suspend fun saveDraft(scopeId: String, text: String) {
+        db.drafts().upsert(ChatDraftEntity(scopeId, text))
     }
 
-    suspend fun loadDraft(): String {
-        val id = connectionStore.activeProfile()?.scopeId() ?: return ""
-        return db.drafts().get(id)?.text.orEmpty()
-    }
+    suspend fun loadDraft(scopeId: String): String =
+        db.drafts().get(scopeId)?.text.orEmpty()
 }
