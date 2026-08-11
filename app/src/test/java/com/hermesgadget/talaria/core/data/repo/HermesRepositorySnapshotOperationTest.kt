@@ -9,6 +9,8 @@ import com.hermesgadget.talaria.domain.model.AuthMode
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
 import com.hermesgadget.talaria.domain.model.ConnectionSecrets
 import com.hermesgadget.talaria.domain.model.FsTextFile
+import com.hermesgadget.talaria.domain.model.ProfileInfo
+import com.hermesgadget.talaria.domain.model.ProfilesResponse
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -22,6 +24,26 @@ import org.junit.Assert.assertSame
 import org.junit.Test
 
 class HermesRepositorySnapshotOperationTest {
+    @Test
+    fun forcedProfilesRefreshWarmsTheNormalScopedCache() = runBlocking {
+        val snapshot = snapshot("connection-a", "https://a.example", "profile-a")
+        val api = mockk<HermesApi>()
+        val factory = mockk<HermesClientFactory>()
+        val database = mockk<TalariaDatabase>()
+        val store = mockk<SecureConnectionStore>()
+        val profiles = listOf(ProfileInfo(name = "default", is_active = true))
+
+        every { factory.snapshot() } returns snapshot
+        every { factory.api(snapshot) } returns api
+        coEvery { api.getProfiles() } returns ProfilesResponse(profiles)
+
+        val repository = HermesRepository(factory, database, store)
+
+        assertEquals(profiles, repository.getProfiles(force = true).getOrThrow())
+        assertEquals(profiles, repository.getProfiles().getOrThrow())
+        coVerify(exactly = 1) { api.getProfiles() }
+    }
+
     @Test
     fun fsWriteUsesTheCapturedApiForReadWriteAndRereadAfterConnectionSwitch() = runBlocking {
         val snapshotA = snapshot("connection-a", "https://a.example", "profile-a")

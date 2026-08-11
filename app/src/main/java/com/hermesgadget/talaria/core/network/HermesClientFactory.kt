@@ -77,9 +77,9 @@ class HermesClientFactory(
             .writeTimeout(60, TimeUnit.SECONDS)
             .addInterceptor(CleartextPolicyInterceptor(snapshot))
             .addNetworkInterceptor(CleartextPolicyInterceptor(snapshot))
+            // Emulator loopback rewrite is dev scaffolding; never ship it in release.
+            .addEmulatorLoopbackInterceptorIf(BuildConfig.DEBUG)
             .apply {
-                // Emulator loopback rewrite is dev scaffolding; never ship it in release.
-                if (BuildConfig.DEBUG) addInterceptor(EmulatorLoopbackInterceptor())
                 // Same opt-in observability as the credential-bearing bundle:
                 // the SPA-shell fetch carries no secrets, so BASIC level with
                 // only Host redacted is safe to enable for diagnostics.
@@ -173,10 +173,8 @@ class HermesClientFactory(
             // Network interceptor: runs again per redirect/retry, so an https->http
             // 30x cannot bypass the cleartext gate after the first hop.
             .addNetworkInterceptor(CleartextPolicyInterceptor(snapshot))
-            .apply {
-                // Emulator loopback rewrite is dev scaffolding; never ship it in release.
-                if (BuildConfig.DEBUG) addInterceptor(EmulatorLoopbackInterceptor())
-            }
+            // Emulator loopback rewrite is dev scaffolding; never ship it in release.
+            .addEmulatorLoopbackInterceptorIf(BuildConfig.DEBUG)
 
         val restBuilder = baseBuilder()
         // Retrofit converters normally materialize the entire response before

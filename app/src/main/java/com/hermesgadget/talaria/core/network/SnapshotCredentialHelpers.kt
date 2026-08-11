@@ -10,6 +10,7 @@
 
 package com.hermesgadget.talaria.core.network
 
+import com.hermesgadget.talaria.BuildConfig
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
 import com.hermesgadget.talaria.core.security.CertificatePinnerFactory
 import com.hermesgadget.talaria.domain.model.AuthProvidersResponse
@@ -166,7 +167,7 @@ class SnapshotPasswordSessionManager(
             // cleartext checks as the main REST client.
             .addNetworkInterceptor(SnapshotOriginInterceptor(snapshot, currentSnapshot))
             .addNetworkInterceptor(CleartextPolicyInterceptor(snapshot))
-            .addInterceptor(EmulatorLoopbackInterceptor())
+            .addEmulatorLoopbackInterceptorIf(BuildConfig.DEBUG)
         profile.pinSha256?.takeIf { it.isNotBlank() }?.let { pin ->
             builder.certificatePinner(CertificatePinnerFactory.forPin(profile.baseUrl, pin))
         }
@@ -215,7 +216,7 @@ class SnapshotOidcTokenRefresher(
                 },
             )
             .addNetworkInterceptor(CleartextPolicyInterceptor(snapshot))
-            .addInterceptor(EmulatorLoopbackInterceptor())
+            .addEmulatorLoopbackInterceptorIf(BuildConfig.DEBUG)
         snapshot.pinSha256?.takeIf { it.isNotBlank() }?.let {
             builder.certificatePinner(CertificatePinnerFactory.forPin(snapshot.baseUrl, it))
         }
