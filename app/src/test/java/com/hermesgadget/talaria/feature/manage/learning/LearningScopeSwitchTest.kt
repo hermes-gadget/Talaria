@@ -10,7 +10,6 @@ import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
 import com.hermesgadget.talaria.domain.model.ConnectionSecrets
 import io.mockk.coEvery
-import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -25,13 +24,16 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 
 /**
  * A->B profile-switch regression net for the Learning destination (#54, follow-up to #22):
  * a graph answered for connection A after the switch must never be rendered in the
  * B-bound UI state.
+ *
+ * Main is installed inside runTest sharing its scheduler so ViewModel coroutines are
+ * owned by the test scope: a leaked coroutine from an earlier test class can otherwise
+ * report an exception into this test's scheduler (UncaughtExceptionsBeforeTest flake).
  */
 class LearningScopeSwitchTest {
 
@@ -46,11 +48,6 @@ class LearningScopeSwitchTest {
             generation,
         )
 
-    @Before
-    fun setUp() {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-    }
-
     @After
     fun tearDown() {
         Dispatchers.resetMain()
@@ -58,6 +55,7 @@ class LearningScopeSwitchTest {
 
     @Test
     fun `stale A graph never lands in B UI state`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         val scopeA = scope("a", 1)
         val scopeB = scope("b", 1)
         flow = MutableStateFlow(scopeA)
