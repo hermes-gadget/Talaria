@@ -71,17 +71,22 @@ class LearningViewModel(
         val expectedScope = boundScope
         if (scopeFlow != null && expectedScope == null) return
         val snapshot = expectedScope?.snapshot
+        val generation = ++loadGeneration
         graphJob?.cancel()
         _ui.update { it.copy(loading = true, error = null) }
         graphJob = viewModelScope.launch {
             graphSource.load(snapshot).fold(
                 onSuccess = { graph ->
-                    if (isCurrentScope(expectedScope)) {
+                    // N0.8: a stale response from a refresh that was superseded by
+                    // a newer refresh or scope switch must never overwrite the
+                    // current scope's graph, even if the source ignores
+                    // cancellation (e.g. a blocked or external load).
+                    if (generation == loadGeneration && isCurrentScope(expectedScope)) {
                         _ui.update { it.copy(graph = graph, loading = false) }
                     }
                 },
                 onFailure = { error ->
-                    if (isCurrentScope(expectedScope)) {
+                    if (generation == loadGeneration && isCurrentScope(expectedScope)) {
                         _ui.update { it.copy(loading = false, error = error.message) }
                     }
                 },
