@@ -26,6 +26,9 @@ import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.repo.HermesRepository
 import com.hermesgadget.talaria.core.network.HermesApi
 import com.hermesgadget.talaria.core.network.JsonConfig
+import com.hermesgadget.talaria.feature.manage.files.BACKUP_SHARE_CACHE_LIMIT_BYTES
+import com.hermesgadget.talaria.feature.manage.files.BACKUP_SHARE_CACHE_LIMIT_FILES
+import com.hermesgadget.talaria.feature.manage.files.BACKUP_SHARE_RETENTION_MILLIS
 import com.hermesgadget.talaria.feature.manage.files.MAX_OPS_BACKUP_DOWNLOAD_BYTES
 import com.hermesgadget.talaria.feature.manage.files.ShareFileManager
 import com.hermesgadget.talaria.domain.model.ActionStatus
@@ -45,6 +48,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -234,6 +238,8 @@ class SystemViewModel(
     private var importTempFile: File? = null
     private var backupJob: Job? = null
     private var backupGeneration = 0L
+    /** Kept independently of the one-shot UI request until chooser-safe expiry. */
+    private var retainedBackupFile: File? = null
     private var debugShareJob: Job? = null
     private var debugShareGeneration = 0L
     private val defaultShareFileManager by lazy { ShareFileManager(cacheDirectory) }
@@ -589,6 +595,10 @@ class SystemViewModel(
                             source = responseBody.byteStream(),
                             declaredBytes = total,
                             maxBytes = MAX_OPS_BACKUP_DOWNLOAD_BYTES,
+                            retentionMillis = BACKUP_SHARE_RETENTION_MILLIS,
+                            retentionPrefix = "hermes-backup-",
+                            maxRetainedBytes = BACKUP_SHARE_CACHE_LIMIT_BYTES,
+                            maxRetainedFiles = BACKUP_SHARE_CACHE_LIMIT_FILES,
                             onProgress = { copied, reportedTotal ->
                                 if (generation == backupGeneration) {
                                     _ui.update {
@@ -632,6 +642,10 @@ class SystemViewModel(
                         backupDownload = BackupDownloadUiState.Complete(result.first, result.second),
                         shareRequest = result.third,
                     )
+                }
+                output?.let { file ->
+                    retainedBackupFile = file
+                    scheduleBackupCleanup(file)
                 }
             } catch (cancelled: CancellationException) {
                 (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(output)
@@ -805,6 +819,22 @@ class SystemViewModel(
 
     fun consumeShareRequest() {
         _ui.update { it.copy(shareRequest = null) }
+    }
+
+    private fun scheduleBackupCleanup(file: File) {
+        val manager = shareFileManager ?: defaultShareFileManager
+        viewModelScope.launch {
+            delay(BACKUP_SHARE_RETENTION_MILLIS)
+            withContext(Dispatchers.IO) {
+                manager.cleanupManagedDownloads(
+                    prefix = "hermes-backup-",
+                    retentionMillis = BACKUP_SHARE_RETENTION_MILLIS,
+                    maxRetainedBytes = BACKUP_SHARE_CACHE_LIMIT_BYTES,
+                    maxRetainedFiles = BACKUP_SHARE_CACHE_LIMIT_FILES,
+                )
+            }
+            if (!file.exists()) retainedBackupFile = null
+        }
     }
 
     private fun rawConfigFailure(error: Throwable): RawConfigUiState =

@@ -17,7 +17,11 @@
 package com.hermesgadget.talaria.feature.chat
 
 import com.hermesgadget.talaria.domain.model.ChatLine
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class ChatTranscriptPolicyTest {
@@ -53,6 +57,23 @@ class ChatTranscriptPolicyTest {
         assertEquals(listOf("Build the Android app", "The build is green"), filterTranscriptLines(lines, "BUILD").map { it.text })
         assertEquals(2, transcriptMatchCount(lines, "build"))
         assertEquals(lines, filterTranscriptLines(lines, ""))
+    }
+
+    @Test
+    fun pausedReadStartedBeforeOptimisticSendCannotApply() = runTest {
+        val responseGate = CompletableDeferred<Unit>()
+        var currentRevision = 0L
+        val requestRevision = currentRevision
+        val staleRead = async {
+            responseGate.await()
+            TranscriptReadPolicy.isCurrent(requestRevision, currentRevision)
+        }
+
+        currentRevision += 1L // commitSend appended the optimistic prompt.
+        responseGate.complete(Unit) // the older REST response is now released.
+
+        assertFalse(staleRead.await())
+        assertEquals(true, TranscriptReadPolicy.isCurrent(currentRevision, currentRevision))
     }
 
     private fun tab(working: Boolean) = ChatTab(

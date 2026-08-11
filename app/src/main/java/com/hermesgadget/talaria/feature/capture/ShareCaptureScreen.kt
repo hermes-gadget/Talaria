@@ -94,12 +94,16 @@ fun ShareCaptureScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                if (ui.loading) {
+                    CircularProgressIndicator()
+                }
             }
             items(ui.targets, key = ShareTargetOption::key) { target ->
                 FilterChip(
                     selected = target.key == ui.selectedTargetKey,
                     onClick = { viewModel.selectTarget(target) },
-                    enabled = target.enabled && ui.deliveryState != ShareDeliveryUiState.SENDING,
+                    enabled = !ui.loading && target.enabled &&
+                        ui.deliveryState != ShareDeliveryUiState.SENDING,
                     label = { Text(target.label) },
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -183,7 +187,8 @@ fun ShareCaptureScreen(
                             }
                             IconButton(
                                 onClick = { viewModel.removeItem(item.id) },
-                                enabled = ui.deliveryState != ShareDeliveryUiState.SENDING,
+                                enabled = !ui.loading &&
+                                    ui.deliveryState != ShareDeliveryUiState.SENDING,
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Close,
@@ -202,7 +207,7 @@ fun ShareCaptureScreen(
                     label = { Text(stringResource(R.string.capture_instruction_label)) },
                     placeholder = { Text(stringResource(R.string.capture_instruction_hint)) },
                     minLines = 2,
-                    enabled = ui.deliveryState != ShareDeliveryUiState.SENDING,
+                    enabled = !ui.loading && ui.deliveryState != ShareDeliveryUiState.SENDING,
                 )
             }
             ui.error?.let { error ->
@@ -226,14 +231,14 @@ fun ShareCaptureScreen(
                     OutlinedButton(
                         onClick = { viewModel.discard() },
                         modifier = Modifier.weight(1f),
-                        enabled = ui.deliveryState != ShareDeliveryUiState.SENDING,
+                        enabled = !ui.loading && ui.deliveryState != ShareDeliveryUiState.SENDING,
                     ) {
                         Text(stringResource(R.string.capture_discard))
                     }
                     Button(
                         onClick = viewModel::send,
                         modifier = Modifier.weight(1f),
-                        enabled = !ui.importing &&
+                        enabled = !ui.loading && !ui.importing &&
                             ui.deliveryState == ShareDeliveryUiState.IDLE &&
                             (ui.text.isNotBlank() || ui.items.isNotEmpty()),
                     ) {

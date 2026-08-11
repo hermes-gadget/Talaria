@@ -16,9 +16,53 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.TimeUnit
 
 class SnapshotCredentialHelpersTest {
+    @Test
+    fun scopedSingleFlightSerializesOneScopeAndDropsIdleEntries() {
+        val flight = ScopedSingleFlight<String>()
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val active = AtomicInteger(0)
+        val maximum = AtomicInteger(0)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val first = executor.submit {
+                flight.withKey("scope-a") {
+                    val now = active.incrementAndGet()
+                    maximum.updateAndGet { old -> maxOf(old, now) }
+                    entered.countDown()
+                    release.await(5, TimeUnit.SECONDS)
+                    active.decrementAndGet()
+                }
+            }
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            val second = executor.submit {
+                flight.withKey("scope-a") {
+                    val now = active.incrementAndGet()
+                    maximum.updateAndGet { old -> maxOf(old, now) }
+                    active.decrementAndGet()
+                }
+            }
+
+            assertEquals(1, flight.size)
+            release.countDown()
+            first.get(5, TimeUnit.SECONDS)
+            second.get(5, TimeUnit.SECONDS)
+            assertEquals(1, maximum.get())
+
+            repeat(100) { index -> flight.withKey("successive-$index") { Unit } }
+            assertEquals(0, flight.size)
+        } finally {
+            release.countDown()
+            executor.shutdownNow()
+        }
+    }
+
     @Test
     fun passwordBootstrapDoesNotForwardCredentialsAcross307Or308() {
         listOf(307, 308).forEach { code ->

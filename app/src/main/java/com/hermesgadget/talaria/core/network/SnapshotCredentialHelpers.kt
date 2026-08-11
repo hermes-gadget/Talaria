@@ -30,8 +30,35 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+
+/**
+ * Coordinates work by a non-secret scope key and removes idle entries. The
+ * entry never contains a credential snapshot, so successive token generations
+ * cannot accumulate secret-bearing lock keys for the life of the process.
+ */
+internal class ScopedSingleFlight<K> {
+    private data class Entry(val lock: Any, var users: Int = 0)
+
+    private val entries = mutableMapOf<K, Entry>()
+
+    val size: Int
+        get() = synchronized(entries) { entries.size }
+
+    fun <T> withKey(key: K, block: () -> T): T {
+        val entry = synchronized(entries) {
+            entries.getOrPut(key) { Entry(Any()) }.also { it.users += 1 }
+        }
+        try {
+            return synchronized(entry.lock) { block() }
+        } finally {
+            synchronized(entries) {
+                entry.users -= 1
+                if (entry.users == 0) entries.remove(key, entry)
+            }
+        }
+    }
+}
 
 /** Password login helper whose URL, credentials, and cookie jar are snapshot-bound. */
 class SnapshotPasswordSessionManager(
@@ -158,19 +185,17 @@ class SnapshotOidcTokenRefresher(
     private val store: SecureConnectionStore,
     private val nowSeconds: () -> Long = { System.currentTimeMillis() / 1_000 },
 ) {
-    /** A refresh is single-flight only within the exact immutable scope that requested it. */
-    private val singleFlights = ConcurrentHashMap<ConnectionSnapshot, Any>()
+    /** The key is a profile scope, never the immutable credential snapshot. */
+    private val singleFlights = ScopedSingleFlight<String>()
 
-    fun accessToken(snapshot: ConnectionSnapshot): String? = synchronized(
-        singleFlights.computeIfAbsent(snapshot) { Any() },
-    ) {
+    fun accessToken(snapshot: ConnectionSnapshot): String? = singleFlights.withKey(snapshot.scopeId) {
         SnapshotAuthGuard.requireCurrent(snapshot, store.snapshotFor(snapshot.connectionId))
-        val current = snapshot.bearerToken?.takeIf { it.isNotBlank() } ?: return@synchronized null
-        val expiresAt = snapshot.oidcExpiresAt ?: return@synchronized current
-        if (nowSeconds() < expiresAt - REFRESH_SKEW_SECONDS) return@synchronized current
+        val current = snapshot.bearerToken?.takeIf { it.isNotBlank() } ?: return@withKey null
+        val expiresAt = snapshot.oidcExpiresAt ?: return@withKey current
+        if (nowSeconds() < expiresAt - REFRESH_SKEW_SECONDS) return@withKey current
         val refresh = snapshot.oidcRefreshToken?.takeIf { it.isNotBlank() }
-            ?: return@synchronized current.takeIf { nowSeconds() < expiresAt }
-        val base = snapshot.baseUrl.toHttpUrlOrNull() ?: return@synchronized current
+            ?: return@withKey current.takeIf { nowSeconds() < expiresAt }
+        val base = snapshot.baseUrl.toHttpUrlOrNull() ?: return@withKey current
         val url = base.newBuilder().addPathSegments("auth/native/refresh").build()
         val body = buildJsonObject {
             put("refresh_token", refresh)

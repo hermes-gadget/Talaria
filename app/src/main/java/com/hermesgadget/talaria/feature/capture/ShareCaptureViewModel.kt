@@ -25,11 +25,17 @@ import com.hermesgadget.talaria.di.AppContainer
 import com.hermesgadget.talaria.domain.model.SessionSummary
 import com.hermesgadget.talaria.domain.model.scopeId
 import com.hermesgadget.talaria.feature.manage.sessions.SessionFilters
+import com.hermesgadget.talaria.feature.manage.sessions.SessionPinStore
 import java.io.FilterInputStream
 import java.io.InputStream
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -76,6 +82,7 @@ data class ShareCaptureUiState(
     val targets: List<ShareTargetOption> = emptyList(),
     val selectedTargetKey: String? = null,
     val profileName: String? = null,
+    val loading: Boolean = true,
     val importing: Boolean = false,
     val loadingTargets: Boolean = false,
     val deliveryState: ShareDeliveryUiState = ShareDeliveryUiState.IDLE,
@@ -84,62 +91,142 @@ data class ShareCaptureUiState(
     val completed: Boolean = false,
 )
 
+/** Small IO seam that keeps the share state machine runnable in JVM tests. */
+data class ShareCaptureDependencies(
+    val contentResolver: ContentResolver,
+    val fileManager: com.hermesgadget.talaria.feature.manage.files.ShareFileManager,
+    val store: ShareIntakeStore,
+    val pinStore: SessionPinStore? = null,
+)
+
 /** Scoped, restorable state machine for ACTION_SEND, SEND_MULTIPLE, and PROCESS_TEXT. */
 class ShareCaptureViewModel(
-    private val container: AppContainer = TalariaApp.instance.container,
+    private val container: AppContainer? = null,
     private val nowMillis: () -> Long = System::currentTimeMillis,
+    private val snapshotOverride: ConnectionSnapshot? = null,
+    private val deliveryOverride: ShareDelivery? = null,
+    private val initialDraft: ShareIntakeDraft? = null,
+    private val activeSnapshotProvider: (() -> ConnectionSnapshot?)? = null,
+    private val dependencies: ShareCaptureDependencies? = null,
 ) : ViewModel() {
-    private val snapshot: ConnectionSnapshot? = container.clientFactory.snapshot()
-    private val scopeId: String? = snapshot?.profile?.scopeId()
-    private val resolver: ContentResolver = container.contentResolver
-    private val fileManager = container.shareFileManager
-    private val store = container.shareIntakeStore
-    private val intakeDelivery = snapshot?.let {
-        ShareIntakeDelivery(container.clientFactory, container.chatRepository, container.wsAuthHelper)
+    private val appContainer: AppContainer by lazy { container ?: TalariaApp.instance.container }
+    private var snapshot: ConnectionSnapshot? = snapshotOverride
+    private var scopeId: String? = snapshot?.profile?.scopeId()
+    private val resolver: ContentResolver = dependencies?.contentResolver ?: appContainer.contentResolver
+    private val fileManager = dependencies?.fileManager ?: appContainer.shareFileManager
+    private val store = dependencies?.store ?: appContainer.shareIntakeStore
+    private var intakeDelivery: ShareDelivery? = deliveryOverride
+    private val pinStore: SessionPinStore by lazy {
+        dependencies?.pinStore ?: appContainer.sessionPinStore
     }
-    private val pinStore = container.sessionPinStore
     private val intakeMutex = Mutex()
+    private val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var draft: ShareIntakeDraft? = null
+    private var initialized = false
+    private val pendingIntents = mutableListOf<android.content.Intent>()
+    private var draftWriteJob: Job? = null
 
     private val _ui = MutableStateFlow(
         ShareCaptureUiState(
             profileName = snapshot?.managementProfile,
-            error = if (snapshot == null) "Connect to a Hermes profile before sharing" else null,
+            loading = true,
         ),
     )
     val ui: StateFlow<ShareCaptureUiState> = _ui.asStateFlow()
 
     init {
-        fileManager.cleanupStaleFiles()
-        val currentSnapshot = snapshot
-        val currentScope = scopeId
-        if (currentSnapshot != null && currentScope != null) {
-            store.cleanup(fileManager)
-            draft = store.load(currentScope)?.takeIf {
-                it.scopeId == currentScope &&
-                    it.connectionId == currentSnapshot.connectionId &&
-                    it.managementProfile == currentSnapshot.managementProfile
-            }
-            if (draft == null) {
-                draft = ShareIntakeDraft(
-                    scopeId = currentScope,
-                    connectionId = currentSnapshot.connectionId,
-                    managementProfile = currentSnapshot.managementProfile,
-                    createdAt = nowMillis(),
-                    updatedAt = nowMillis(),
+        initialDraft?.let { seeded ->
+            draft = seeded
+            snapshot = snapshotOverride
+            scopeId = seeded.scopeId
+            intakeDelivery = deliveryOverride
+            initialized = true
+            _ui.update {
+                it.copy(
+                    loading = false,
+                    profileName = seeded.managementProfile,
                 )
-                saveDraft()
-            } else {
-                pruneMissingItems()
             }
             publish()
-            refreshTargets()
+        } ?: initialize()
+    }
+
+    private fun initialize() {
+        viewModelScope.launch {
+            val prepared = withContext(Dispatchers.IO) {
+                val currentSnapshot = snapshotOverride ?: appContainer.clientFactory.snapshot()
+                fileManager.cleanupStaleFiles()
+                store.cleanup(fileManager)
+                val currentScope = currentSnapshot?.profile?.scopeId()
+                val restored = if (currentSnapshot != null && currentScope != null) {
+                    val loaded = store.load(currentScope)?.takeIf {
+                        it.scopeId == currentScope &&
+                            it.connectionId == currentSnapshot.connectionId &&
+                            it.managementProfile == currentSnapshot.managementProfile
+                    }
+                    loaded ?: ShareIntakeDraft(
+                        scopeId = currentScope,
+                        connectionId = currentSnapshot.connectionId,
+                        managementProfile = currentSnapshot.managementProfile,
+                        createdAt = nowMillis(),
+                        updatedAt = nowMillis(),
+                    ).also(store::save)
+                } else {
+                    null
+                }
+                currentSnapshot to restored
+            }
+            snapshot = prepared.first
+            scopeId = prepared.first?.profile?.scopeId()
+            intakeDelivery = deliveryOverride ?: prepared.first?.let {
+                ShareIntakeDelivery(
+                    appContainer.clientFactory,
+                    appContainer.chatRepository,
+                    appContainer.wsAuthHelper,
+                )
+            }
+            draft = prepared.second
+            if (draft != null) {
+                val current = draft!!
+                val validItems = withContext(Dispatchers.IO) {
+                    current.items.filter { java.io.File(it.localPath).isFile }
+                }
+                if (validItems.size != current.items.size) {
+                    draft = current.copy(
+                        items = validItems,
+                        updatedAt = nowMillis(),
+                        deliveryMessage = "Some expired share files were removed; review the remaining draft.",
+                    )
+                    withContext(Dispatchers.IO) { store.save(draft!!) }
+                }
+            }
+            initialized = true
+            _ui.update {
+                it.copy(
+                    loading = false,
+                    profileName = snapshot?.managementProfile,
+                    error = if (snapshot == null) "Connect to a Hermes profile before sharing" else null,
+                )
+            }
+            draft?.let {
+                publish()
+                refreshTargets()
+            }
+            pendingIntents.toList().also { pendingIntents.clear() }.forEach(::acceptIntent)
         }
     }
 
     fun acceptIntent(intent: android.content.Intent) {
+        if (!initialized) {
+            pendingIntents += intent
+            return
+        }
         val currentSnapshot = snapshot ?: return
         val currentDraft = draft ?: return
+        if (currentDraft.deliveryState != ShareDraftDeliveryState.DRAFT) {
+            showError("A share is being delivered; the new share was not merged into it")
+            return
+        }
         val payload = runCatching { ShareIntentParser.parse(intent) }.getOrElse { failure ->
             showError(failure.message ?: "The shared data could not be read")
             return
@@ -189,6 +276,7 @@ class ShareCaptureViewModel(
     }
 
     fun updateInstruction(value: String) {
+        if (draft?.deliveryState != ShareDraftDeliveryState.DRAFT) return
         try {
             ShareIntakePolicy.checkInstruction(value)
         } catch (failure: IllegalArgumentException) {
@@ -202,6 +290,7 @@ class ShareCaptureViewModel(
 
     fun selectTarget(option: ShareTargetOption) {
         if (!option.enabled) return
+        if (draft?.deliveryState != ShareDraftDeliveryState.DRAFT) return
         draft = draft?.copy(
             targetKind = option.kind,
             targetSessionId = option.sessionId,
@@ -214,8 +303,8 @@ class ShareCaptureViewModel(
 
     fun removeItem(itemId: String) {
         val current = draft ?: return
+        if (current.deliveryState != ShareDraftDeliveryState.DRAFT) return
         val item = current.items.firstOrNull { it.id == itemId } ?: return
-        fileManager.deleteOwnedFile(java.io.File(item.localPath))
         draft = current.copy(
             items = current.items.filterNot { it.id == itemId },
             updatedAt = nowMillis(),
@@ -223,6 +312,7 @@ class ShareCaptureViewModel(
         )
         saveDraft()
         publish()
+        viewModelScope.launch { fileManager.deleteOwnedFileOnIo(java.io.File(item.localPath)) }
     }
 
     fun useSuggestion(suggestion: String) {
@@ -237,13 +327,12 @@ class ShareCaptureViewModel(
             return
         }
         if (current.deliveryState != ShareDraftDeliveryState.DRAFT) return
-        if (current.text.isBlank() && current.items.isEmpty()) {
-            showError("Add text or a file before sending")
+        if (_ui.value.importing) {
+            showError("Wait for shared files to finish importing")
             return
         }
-        val activeSnapshot = container.clientFactory.snapshot()
-        if (!SnapshotAuthGuard.isCurrent(fixedSnapshot, activeSnapshot)) {
-            showError("The connection or profile changed; reopen this share to choose a safe target")
+        if (current.text.isBlank() && current.items.isEmpty()) {
+            showError("Add text or a file before sending")
             return
         }
         val delivery = intakeDelivery ?: run {
@@ -256,9 +345,30 @@ class ShareCaptureViewModel(
             updatedAt = nowMillis(),
         )
         draft = sending
-        store.save(sending)
         _ui.update { it.copy(deliveryState = ShareDeliveryUiState.SENDING, error = null) }
         viewModelScope.launch {
+            draftWriteJob?.cancel()
+            draftWriteJob = null
+            store.saveOnIo(sending)
+            val activeSnapshot = withContext(Dispatchers.IO) {
+                activeSnapshotProvider?.invoke() ?: appContainer.clientFactory.snapshot()
+            }
+            if (!SnapshotAuthGuard.isCurrent(fixedSnapshot, activeSnapshot)) {
+                val retained = sending.copy(
+                    deliveryState = ShareDraftDeliveryState.DRAFT,
+                    deliveryMessage = "The connection or profile changed; reopen this share to choose a safe target",
+                    updatedAt = nowMillis(),
+                )
+                draft = retained
+                store.saveOnIo(retained)
+                _ui.update {
+                    it.copy(
+                        deliveryState = ShareDeliveryUiState.IDLE,
+                        error = retained.deliveryMessage,
+                    )
+                }
+                return@launch
+            }
             val result = try {
                 Result.success(delivery.deliver(fixedSnapshot, sending))
             } catch (cancelled: CancellationException) {
@@ -266,17 +376,19 @@ class ShareCaptureViewModel(
             } catch (failure: Throwable) {
                 Result.failure(failure)
             }
-            result.onSuccess { sessionId ->
-                sending.items.forEach { item -> fileManager.deleteOwnedFile(java.io.File(item.localPath)) }
-                store.remove(sending)
+            if (result.isSuccess) {
+                withContext(Dispatchers.IO) {
+                    sending.items.forEach { item -> fileManager.deleteOwnedFile(java.io.File(item.localPath)) }
+                    store.remove(sending)
+                }
                 draft = null
                 _ui.update {
                     it.copy(deliveryState = ShareDeliveryUiState.DELIVERED, completed = true, error = null)
                 }
                 // The session id is intentionally not persisted here: the task
                 // is complete and the normal Chat profile refresh will discover it.
-                Unit
-            }.onFailure { failure ->
+            } else {
+                val failure = result.exceptionOrNull() ?: IllegalStateException("Share delivery failed")
                 val message = failure.message ?: "Share delivery failed"
                 val retained = sending.copy(
                     deliveryState = ShareDraftDeliveryState.DRAFT,
@@ -284,7 +396,7 @@ class ShareCaptureViewModel(
                     updatedAt = nowMillis(),
                 )
                 draft = retained
-                store.save(retained)
+                withContext(Dispatchers.IO) { store.save(retained) }
                 _ui.update {
                     it.copy(
                         deliveryState = ShareDeliveryUiState.IDLE,
@@ -297,10 +409,15 @@ class ShareCaptureViewModel(
 
     fun discard() {
         val current = draft ?: return
-        current.items.forEach { fileManager.deleteOwnedFile(java.io.File(it.localPath)) }
-        store.remove(current)
+        if (current.deliveryState != ShareDraftDeliveryState.DRAFT) return
         draft = null
         _ui.update { it.copy(completed = true, error = null) }
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                current.items.forEach { fileManager.deleteOwnedFile(java.io.File(it.localPath)) }
+                store.remove(current)
+            }
+        }
     }
 
     private fun ingestUris(
@@ -315,6 +432,7 @@ class ShareCaptureViewModel(
                 val errors = mutableListOf<String>()
                 candidates.forEach { rawUri ->
                     val current = draft ?: return@forEach
+                    if (current.deliveryState != ShareDraftDeliveryState.DRAFT) return@forEach
                     if (current.items.any { it.sourceUri == rawUri }) return@forEach
                     try {
                         val item = copyAndValidate(fixedSnapshot, rawUri, fallbackMimeType)
@@ -414,7 +532,7 @@ class ShareCaptureViewModel(
             val sessions = try {
                 withContext(Dispatchers.IO) {
                     decodeSessions(
-                        container.clientFactory.api(fixedSnapshot).getSessionsForProfile(
+                        appContainer.clientFactory.api(fixedSnapshot).getSessionsForProfile(
                             profile = fixedSnapshot.managementProfile,
                             limit = 50,
                             offset = 0,
@@ -427,9 +545,10 @@ class ShareCaptureViewModel(
             } catch (_: Throwable) {
                 emptyList()
             }
-            val saved = container.settingsStore.loadChatState(fixedScope)
-            val currentSessionId = saved.activeSessionId
-            val pinnedIds = pinStore.load(fixedScope)
+            val (currentSessionId, pinnedIds) = withContext(Dispatchers.IO) {
+                val saved = appContainer.settingsStore.loadChatState(fixedScope)
+                saved.activeSessionId to pinStore.load(fixedScope)
+            }
             val options = buildList {
                 if (!currentSessionId.isNullOrBlank()) {
                     add(
@@ -476,6 +595,7 @@ class ShareCaptureViewModel(
                 )
             }
             val current = draft ?: return@launch
+            if (current.deliveryState != ShareDraftDeliveryState.DRAFT) return@launch
             val persistedKey = targetKey(current.targetKind, current.targetSessionId)
             val selected = options.firstOrNull { it.key == persistedKey && it.enabled }
                 ?: options.firstOrNull { it.kind == ShareTargetKind.CURRENT && it.enabled }
@@ -537,20 +657,24 @@ class ShareCaptureViewModel(
     }
 
     private fun saveDraft() {
-        draft?.let(store::save)
+        val pending = draft ?: return
+        draftWriteJob?.cancel()
+        draftWriteJob = persistenceScope.launch {
+            delay(DRAFT_WRITE_DEBOUNCE_MILLIS)
+            store.save(pending)
+        }
     }
 
-    private fun pruneMissingItems() {
-        val current = draft ?: return
-        val valid = current.items.filter { java.io.File(it.localPath).isFile }
-        if (valid.size != current.items.size) {
-            draft = current.copy(
-                items = valid,
-                updatedAt = nowMillis(),
-                deliveryMessage = "Some expired share files were removed; review the remaining draft.",
-            )
-            saveDraft()
+    override fun onCleared() {
+        draftWriteJob?.cancel()
+        val pending = draft?.takeIf { it.deliveryState == ShareDraftDeliveryState.DRAFT }
+        if (pending == null) {
+            persistenceScope.cancel()
+        } else {
+            val flush = persistenceScope.launch { store.save(pending) }
+            flush.invokeOnCompletion { persistenceScope.cancel() }
         }
+        super.onCleared()
     }
 
     private fun showError(message: String) {
@@ -600,6 +724,8 @@ class ShareCaptureViewModel(
     }
 
     companion object {
+        private const val DRAFT_WRITE_DEBOUNCE_MILLIS = 100L
+
         fun factory(
             container: AppContainer = TalariaApp.instance.container,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {

@@ -76,4 +76,16 @@ class AgentNotificationPolicyTest {
     fun unrelatedEventsDoNotAlert() {
         assertEquals(null, AgentNotificationPolicy.alert(identity, HermesSideEvent.MessageStart("session-1")))
     }
+
+    @Test
+    fun lateEventGenerationCannotRemoveReplacementWatch() {
+        val registry = AgentWatchGenerationRegistry()
+        val oldGeneration = registry.install("watcher-1")
+        val replacementGeneration = registry.install("watcher-1")
+
+        assertFalse(registry.isCurrent("watcher-1", oldGeneration))
+        assertTrue(registry.isCurrent("watcher-1", replacementGeneration))
+        assertFalse(registry.removeIfCurrent("watcher-1", oldGeneration))
+        assertTrue(registry.isCurrent("watcher-1", replacementGeneration))
+    }
 }

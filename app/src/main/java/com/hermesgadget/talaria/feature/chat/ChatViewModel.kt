@@ -303,6 +303,7 @@ private class SessionRuntime(
     var transcriptDirty: Boolean = false,
     var transcriptDirtySessionId: String? = null,
     var lastTranscriptContentKey: String? = null,
+    var localTranscriptRevision: Long = 0L,
     var recoveryPending: Boolean = false,
     val promptDelivery: PtyPromptDeliveryLedger = PtyPromptDeliveryLedger(),
 )
@@ -907,6 +908,7 @@ class ChatViewModel(
             rt.transcriptDirty = old.transcriptDirty
             rt.transcriptDirtySessionId = old.transcriptDirtySessionId
             rt.lastTranscriptContentKey = old.lastTranscriptContentKey
+            rt.localTranscriptRevision = old.localTranscriptRevision
         }
         runtimes[tabId] = rt
         if (resume.isNullOrBlank()) {
@@ -1434,7 +1436,8 @@ class ChatViewModel(
                 container.clientFactory.api().getSessions(limit = 50, offset = 0)
             }
         }.getOrNull() ?: return
-        _ui.update { it.copy(sessionBranchOrigins = parseSessionBranchOrigins(raw)) }
+        runCatching { parseSessionBranchOrigins(raw) }
+            .onSuccess { origins -> _ui.update { it.copy(sessionBranchOrigins = origins) } }
     }
 
     fun toggleSessionRail(show: Boolean = !_ui.value.showSessionRail) {
@@ -2455,6 +2458,7 @@ class ChatViewModel(
             updateTab(tabId) { it.copy(error = message, working = false) }
             return
         }
+        runtime.localTranscriptRevision += 1
         val userLine = ChatLine(UUID.randomUUID().toString(), "user", displayText)
         updateTab(tabId) {
             it.copy(
@@ -3082,7 +3086,8 @@ class ChatViewModel(
         val runtime = runtimes[tabId] ?: return false
         runtime.readingRequestJob?.cancel()
         val generation = ++runtime.readingGeneration
-        return loadReading(tabId, sessionId, runtime, generation)
+        val localRevision = runtime.localTranscriptRevision
+        return loadReading(tabId, sessionId, runtime, generation, localRevision)
     }
 
     /**
@@ -3120,9 +3125,10 @@ class ChatViewModel(
         }
         rt.readingRequestJob?.cancel()
         val generation = ++rt.readingGeneration
+        val localRevision = rt.localTranscriptRevision
         rt.readingRequestJob = viewModelScope.launch {
             try {
-                val loaded = loadReading(tabId, sessionId, rt, generation)
+                val loaded = loadReading(tabId, sessionId, rt, generation, localRevision)
                 if (runtimes[tabId] === rt && rt.readingGeneration == generation) {
                     onComplete?.invoke(loaded)
                 }
@@ -3139,6 +3145,7 @@ class ChatViewModel(
         sessionId: String,
         rt: SessionRuntime,
         generation: Long,
+        localRevision: Long,
     ): Boolean {
         var loaded = false
         rt.readingMutex.withLock {
@@ -3146,7 +3153,16 @@ class ChatViewModel(
                 return@withLock
             }
             loadMessagesForProfile(tabId, sessionId).onSuccess { snapshot ->
-                if (runtimes[tabId] !== rt || rt.readingGeneration != generation) {
+                if (runtimes[tabId] !== rt ||
+                    rt.readingGeneration != generation ||
+                    !TranscriptReadPolicy.isCurrent(localRevision, rt.localTranscriptRevision)
+                ) {
+                    if (runtimes[tabId] === rt &&
+                        !TranscriptReadPolicy.isCurrent(localRevision, rt.localTranscriptRevision)
+                    ) {
+                        rt.transcriptDirty = true
+                        rt.transcriptDirtySessionId = sessionId
+                    }
                     return@onSuccess
                 }
                 loaded = true
@@ -3172,6 +3188,9 @@ class ChatViewModel(
                     // must not overwrite the transcript after bindSession has
                     // re-anchored this tab to a newer live session.
                     if (tab.liveSessionId != sessionId && tab.resumeSessionId != sessionId) {
+                        return@updateTab tab
+                    }
+                    if (!TranscriptReadPolicy.isCurrent(localRevision, rt.localTranscriptRevision)) {
                         return@updateTab tab
                     }
                     // Never let a transient/empty server read wipe optimistic messages;

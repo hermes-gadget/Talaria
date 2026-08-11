@@ -2,6 +2,8 @@
 package com.hermesgadget.talaria.feature.manage.config
 
 import com.hermesgadget.talaria.core.network.JsonConfig
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
@@ -30,5 +32,26 @@ class ConfigJsonEditorTest {
         val updated = applyConfigEdit("{}", "voice.provider", value)
         val parsed = JsonConfig.json.parseToJsonElement(updated).jsonObject
         assertEquals("123", parsed["voice"]!!.jsonObject["provider"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun updatesParsedLargeModelWithoutChangingUnrelatedBranches() {
+        val root = JsonObject(
+            (0 until 2_000).associate { index ->
+                "unused_$index" to JsonPrimitive(index)
+            } + ("terminal" to JsonObject(mapOf("lifetime_seconds" to JsonPrimitive(30)))),
+        )
+
+        val updated = setConfigValueAtPath(
+            root = root,
+            parts = listOf("terminal", "lifetime_seconds"),
+            value = JsonPrimitive(60),
+        )
+
+        assertEquals(2_000, updated.keys.count { it.startsWith("unused_") })
+        assertEquals(
+            60,
+            updated["terminal"]!!.jsonObject["lifetime_seconds"]!!.jsonPrimitive.int,
+        )
     }
 }
