@@ -17,6 +17,7 @@
 package com.hermesgadget.talaria.core.network
 
 import okhttp3.Interceptor
+import okhttp3.OkHttpClient
 import okhttp3.Response
 
 /**
@@ -48,3 +49,9 @@ class EmulatorLoopbackInterceptor : Interceptor {
         const val EMULATOR_HOST_LOOPBACK = "10.0.2.2"
     }
 }
+
+/** Add the emulator-only Host rewrite without allowing it into release clients. */
+internal fun OkHttpClient.Builder.addEmulatorLoopbackInterceptorIf(enabled: Boolean): OkHttpClient.Builder =
+    apply {
+        if (enabled) addInterceptor(EmulatorLoopbackInterceptor())
+    }

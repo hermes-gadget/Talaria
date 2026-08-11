@@ -151,12 +151,14 @@ class HermesRepository(
     }
 
     private fun invalidate(snapshot: ConnectionSnapshot, vararg keys: String) {
-        val scope = cacheScope(snapshot)
-        keys.forEach { cache.invalidate("$scope:$it") }
+        keys.forEach { cache.invalidate(cacheKey(snapshot, it)) }
     }
 
     private fun cacheScope(snapshot: ConnectionSnapshot?): String =
         snapshot?.let { "${it.scopeId}|${it.baseUrl}" } ?: "none"
+
+    private fun cacheKey(snapshot: ConnectionSnapshot?, key: String): String =
+        "${cacheScope(snapshot)}:$key"
 
     private suspend fun <T> cached(
         key: String,
@@ -165,8 +167,7 @@ class HermesRepository(
         fetch: suspend (HermesApi) -> T,
     ): Result<T> {
         val captured = snapshot ?: clientFactory.snapshot()
-        val scope = cacheScope(captured)
-        return cache.readThrough("$scope:$key", ttlMs) {
+        return cache.readThrough(cacheKey(captured, key), ttlMs) {
             withContext(Dispatchers.IO) { fetch(clientFactory.api(captured)) }
         }
     }
@@ -669,10 +670,9 @@ class HermesRepository(
     suspend fun getProfiles(force: Boolean = false): Result<List<ProfileInfo>> {
         if (!force) return cached("profiles") { api -> api.getProfiles().profiles }
         val operation = captureOperation()
-        val scope = operation.scopeId
         return withContext(Dispatchers.IO) {
             suspendResult { operation.api.getProfiles().profiles }.onSuccess {
-                cache.put("$scope:profiles", it)
+                cache.put(cacheKey(operation.snapshot, "profiles"), it)
             }
         }
     }

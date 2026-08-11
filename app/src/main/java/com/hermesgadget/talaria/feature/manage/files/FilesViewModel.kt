@@ -764,12 +764,12 @@ class FilesViewModel(
                 }
                 throw cancelled
             } catch (error: Throwable) {
-                (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(payload.file)
                 if (generation == downloadGeneration && isCurrentScope(expectedScope)) {
                     _ui.update {
                         it.copy(
                             downloadState = FileDownloadState.Failed(
                                 message = error.message ?: appString(R.string.files_error_save_download),
+                                file = payload.file,
                                 displayName = payload.displayName,
                                 mimeType = payload.mimeType,
                             ),

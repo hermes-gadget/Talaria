@@ -17,6 +17,7 @@
 package com.hermesgadget.talaria.network
 
 import com.hermesgadget.talaria.core.network.EmulatorLoopbackInterceptor
+import com.hermesgadget.talaria.core.network.addEmulatorLoopbackInterceptorIf
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -100,5 +101,18 @@ class EmulatorLoopbackInterceptorTest {
         val client = OkHttpClient.Builder().addInterceptor(EmulatorLoopbackInterceptor()).build()
         assertEquals(1, client.interceptors.size)
         assertEquals(0, client.networkInterceptors.size)
+    }
+
+    @Test
+    fun loopbackRewriteIsOnlyAttachedWhenEnabled() {
+        val debugClient = OkHttpClient.Builder()
+            .addEmulatorLoopbackInterceptorIf(enabled = true)
+            .build()
+        val releaseClient = OkHttpClient.Builder()
+            .addEmulatorLoopbackInterceptorIf(enabled = false)
+            .build()
+
+        assertEquals(1, debugClient.interceptors.count { it is EmulatorLoopbackInterceptor })
+        assertEquals(0, releaseClient.interceptors.count { it is EmulatorLoopbackInterceptor })
     }
 }
