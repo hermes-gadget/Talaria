@@ -43,6 +43,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -63,6 +64,7 @@ import java.io.InputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -71,9 +73,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import androidx.compose.runtime.mutableLongStateOf
+import kotlinx.serialization.json.jsonObject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,6 +95,10 @@ fun ConfigScreen() {
     var importGeneration by remember { mutableLongStateOf(0L) }
     var fieldDrafts by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var fieldErrors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var configModel by remember { mutableStateOf<JsonObject?>(null) }
+    var configModelRevision by remember { mutableLongStateOf(0L) }
+    var modelJob by remember { mutableStateOf<Job?>(null) }
+    var serializing by remember { mutableStateOf(false) }
     val saveCoordinator = remember(repo) {
         ConfigSaveCoordinator(
             putConfig = { config -> repo.putConfig(config) },
@@ -102,9 +107,25 @@ fun ConfigScreen() {
     }
 
     fun replaceConfigText(newText: String) {
-        editorState = editorState.edit(newText)
+        val edited = editorState.edit(newText)
+        if (edited === editorState) return
+        editorState = edited
         fieldDrafts = emptyMap()
         fieldErrors = emptyMap()
+        val revision = ++configModelRevision
+        modelJob?.cancel()
+        serializing = true
+        modelJob = scope.launch {
+            delay(CONFIG_MODEL_DEBOUNCE_MILLIS)
+            val parsed = withContext(Dispatchers.Default) {
+                runCatching {
+                    JsonConfig.json.parseToJsonElement(newText.removePrefix("\uFEFF")).jsonObject
+                }.getOrNull()
+            }
+            if (revision != configModelRevision) return@launch
+            configModel = parsed
+            serializing = false
+        }
     }
 
     fun updateSchemaField(key: String, newValue: String, expectedType: String?) {
@@ -117,14 +138,33 @@ fun ConfigScreen() {
                     (key to (error.message ?: "Invalid value"))
                 return
             }
-        val updatedText = runCatching { applyConfigEdit(editorState.text, key, value) }
+        val currentModel = configModel
+        if (currentModel == null) {
+            fieldErrors = fieldErrors + (key to "Current config is not ready")
+            return
+        }
+        val updatedModel = runCatching {
+            setConfigValueAtPath(currentModel, key.split('.'), value)
+        }
             .getOrElse {
                 fieldErrors = fieldErrors +
                     (key to "Current config is not valid JSON")
                 return
             }
-        editorState = editorState.edit(updatedText)
         fieldErrors = fieldErrors - key
+        val revision = ++configModelRevision
+        modelJob?.cancel()
+        configModel = updatedModel
+        serializing = true
+        modelJob = scope.launch {
+            delay(CONFIG_MODEL_DEBOUNCE_MILLIS)
+            val updatedText = withContext(Dispatchers.Default) {
+                JsonConfig.json.encodeToString(updatedModel)
+            }
+            if (revision != configModelRevision) return@launch
+            editorState = editorState.edit(updatedText)
+            serializing = false
+        }
     }
 
     val importFileLauncher = rememberLauncherForActivityResult(
@@ -155,28 +195,39 @@ fun ConfigScreen() {
 
     fun load() {
         scope.launch {
-            repo.getConfig()
-                .onSuccess { config ->
-                    val loadedText = JsonConfig.json.encodeToString(config)
-                    editorState = editorState.loaded(loadedText)
-                    fieldDrafts = emptyMap()
-                    fieldErrors = emptyMap()
+            val configResult = repo.getConfig()
+            val config = configResult.getOrNull()
+            if (config != null) {
+                val loadedText = withContext(Dispatchers.Default) {
+                    JsonConfig.json.encodeToString(config)
                 }
-                .onFailure { editorState = editorState.withMessage(it.message) }
-            repo.getConfigDefaults()
-                .onSuccess { defaultsText = JsonConfig.json.encodeToString(it) }
-                .onFailure { /* optional */ }
-            repo.getConfigSchema()
-                .onSuccess {
-                    schema = it
-                    schemaFailed = false
-                    selectedCategory = it.category_order.firstOrNull()
-                        ?: categoriesFromSchema(it).firstOrNull()
+                editorState = editorState.loaded(loadedText)
+                configModel = config
+                configModelRevision += 1
+                modelJob?.cancel()
+                modelJob = null
+                serializing = false
+                fieldDrafts = emptyMap()
+                fieldErrors = emptyMap()
+            } else {
+                editorState = editorState.withMessage(configResult.exceptionOrNull()?.message)
+            }
+            val defaultsResult = repo.getConfigDefaults()
+            if (defaultsResult.isSuccess) {
+                defaultsText = withContext(Dispatchers.Default) {
+                    JsonConfig.json.encodeToString(defaultsResult.getOrThrow())
                 }
-                .onFailure {
-                    schema = null
-                    schemaFailed = true
-                }
+            }
+            val schemaResult = repo.getConfigSchema()
+            schemaResult.onSuccess {
+                schema = it
+                schemaFailed = false
+                selectedCategory = it.category_order.firstOrNull()
+                    ?: categoriesFromSchema(it).firstOrNull()
+            }.onFailure {
+                schema = null
+                schemaFailed = true
+            }
         }
     }
 
@@ -248,9 +299,7 @@ fun ConfigScreen() {
                         if (keys.isEmpty()) {
                             Text("No fields in $cat", style = MaterialTheme.typography.bodyMedium)
                         } else {
-                            val configObj = runCatching {
-                                JsonConfig.json.parseToJsonElement(text).jsonObject
-                            }.getOrNull()
+                            val configObj = configModel
                             keys.forEach { key ->
                                 val meta = fields[key]?.jsonObject
                                 val type = meta?.get("type")?.jsonPrimitive?.contentOrNull
@@ -366,7 +415,7 @@ fun ConfigScreen() {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Button(
-                    enabled = !importing && !hasFieldErrors && text != savedText,
+                    enabled = !importing && !hasFieldErrors && !serializing && text != savedText,
                     onClick = {
                         val request = ConfigSaveRequest(
                             text = editorState.text,
@@ -375,7 +424,9 @@ fun ConfigScreen() {
                         pendingSaves += 1
                         scope.launch {
                             try {
-                                val result = saveCoordinator.save(request)
+                                val result = withContext(Dispatchers.Default) {
+                                    saveCoordinator.save(request)
+                                }
                                 editorState = editorState.applySaveResult(result)
                             } catch (error: CancellationException) {
                                 throw error
@@ -439,13 +490,25 @@ fun ConfigScreen() {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = {
                             val pasted = importText.orEmpty()
-                            runCatching {
-                                JsonConfig.json.parseToJsonElement(pasted).jsonObject
-                                replaceConfigText(pasted)
-                                importText = null
-                                editorState = editorState.withMessage("Imported (not saved)")
-                            }.onFailure {
-                                editorState = editorState.withMessage("Invalid JSON: ${it.message}")
+                            importJob?.cancel()
+                            val generation = importGeneration + 1
+                            importGeneration = generation
+                            importing = true
+                            importJob = scope.launch {
+                                val validation = withContext(Dispatchers.Default) {
+                                    runCatching {
+                                        JsonConfig.json.parseToJsonElement(pasted).jsonObject
+                                    }
+                                }
+                                if (generation != importGeneration) return@launch
+                                validation.onSuccess {
+                                    replaceConfigText(pasted)
+                                    importText = null
+                                    editorState = editorState.withMessage("Imported (not saved)")
+                                }.onFailure {
+                                    editorState = editorState.withMessage("Invalid JSON: ${it.message}")
+                                }
+                                importing = false
                             }
                         }) { Text("Apply import") }
                         TextButton(onClick = { importText = null }) { Text("Cancel") }
@@ -559,7 +622,7 @@ internal fun applyConfigEdit(text: String, key: String, value: kotlinx.serializa
     return JsonConfig.json.encodeToString(setConfigValueAtPath(root, key.split('.'), value))
 }
 
-private fun setConfigValueAtPath(
+internal fun setConfigValueAtPath(
     root: JsonObject,
     parts: List<String>,
     value: kotlinx.serialization.json.JsonElement,
@@ -577,3 +640,4 @@ private fun setConfigValueAtPath(
 }
 
 private const val MAX_CONFIG_IMPORT_BYTES = 10L * 1024 * 1024
+private const val CONFIG_MODEL_DEBOUNCE_MILLIS = 120L

@@ -18,6 +18,8 @@ import com.hermesgadget.talaria.feature.manage.files.SHARE_FILE_TTL_MILLIS
 import com.hermesgadget.talaria.feature.manage.files.ShareFileManager
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 
@@ -123,6 +125,18 @@ class ShareIntakeStore(
             }
         }
     }
+
+    suspend fun loadOnIo(scopeId: String): ShareIntakeDraft? =
+        withContext(Dispatchers.IO) { load(scopeId) }
+
+    suspend fun saveOnIo(draft: ShareIntakeDraft) =
+        withContext(Dispatchers.IO) { save(draft) }
+
+    suspend fun removeOnIo(draft: ShareIntakeDraft) =
+        withContext(Dispatchers.IO) { remove(draft) }
+
+    suspend fun cleanupOnIo(fileManager: ShareFileManager) =
+        withContext(Dispatchers.IO) { cleanup(fileManager) }
 
     private fun isExpired(draft: ShareIntakeDraft): Boolean =
         nowMillis() - draft.updatedAt >= SHARE_FILE_TTL_MILLIS

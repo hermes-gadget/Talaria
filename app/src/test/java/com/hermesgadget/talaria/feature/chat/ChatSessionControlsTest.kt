@@ -108,6 +108,19 @@ class ChatSessionControlsTest {
     }
 
     @Test
+    fun malformedLineageContainersAndRowsAreIgnored() {
+        assertEquals(emptyMap<String, String>(), parseSessionBranchOrigins(Json.parseToJsonElement("{\"sessions\":{}}")))
+        assertEquals(
+            mapOf("valid" to "parent"),
+            parseSessionBranchOrigins(
+                Json.parseToJsonElement(
+                    """{"sessions":[{"id":{}},{"id":"valid","parent_session_id":"parent"},{"id":"bad","parent_session_id":null}]}""",
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun messageCountUsesPersistedMessageIndexWhenAvailable() {
         assertEquals(3, branchMessageCount(ChatLine("session-2", "assistant", "answer"), 0))
         assertEquals(2, branchMessageCount(ChatLine("optimistic", "user", "question"), 1))

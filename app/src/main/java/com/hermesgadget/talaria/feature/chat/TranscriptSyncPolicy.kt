@@ -86,3 +86,8 @@ internal object TranscriptSyncPolicy {
         return if (refreshSucceeded) next else next.coerceAtLeast(MIN_FALLBACK_DELAY_MS)
     }
 }
+
+internal object TranscriptReadPolicy {
+    fun isCurrent(requestRevision: Long, currentRevision: Long): Boolean =
+        requestRevision == currentRevision
+}

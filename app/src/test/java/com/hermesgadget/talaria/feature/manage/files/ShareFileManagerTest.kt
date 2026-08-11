@@ -122,6 +122,61 @@ class ShareFileManagerTest {
     }
 
     @Test
+    fun `retained backup shares expire after chooser grace and stay bounded`() {
+        val root = tempDirectory()
+        try {
+            var clock = 100L
+            val manager = ShareFileManager(
+                cacheDirectory = root,
+                nowMillis = { clock },
+                ownerId = "process-a",
+            )
+            val first = manager.createManagedDownload(
+                prefix = "hermes-backup-",
+                suffix = ".zip",
+                source = ByteArrayInputStream(byteArrayOf(1, 2, 3)),
+                declaredBytes = 3,
+                retentionMillis = 100L,
+                retentionPrefix = "hermes-backup-",
+                maxRetainedBytes = 6L,
+                maxRetainedFiles = 2,
+            )
+            val second = manager.createManagedDownload(
+                prefix = "hermes-backup-",
+                suffix = ".zip",
+                source = ByteArrayInputStream(byteArrayOf(4, 5, 6)),
+                declaredBytes = 3,
+                retentionMillis = 100L,
+                retentionPrefix = "hermes-backup-",
+                maxRetainedBytes = 6L,
+                maxRetainedFiles = 2,
+            )
+
+            assertTrue(first.exists())
+            assertTrue(second.exists())
+            assertThrows(IllegalStateException::class.java) {
+                manager.createManagedDownload(
+                    prefix = "hermes-backup-",
+                    suffix = ".zip",
+                    source = ByteArrayInputStream(byteArrayOf(7)),
+                    declaredBytes = 1,
+                    retentionMillis = 100L,
+                    retentionPrefix = "hermes-backup-",
+                    maxRetainedBytes = 6L,
+                    maxRetainedFiles = 2,
+                )
+            }
+
+            clock = 200L
+            manager.cleanupManagedDownloads("hermes-backup-", 100L, 6L, 2)
+            assertFalse(first.exists())
+            assertFalse(second.exists())
+        } finally {
+            deleteTree(root)
+        }
+    }
+
+    @Test
     fun `restart sweep removes prior transfer owner but retains chooser file until ttl`() {
         val root = tempDirectory()
         try {

@@ -19,6 +19,8 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 internal const val SHARE_FILE_TTL_MILLIS = 15L * 60L * 1000L
 internal const val SHARE_CACHE_LIMIT_BYTES = 32L * 1024L * 1024L
@@ -30,6 +32,10 @@ internal const val MAX_MANAGED_DOWNLOAD_BYTES = 64L * 1024L * 1024L
 
 /** Backups contain the session database, artifacts, and configuration. */
 internal const val MAX_OPS_BACKUP_DOWNLOAD_BYTES = 512L * 1024L * 1024L
+/** Keep a completed backup available to the chooser, but not for process life. */
+internal const val BACKUP_SHARE_RETENTION_MILLIS = 15L * 60L * 1000L
+internal const val BACKUP_SHARE_CACHE_LIMIT_BYTES = 1L * 1024L * 1024L * 1024L
+internal const val BACKUP_SHARE_CACHE_LIMIT_FILES = 2
 
 private const val PARTIAL_SUFFIX = ".partial"
 private const val MANAGED_DOWNLOAD_DIRECTORY = "managed-downloads"
@@ -129,6 +135,10 @@ class ShareFileManager(
         source: InputStream,
         declaredBytes: Long = -1L,
         maxBytes: Long = MAX_MANAGED_DOWNLOAD_BYTES,
+        retentionMillis: Long? = null,
+        retentionPrefix: String = prefix,
+        maxRetainedBytes: Long = Long.MAX_VALUE,
+        maxRetainedFiles: Int = Int.MAX_VALUE,
         onProgress: (copied: Long, total: Long) -> Unit = { _, _ -> },
         beforeRead: () -> Unit = {},
     ): File = writeOwnedFile(
@@ -141,6 +151,10 @@ class ShareFileManager(
         onProgress = onProgress,
         beforeRead = beforeRead,
         enforceShareQuota = false,
+        retentionMillis = retentionMillis,
+        retentionPrefix = retentionPrefix,
+        maxRetainedBytes = maxRetainedBytes,
+        maxRetainedFiles = maxRetainedFiles,
     )
 
     /** Creates an empty owned partial for callers that need a custom writer. */
@@ -172,6 +186,27 @@ class ShareFileManager(
         cleanupStaleFilesLocked(nowMillis())
     }
 
+    /** Removes expired retained managed shares and leaves fresh chooser grants intact. */
+    @Synchronized
+    fun cleanupManagedDownloads(
+        prefix: String,
+        retentionMillis: Long,
+        maxRetainedBytes: Long,
+        maxRetainedFiles: Int,
+    ) {
+        require(retentionMillis >= 0L) { "Managed-file retention must not be negative" }
+        require(maxRetainedBytes >= 0L) { "Managed-file retention weight must not be negative" }
+        require(maxRetainedFiles > 0) { "Managed-file retention count must be positive" }
+        val now = nowMillis()
+        cleanupStaleFilesLocked(now)
+        cleanupManagedDownloadsLocked(now, prefix, retentionMillis)
+    }
+
+    suspend fun cleanupStaleFilesOnIo() = withContext(Dispatchers.IO) { cleanupStaleFiles() }
+
+    suspend fun deleteOwnedFileOnIo(file: File?): Boolean =
+        withContext(Dispatchers.IO) { deleteOwnedFile(file) }
+
     private fun writeOwnedFile(
         directoryName: String,
         prefix: String,
@@ -182,14 +217,35 @@ class ShareFileManager(
         onProgress: (copied: Long, total: Long) -> Unit,
         beforeRead: () -> Unit,
         enforceShareQuota: Boolean,
+        retentionMillis: Long? = null,
+        retentionPrefix: String = prefix,
+        maxRetainedBytes: Long = Long.MAX_VALUE,
+        maxRetainedFiles: Int = Int.MAX_VALUE,
     ): File {
         require(declaredBytes < 0L || declaredBytes <= maxBytes) {
             "Payload exceeds the ${maxBytes / (1024 * 1024)} MiB limit"
         }
         require(maxBytes >= 0L) { "Payload limit must not be negative" }
+        require(retentionMillis == null || retentionMillis >= 0L) {
+            "Managed-file retention must not be negative"
+        }
+        require(maxRetainedBytes >= 0L) { "Managed-file retention weight must not be negative" }
+        require(maxRetainedFiles > 0) { "Managed-file retention count must be positive" }
 
         val now = nowMillis()
         cleanupStaleFilesLocked(now)
+        if (retentionMillis != null) {
+            cleanupManagedDownloadsLocked(now, retentionPrefix, retentionMillis)
+            if (!hasManagedCapacityLocked(
+                    prefix = retentionPrefix,
+                    incomingBytes = declaredBytes.takeIf { it >= 0L } ?: 0L,
+                    maxBytes = maxRetainedBytes,
+                    maxFiles = maxRetainedFiles,
+                )
+            ) {
+                error("Managed share cache is full")
+            }
+        }
         if (enforceShareQuota && !hasShareCapacityLocked(declaredBytes.takeIf { it >= 0L } ?: 0L)) {
             error("Share cache is full")
         }
@@ -227,6 +283,17 @@ class ShareFileManager(
                     error("Share cache is full")
                 }
             }
+            if (retentionMillis != null && !hasManagedCapacityLocked(
+                    prefix = retentionPrefix,
+                    incomingBytes = 0L,
+                    maxBytes = maxRetainedBytes,
+                    maxFiles = maxRetainedFiles,
+                    includesCandidate = true,
+                )
+            ) {
+                deleteTrackedFileLocked(completedFile)
+                error("Managed share cache is full")
+            }
             completed = true
             return completedFile
         } finally {
@@ -245,6 +312,39 @@ class ShareFileManager(
         expirations.keys.removeAll { path -> !File(path).exists() }
         enforceCacheLimitLocked(now)
     }
+
+    private fun cleanupManagedDownloadsLocked(now: Long, prefix: String, retentionMillis: Long) {
+        managedFiles()
+            .filter { it.name.startsWith(prefix) }
+            .filter { safeExpiry(it.lastModified(), retentionMillis) <= now }
+            .forEach(::deleteTrackedFileLocked)
+    }
+
+    private fun hasManagedCapacityLocked(
+        prefix: String,
+        incomingBytes: Long,
+        maxBytes: Long,
+        maxFiles: Int,
+        includesCandidate: Boolean = false,
+    ): Boolean {
+        if (incomingBytes < 0L || incomingBytes > maxBytes) return false
+        val files = managedFiles().filter { it.name.startsWith(prefix) }
+        val countWithinLimit = if (includesCandidate) {
+            files.size <= maxFiles
+        } else {
+            files.size < maxFiles
+        }
+        val total = files.sumOf { it.length() }
+        val bytesWithinLimit = maxBytes == Long.MAX_VALUE || total <= maxBytes - incomingBytes
+        return countWithinLimit && bytesWithinLimit
+    }
+
+    private fun managedFiles(): List<File> = File(cacheDirectory, MANAGED_DOWNLOAD_DIRECTORY)
+        .takeIf(File::isDirectory)
+        ?.walkTopDown()
+        ?.filter(File::isFile)
+        ?.toList()
+        .orEmpty()
 
     /**
      * Transfer files are not chooser-owned. Preserve current-process files so
@@ -313,10 +413,12 @@ class ShareFileManager(
         file.delete()
     }
 
-    private fun safeExpiry(storedAt: Long): Long = when {
-        storedAt <= 0L -> ttlMillis
-        Long.MAX_VALUE - storedAt < ttlMillis -> Long.MAX_VALUE
-        else -> storedAt + ttlMillis
+    private fun safeExpiry(storedAt: Long): Long = safeExpiry(storedAt, ttlMillis)
+
+    private fun safeExpiry(storedAt: Long, retentionMillis: Long): Long = when {
+        storedAt <= 0L -> retentionMillis
+        Long.MAX_VALUE - storedAt < retentionMillis -> Long.MAX_VALUE
+        else -> storedAt + retentionMillis
     }
 
     private fun isInsideCache(file: File): Boolean {

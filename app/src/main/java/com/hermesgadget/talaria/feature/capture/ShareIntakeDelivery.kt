@@ -38,13 +38,17 @@ import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 
+interface ShareDelivery {
+    suspend fun deliver(snapshot: ConnectionSnapshot, draft: ShareIntakeDraft): String
+}
+
 /** Delivers one persisted share task without ever resolving a new active scope mid-flight. */
 internal class ShareIntakeDelivery(
     private val clientFactory: HermesClientFactory,
     private val chatRepository: ChatRepository,
     private val wsAuth: WsAuthHelper,
-) {
-    suspend fun deliver(
+): ShareDelivery {
+    override suspend fun deliver(
         snapshot: ConnectionSnapshot,
         draft: ShareIntakeDraft,
     ): String {

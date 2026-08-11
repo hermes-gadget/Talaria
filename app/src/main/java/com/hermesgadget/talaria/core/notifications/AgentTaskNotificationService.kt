@@ -36,6 +36,29 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
+
+/** Runtime identity fence used when a logical watcher id is reused. */
+internal class AgentWatchGenerationRegistry {
+    private val nextGeneration = AtomicLong(0L)
+    private val current = ConcurrentHashMap<String, Long>()
+
+    fun install(watcherId: String): Long {
+        val generation = nextGeneration.incrementAndGet()
+        current[watcherId] = generation
+        return generation
+    }
+
+    fun isCurrent(watcherId: String, generation: Long): Boolean =
+        current[watcherId] == generation
+
+    fun removeIfCurrent(watcherId: String, generation: Long): Boolean =
+        current.remove(watcherId, generation)
+
+    fun clear() {
+        current.clear()
+    }
+}
 
 /**
  * Keeps a lightweight `/api/events` subscriber alive for each user-started turn.
@@ -44,16 +67,17 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class AgentTaskNotificationService : Service() {
     private data class Runtime(
-        var watch: PersistedAgentWatch,
+        val watch: PersistedAgentWatch,
         val client: HermesEventClient,
         val collectJob: Job,
+        val generation: Long,
     )
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    // ConcurrentHashMap: mutated from the main thread (onStartCommand/watch/stopWatch)
-    // and from serviceScope's IO dispatcher (handle/verifyRuntimeScopes). A plain
-    // linkedMapOf let values() iteration race with insertion -> ConcurrentModificationException.
+    // Runtime records are immutable and conditional map operations prevent a
+    // verifier or terminal callback from removing a replacement runtime.
     private val runtimes = ConcurrentHashMap<String, Runtime>()
+    private val generations = AgentWatchGenerationRegistry()
     private val container get() = TalariaApp.instance.container
     private var scopeGuardJob: Job? = null
 
@@ -99,6 +123,7 @@ class AgentTaskNotificationService : Service() {
             it.client.dispose()
         }
         runtimes.clear()
+        generations.clear()
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -114,14 +139,19 @@ class AgentTaskNotificationService : Service() {
             existing.watch.channelId == record.channelId &&
             sameRecordedScope(existing.watch, record)
         ) {
-            existing.watch = merge(existing.watch, record)
+            runtimes.replace(
+                record.watcherId,
+                existing,
+                existing.copy(watch = merge(existing.watch, record)),
+            )
             persistAndRefreshForeground()
             return
         }
+        val generation = generations.install(record.watcherId)
         existing?.let {
             it.collectJob.cancel()
             it.client.dispose()
-            runtimes.remove(record.watcherId)
+            runtimes.remove(record.watcherId, it)
         }
         // Call startForeground before opening sockets: startForegroundService
         // callers have a strict five-second deadline on modern Android.
@@ -156,9 +186,9 @@ class AgentTaskNotificationService : Service() {
         // its model/catalog probes for every active turn.
         client.start(record.channelId, includeRpc = false)
         val job = serviceScope.launch {
-            client.events.collect { event -> handle(record.watcherId, event) }
+            client.events.collect { event -> handle(record.watcherId, generation, event) }
         }
-        runtimes[record.watcherId] = Runtime(record, client, job)
+        runtimes[record.watcherId] = Runtime(record, client, job, generation)
         persistAndRefreshForeground()
     }
 
@@ -172,7 +202,11 @@ class AgentTaskNotificationService : Service() {
             watch(record)
             return
         }
-        runtime.watch = merge(runtime.watch, record)
+        runtimes.replace(
+            record.watcherId,
+            runtime,
+            runtime.copy(watch = merge(runtime.watch, record)),
+        )
         persistAndRefreshForeground()
     }
 
@@ -184,15 +218,14 @@ class AgentTaskNotificationService : Service() {
                     container.clientFactory.snapshotFor(id, runtime.watch.managementProfile)
                         ?.let(::isForegroundBound) != true
             }
-            .map(Runtime::watch)
         if (paused.isEmpty()) return
-        paused.forEach { record ->
-            runtimes.remove(record.watcherId)?.let {
-                it.collectJob.cancel()
-                it.client.dispose()
-            }
+        paused.forEach { runtime ->
+            if (!runtimes.remove(runtime.watch.watcherId, runtime)) return@forEach
+            generations.removeIfCurrent(runtime.watch.watcherId, runtime.generation)
+            runtime.collectJob.cancel()
+            runtime.client.dispose()
             container.notifier.notifyError(
-                "${record.agentName} monitoring paused",
+                "${runtime.watch.agentName} monitoring paused",
                 "The recorded Hermes connection is no longer the current connection",
             )
         }
@@ -227,15 +260,20 @@ class AgentTaskNotificationService : Service() {
             (old.managementProfile.orEmpty().ifBlank { "default" }) ==
             (new.managementProfile.orEmpty().ifBlank { "default" })
 
-    private fun handle(watcherId: String, event: HermesSideEvent) {
+    private fun handle(watcherId: String, generation: Long, event: HermesSideEvent) {
+        if (!generations.isCurrent(watcherId, generation)) return
         val runtime = runtimes[watcherId] ?: return
+        if (runtime.generation != generation) return
+        var currentRuntime = runtime
         event.sessionIdOrNull()?.takeIf(String::isNotBlank)?.let { sessionId ->
-            if (runtime.watch.sessionId != sessionId) {
-                runtime.watch = runtime.watch.copy(sessionId = sessionId)
+            if (currentRuntime.watch.sessionId != sessionId) {
+                val updated = currentRuntime.copy(watch = currentRuntime.watch.copy(sessionId = sessionId))
+                if (!runtimes.replace(watcherId, currentRuntime, updated)) return
+                currentRuntime = updated
                 persistAndRefreshForeground()
             }
         }
-        val watch = runtime.watch
+        val watch = currentRuntime.watch
         container.agentAlertDispatcher.dispatch(
             identity = AgentThreadIdentity(watch.watcherId, watch.agentName, watch.sessionId),
             event = event,
@@ -243,22 +281,24 @@ class AgentTaskNotificationService : Service() {
             managementProfile = watch.managementProfile,
         )
         when {
-            event is HermesSideEvent.MessageComplete -> stopWatch(watcherId)
+            event is HermesSideEvent.MessageComplete -> stopWatch(watcherId, generation)
             event is HermesSideEvent.TransportError && event.isTerminalMonitorError() -> {
                 container.notifier.notifyError(
                     "${watch.agentName} monitoring stopped",
                     event.message,
                 )
-                stopWatch(watcherId)
+                stopWatch(watcherId, generation)
             }
         }
     }
 
-    private fun stopWatch(watcherId: String) {
-        runtimes.remove(watcherId)?.let {
-            it.collectJob.cancel()
-            it.client.dispose()
-        }
+    private fun stopWatch(watcherId: String, expectedGeneration: Long? = null) {
+        val runtime = runtimes[watcherId] ?: return
+        if (expectedGeneration != null && runtime.generation != expectedGeneration) return
+        if (!runtimes.remove(watcherId, runtime)) return
+        generations.removeIfCurrent(watcherId, runtime.generation)
+        runtime.collectJob.cancel()
+        runtime.client.dispose()
         persistAndRefreshForeground()
         if (runtimes.isEmpty()) {
             stopForeground(STOP_FOREGROUND_REMOVE)

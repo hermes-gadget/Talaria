@@ -22,10 +22,9 @@ import com.hermesgadget.talaria.domain.model.SessionMessage
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonPrimitive
 
 /** The destructive or session-mutating action currently represented by the chat UI. */
 enum class ChatSessionActionKind {
@@ -179,16 +178,16 @@ internal object ChatSessionControlsReducer {
 internal fun parseSessionBranchOrigins(root: JsonElement): Map<String, String> {
     val rows = when (root) {
         is JsonArray -> root
-        is JsonObject -> root["sessions"]?.jsonArray
-            ?: root["results"]?.jsonArray
+        is JsonObject -> (root["sessions"] as? JsonArray)
+            ?: (root["results"] as? JsonArray)
             ?: JsonArray(emptyList())
         else -> JsonArray(emptyList())
     }
     return rows.mapNotNull { row ->
         val obj = row as? JsonObject ?: return@mapNotNull null
-        val id = obj["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+        val id = (obj["id"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
             ?: return@mapNotNull null
-        val parent = obj["parent_session_id"]?.jsonPrimitive?.contentOrNull
+        val parent = (obj["parent_session_id"] as? JsonPrimitive)?.contentOrNull
             ?.takeIf { it.isNotBlank() }
             ?: return@mapNotNull null
         id to parent
