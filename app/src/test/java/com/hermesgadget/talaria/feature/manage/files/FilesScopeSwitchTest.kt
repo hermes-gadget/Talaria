@@ -29,7 +29,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -81,11 +80,6 @@ class FilesScopeSwitchTest {
             cacheDirectory = tempFolder.root,
         )
 
-    @Before
-    fun setUp() {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-    }
-
     @After
     fun tearDown() {
         Dispatchers.resetMain()
@@ -93,6 +87,7 @@ class FilesScopeSwitchTest {
 
     @Test
     fun `stale A listing never renders after switch to B`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         val scopeA = scope("a", 1)
         val scopeB = scope("b", 1)
         flow = MutableStateFlow(scopeA)
@@ -121,6 +116,7 @@ class FilesScopeSwitchTest {
 
     @Test
     fun `follow-up request after switch routes to B not A`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         val scopeA = scope("a", 1)
         val scopeB = scope("b", 1)
         flow = MutableStateFlow(scopeA)
@@ -143,6 +139,7 @@ class FilesScopeSwitchTest {
 
     @Test
     fun `stale A preview bytes never rendered under B`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         val scopeA = scope("a", 1)
         val scopeB = scope("b", 1)
         flow = MutableStateFlow(scopeA)
@@ -173,6 +170,7 @@ class FilesScopeSwitchTest {
 
     @Test
     fun `stale A download never completes under B`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         val scopeA = scope("a", 1)
         val scopeB = scope("b", 1)
         flow = MutableStateFlow(scopeA)

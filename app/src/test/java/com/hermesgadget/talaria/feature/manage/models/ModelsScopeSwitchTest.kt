@@ -27,7 +27,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 
 /**
@@ -48,11 +47,6 @@ class ModelsScopeSwitchTest {
             generation,
         )
 
-    @Before
-    fun setUp() {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-    }
-
     @After
     fun tearDown() {
         Dispatchers.resetMain()
@@ -60,6 +54,7 @@ class ModelsScopeSwitchTest {
 
     @Test
     fun `stale A provider list never lands in B UI state`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         val scopeA = scope("a", 1)
         val scopeB = scope("b", 1)
         flow = MutableStateFlow(scopeA)
@@ -98,6 +93,7 @@ class ModelsScopeSwitchTest {
 
     @Test
     fun `stale A model info never overwrites B current model`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         val scopeA = scope("a", 1)
         val scopeB = scope("b", 1)
         flow = MutableStateFlow(scopeA)
