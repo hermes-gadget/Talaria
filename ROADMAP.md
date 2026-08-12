@@ -55,6 +55,16 @@ The forward plan must not erase shipped work. These are the repository’s curre
 
 - Added `com.google.android.gms.car.application` metadata and `automotive_app_desc.xml` declaring both `notification` and `template`. The descriptor is shipped; it is not a forward backlog item.
 
+### v0.9.0 — 2026-08-06
+
+- One-tap token fetch from the dashboard, connection-doctor REST probe, explicit refresh on delayed live updates, multi-item share intake, local session labels/groups/favorites, transcript deletion + reconciliation, widget/car strings in all five locales, draft debounce + mic-off-screen, and Android Auto consent E2E.
+- Fixes for the fetch-token main-thread hang, REST/WS token divergence, pasted-token crash loop, and `super.onCreate()` ordering on Auto hosts.
+
+### v0.9.1 — 2026-08-12
+
+- Audit remediation waves 0–5: transport ingress bounds, profile-scoped drafts/rebinding, serialized config saves, share/Kanban reliability fixes, hardened deep links and FileProvider paths, bounded version arithmetic, and cleartext-consent disclosure.
+- Emulator loopback interceptor release-gated; repository cache invalidation keyed consistently; status widget cache race fixed; download retry fixed.
+
 ### Current verification baseline
 
 - 214 unit tests are green by the supplied v0.8.3 baseline.

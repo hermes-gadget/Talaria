@@ -2,6 +2,31 @@
 
 All notable Talaria changes are documented here. Versions below correspond to repository tags; there has never been a `1.0.0` release.
 
+## [0.9.1] — 2026-08-12
+
+Audit remediation wave (Waves 0–5) plus targeted reliability fixes — 37 commits since v0.9.0.
+
+### Added
+
+- Profile-scoped chat draft persistence (W1-1) — drafts survive profile switches and are bound to the profile that created them.
+- A-to-B profile-switch regression test coverage for scope switching (files, models, learning, config).
+- Status widget renders from cache first with a fixed cache-scope race, and the stale polling loop was removed.
+- Android Auto: car mirror now honors the app notification setting, and list content respects the host content limits.
+- Ops backup download budget enforced (no oversized download hangs).
+
+### Fixed
+
+- Websocket and REST ingress bounds hardened (W1-2): bounded headers, bodies, and line counts across transport surfaces.
+- Config saves are serialized and state-verified (no lost concurrent edits); profile scope rebinding fixed.
+- Share intake: duplicate share uploads avoided; resend blocked after an unknown delivery outcome.
+- Kanban: drafts retained on failure, task creation reconciled, sessions refreshed after admin mutations, named-arg mutation call fixed.
+- Scoped deep links hardened; bottom-tab navigation bounded.
+- FileProvider paths hardened; native OIDC callback request lines bounded; release version components bounded before versionCode arithmetic.
+- Cleartext credential transit is now disclosed in the consent flow (no silent HTTP credential send).
+- Learning generation refresh guarded against stale scope loads; scope-switch tests no longer leak coroutines across test classes.
+- Emulator loopback interceptor gated behind `BuildConfig.DEBUG` everywhere (was unconditionally added in the password-session client — release safety fix).
+- Repository cache invalidation keyed consistently (was scope/key-mismatched in one path); file download retry now works after transient failures.
+
 ## [0.9.0] — 2026-08-06
 
 ### Added
