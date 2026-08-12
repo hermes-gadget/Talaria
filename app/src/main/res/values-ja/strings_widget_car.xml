@@ -9,7 +9,6 @@
     <string name="widget_status_title">Talaria</string>
     <string name="widget_status_cached">%1$s · キャッシュ済み</string>
     <plurals name="widget_status_pairing">
-        <item quantity="one">%1$d ペアリング要求</item>
         <item quantity="other">%1$d ペアリング要求</item>
     </plurals>
     <string name="tile_status_up">Hermes GW · 起動中</string>
@@ -39,7 +38,6 @@
     <string name="car_failed_create_agent">エージェントの作成に失敗</string>
     <string name="car_failed_start_agent">エージェントの開始に失敗</string>
     <string name="car_failed_load_sessions">セッションの読み込みに失敗</string>
-    <string name="car_no_messages_drive">このドライブ中の新しいメッセージはありません</string>
     <string name="car_no_actions_until_enroll">この証明書を明示的に登録するまで、会話や操作は利用できません。</string>
     <string name="car_identity_unverified">カーホストの ID を確認できませんでした。</string>
     <string name="car_not_trusted_detail">信頼されていません\n\n%1$s\n\n電話で Talaria を開き、管理 → システム → カーホスト に移動してください。</string>

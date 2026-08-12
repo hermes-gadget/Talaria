@@ -9,7 +9,6 @@
     <string name="widget_status_title">Talaria</string>
     <string name="widget_status_cached">%1$s · 已快取</string>
     <plurals name="widget_status_pairing">
-        <item quantity="one">%1$d 個配對要求</item>
         <item quantity="other">%1$d 個配對要求</item>
     </plurals>
     <string name="tile_status_up">Hermes GW · 執行中</string>
@@ -39,7 +38,6 @@
     <string name="car_failed_create_agent">建立代理失敗</string>
     <string name="car_failed_start_agent">啟動代理失敗</string>
     <string name="car_failed_load_sessions">載入工作階段失敗</string>
-    <string name="car_no_messages_drive">本次駕駛期間沒有新訊息</string>
     <string name="car_no_actions_until_enroll">在您明確註冊此憑證之前，沒有可用的對話或操作。</string>
     <string name="car_identity_unverified">無法驗證車載主機身分。</string>
     <string name="car_not_trusted_detail">不受信任\n\n%1$s\n\n請在手機上開啟 Talaria，然後前往 管理 → 系統 → 車載主機。</string>

@@ -9,7 +9,6 @@
     <string name="widget_status_title">Talaria</string>
     <string name="widget_status_cached">%1$s · 已缓存</string>
     <plurals name="widget_status_pairing">
-        <item quantity="one">%1$d 个配对请求</item>
         <item quantity="other">%1$d 个配对请求</item>
     </plurals>
     <string name="tile_status_up">Hermes GW · 运行中</string>
@@ -39,7 +38,6 @@
     <string name="car_failed_create_agent">创建代理失败</string>
     <string name="car_failed_start_agent">启动代理失败</string>
     <string name="car_failed_load_sessions">加载会话失败</string>
-    <string name="car_no_messages_drive">本次驾驶期间没有新消息</string>
     <string name="car_no_actions_until_enroll">在您明确注册此证书之前，没有可用的对话或操作。</string>
     <string name="car_identity_unverified">无法验证车载主机身份。</string>
     <string name="car_not_trusted_detail">不受信任\n\n%1$s\n\n请在手机上打开 Talaria，然后转到 管理 → 系统 → 车载主机。</string>

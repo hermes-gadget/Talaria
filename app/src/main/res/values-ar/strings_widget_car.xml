@@ -43,7 +43,6 @@
     <string name="car_failed_create_agent">فشل إنشاء الوكيل</string>
     <string name="car_failed_start_agent">فشل تشغيل الوكيل</string>
     <string name="car_failed_load_sessions">فشل تحميل الجلسات</string>
-    <string name="car_no_messages_drive">لا توجد رسائل جديدة أثناء هذه الرحلة</string>
     <string name="car_no_actions_until_enroll">لا تتوفر محادثات أو إجراءات حتى تسجّل هذه الشهادة صراحةً.</string>
     <string name="car_identity_unverified">تعذر التحقق من هوية مضيف السيارة.</string>
     <string name="car_not_trusted_detail">غير موثوق\n\n%1$s\n\nافتح Talaria على هاتفك، ثم الإدارة ← النظام ← مضيفو السيارة.</string>

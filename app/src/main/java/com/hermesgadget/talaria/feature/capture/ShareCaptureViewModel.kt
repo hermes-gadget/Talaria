@@ -16,6 +16,7 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import androidx.core.net.toUri
 import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
@@ -467,7 +468,7 @@ class ShareCaptureViewModel(
     ): ShareIntakeItem = withContext(Dispatchers.IO) {
         val current = draft ?: error("Share draft is no longer available")
         require(current.scopeId == fixedSnapshot.profile.scopeId()) { "Share scope changed" }
-        val uri = Uri.parse(rawUri)
+        val uri = rawUri.toUri()
         val displayName = ShareIntakePolicy.safeFilename(queryDisplayName(uri), "shared-file")
         val declaredMime = runCatching { resolver.getType(uri) }.getOrNull()
             ?.takeIf { it.isNotBlank() }
@@ -674,7 +675,6 @@ class ShareCaptureViewModel(
             val flush = persistenceScope.launch { store.save(pending) }
             flush.invokeOnCompletion { persistenceScope.cancel() }
         }
-        super.onCleared()
     }
 
     private fun showError(message: String) {

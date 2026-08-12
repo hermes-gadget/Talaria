@@ -50,7 +50,6 @@
     <string name="car_failed_create_agent">Failed to create agent</string>
     <string name="car_failed_start_agent">Failed to start agent</string>
     <string name="car_failed_load_sessions">Failed to load sessions</string>
-    <string name="car_no_messages_drive">No new messages during this drive</string>
     <string name="car_no_actions_until_enroll">No conversations or actions are available until you explicitly enroll this certificate.</string>
     <string name="car_identity_unverified">The car host identity could not be verified.</string>
     <string name="car_not_trusted_detail">Not trusted\n\n%1$s\n\nOpen Talaria on your phone, then Manage → System → Car hosts.</string>
