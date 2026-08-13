@@ -22,6 +22,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.repo.HermesRepository
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,14 +42,23 @@ class SimpleManageViewModel(
     private val _ui = MutableStateFlow(SimpleUiState<Any>())
     val ui: StateFlow<SimpleUiState<Any>> = _ui.asStateFlow()
 
+    private var loadGeneration = 0L
+    private var refreshJob: Job? = null
+
     init { refresh() }
 
     fun refresh() {
-        viewModelScope.launch {
+        refreshJob?.cancel()
+        val generation = ++loadGeneration
+        refreshJob = viewModelScope.launch {
             _ui.update { it.copy(loading = true, error = null) }
             loader(repo).fold(
-                onSuccess = { data -> _ui.update { it.copy(loading = false, data = data) } },
-                onFailure = { e -> _ui.update { it.copy(loading = false, error = e.message) } },
+                onSuccess = { data ->
+                    if (generation == loadGeneration) _ui.update { it.copy(loading = false, data = data) }
+                },
+                onFailure = { e ->
+                    if (generation == loadGeneration) _ui.update { it.copy(loading = false, error = e.message) }
+                },
             )
         }
     }

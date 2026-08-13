@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import android.annotation.SuppressLint
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /** A car host is trusted only as an exact package and current signing-certificate pair. */
 @Serializable

@@ -14,6 +14,7 @@ import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /** Converts Android's several share representations into one ordered payload. */
 internal object ShareIntentParser {

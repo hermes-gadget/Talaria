@@ -42,6 +42,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import java.io.IOException
 import java.util.UUID
+import com.hermesgadget.talaria.core.util.suspendResult
 
 class ConnectionRepository(
     private val store: SecureConnectionStore,
@@ -237,7 +238,7 @@ class ConnectionRepository(
     suspend fun testConnection(
         snapshot: ConnectionSnapshot? = clientFactory.snapshot(),
     ): Result<StatusResponse> = withContext(Dispatchers.IO) {
-        runCatching {
+        suspendResult {
             val bound = snapshot ?: error("Save a connection profile before testing it")
             val api = clientFactory.api(bound)
             val status = api.getStatus(profile = bound.managementProfile)

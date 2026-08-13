@@ -17,7 +17,10 @@
 package com.hermesgadget.talaria.core.data.repo
 
 import java.util.LinkedHashMap
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 
 /**
  * A small, thread-safe weighted LRU read-through cache.
@@ -44,6 +47,13 @@ class ResponseCache(
     private val lock = Any()
     private val entries = LinkedHashMap<String, Entry>(16, 0.75f, true)
     private var totalWeight = 0L
+
+    // M18: single-flight + invalidation stamping. readThrough callers with the
+    // same key share one fetch; a fetch that started before invalidate() must
+    // not put its stale result back after the invalidation.
+    private val inFlight = ConcurrentHashMap<String, CompletableDeferred<Result<Any?>>>()
+    private val keyGenerations = ConcurrentHashMap<String, Long>()
+    private val epoch = AtomicLong(0L)
 
     init {
         require(maxEntries > 0) { "Response cache entry count must be positive" }
@@ -89,17 +99,24 @@ class ResponseCache(
 
     /** Drop a single key (call after a mutation to its data). */
     fun invalidate(key: String) = synchronized(lock) {
+        keyGenerations.merge(key, 1L, Long::plus)
         removeLocked(key)
     }
 
     /** Drop keys whose names begin with [prefix]. */
     fun invalidatePrefix(prefix: String) = synchronized(lock) {
         entries.keys.filter { it.startsWith(prefix) }.forEach(::removeLocked)
+        keyGenerations.keys.filter { it.startsWith(prefix) }.forEach { key ->
+            keyGenerations.merge(key, 1L, Long::plus)
+        }
     }
 
     /** Drop keys matching an arbitrary predicate, useful for deleted scopes. */
     fun invalidateWhere(predicate: (String) -> Boolean) = synchronized(lock) {
         entries.keys.filter(predicate).forEach(::removeLocked)
+        keyGenerations.keys.filter(predicate).forEach { key ->
+            keyGenerations.merge(key, 1L, Long::plus)
+        }
     }
 
     /** Drop expired values even when no caller happens to read their key. */
@@ -111,6 +128,8 @@ class ResponseCache(
     fun clear() = synchronized(lock) {
         entries.clear()
         totalWeight = 0L
+        epoch.incrementAndGet()
+        keyGenerations.clear()
     }
 
     /** Exposed for deterministic boundary tests and diagnostics. */
@@ -124,6 +143,10 @@ class ResponseCache(
     /**
      * Return a fresh cached value if present, otherwise run [fetch], store the
      * success, and return it. Failures are never cached.
+     *
+     * Concurrent callers for the same key share one in-flight fetch
+     * (single-flight). A fetch that started before [invalidate] on its key
+     * does not put its stale result back afterwards (M18).
      */
     @Suppress("UNCHECKED_CAST")
     suspend fun <T> readThrough(
@@ -132,12 +155,50 @@ class ResponseCache(
         fetch: suspend () -> T,
     ): Result<T> {
         peek(key, ttlMs)?.let { return Result.success(it as T) }
-        return try {
-            Result.success(fetch()).also { result -> put(key, result.getOrNull(), ttlMs) }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Throwable) {
-            Result.failure(failure)
+        val capturedEpoch = epoch.get()
+        val capturedGeneration = keyGenerations[key] ?: 0L
+
+        // Join an in-flight fetch for the same key instead of duplicating it.
+        inFlight[key]?.let { join ->
+            return join.await().let { result ->
+                if (result.isSuccess) {
+                    Result.success(result.getOrNull() as T)
+                } else {
+                    Result.failure(result.exceptionOrNull() ?: IllegalStateException("fetch failed"))
+                }
+            }
+        }
+        val gate = CompletableDeferred<Result<Any?>>()
+        val winner = inFlight.putIfAbsent(key, gate) ?: gate
+        if (winner !== gate) {
+            return winner.await().let { result ->
+                if (result.isSuccess) {
+                    Result.success(result.getOrNull() as T)
+                } else {
+                    Result.failure(result.exceptionOrNull() ?: IllegalStateException("fetch failed"))
+                }
+            }
+        }
+        try {
+            val result = try {
+                Result.success(fetch())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                Result.failure(failure)
+            }
+            // Skip the put when the key was invalidated (or the whole cache
+            // cleared) while the fetch was in flight: the caller asked for
+            // fresh data, not a restored stale value.
+            if (capturedEpoch == epoch.get() &&
+                capturedGeneration == (keyGenerations[key] ?: 0L)
+            ) {
+                put(key, result.getOrNull(), ttlMs)
+            }
+            gate.complete(result)
+            return result
+        } finally {
+            inFlight.remove(key, gate)
         }
     }
 

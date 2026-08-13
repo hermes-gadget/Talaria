@@ -31,6 +31,7 @@ import com.hermesgadget.talaria.core.network.SnapshotAuthGuard
 import com.hermesgadget.talaria.ui.navigation.TalariaDeepLink
 import com.hermesgadget.talaria.ui.navigation.TalariaDeepLinkParser
 import kotlinx.coroutines.CancellationException
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /** Delivers notification inline-replies by opening a short-lived PTY send. */
 class ReplyWorker(
@@ -42,7 +43,7 @@ class ReplyWorker(
             ?: inputData.getString(KEY_TEXT_FILE)?.let { path ->
                 // Oversized notification replies are spilled to a cache file
                 // by NotificationActionReceiver (M5); read and consume it.
-                runCatching { java.io.File(path).readText() }
+                suspendResult { java.io.File(path).readText() }
                     .getOrNull()
                     ?.also { java.io.File(path).delete() }
             }

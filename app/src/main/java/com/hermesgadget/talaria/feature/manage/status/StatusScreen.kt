@@ -70,6 +70,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import retrofit2.HttpException
+import com.hermesgadget.talaria.core.util.suspendResult
 
 internal data class ComputerUseCheck(
     val label: String,
@@ -166,7 +167,7 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
         repo.getSessionsPage(limit = 20)
             .onSuccess { currentSessions = it.sessions }
 
-        runCatching {
+        suspendResult {
             val profile = container.connectionStore.activeProfile()?.effectiveManagementProfile()
             container.clientFactory.api().getComputerUseStatus(profile)
         }.onSuccess {
@@ -310,7 +311,7 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
                                         computerUseGrantMessage = null
                                         computerUseGrantFailed = false
                                         scope.launch {
-                                            runCatching {
+                                            suspendResult {
                                                 val profile = container.connectionStore.activeProfile()
                                                     ?.effectiveManagementProfile()
                                                 container.clientFactory.api()

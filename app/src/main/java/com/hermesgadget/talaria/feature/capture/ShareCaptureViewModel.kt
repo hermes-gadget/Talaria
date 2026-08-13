@@ -49,6 +49,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.decodeFromJsonElement
+import com.hermesgadget.talaria.core.util.suspendResult
 
 data class ShareTargetOption(
     val kind: ShareTargetKind,
@@ -477,7 +478,7 @@ class ShareCaptureViewModel(
         require(current.scopeId == fixedSnapshot.profile.scopeId()) { "Share scope changed" }
         val uri = rawUri.toUri()
         val displayName = ShareIntakePolicy.safeFilename(queryDisplayName(uri), "shared-file")
-        val declaredMime = runCatching { resolver.getType(uri) }.getOrNull()
+        val declaredMime = suspendResult { resolver.getType(uri) }.getOrNull()
             ?.takeIf { it.isNotBlank() }
             ?: fallbackMimeType
         val declaredBytes = queryLength(uri)

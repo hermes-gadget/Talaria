@@ -39,6 +39,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
+import com.hermesgadget.talaria.core.util.suspendResult
 
 data class MemoryUiState(
     val state: MemoryState? = null,
@@ -123,7 +124,7 @@ class MemoryViewModel(
             )
         }
         viewModelScope.launch {
-            runCatching { updateMemoryProviderConfig(provider, values, MEMORY_CONFIG_SURFACE) }
+            suspendResult { updateMemoryProviderConfig(provider, values, MEMORY_CONFIG_SURFACE) }
                 .fold(
                     onSuccess = {
                         _ui.update { current ->
@@ -195,7 +196,7 @@ class MemoryViewModel(
             )
         }
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 setupMemoryProvider(provider, values).also(::requireSuccessfulAction)
             }.fold(
                 onSuccess = {
@@ -235,7 +236,7 @@ class MemoryViewModel(
             }
             try {
                 val started = startMemoryProviderOAuth(provider)
-                val startedStatus = runCatching { parseMemoryProviderOAuthStatus(started) }.getOrNull()
+                val startedStatus = suspendResult { parseMemoryProviderOAuthStatus(started) }.getOrNull()
                 if (startedStatus != null) {
                     setOAuthStatus(provider, startedStatus)
                     if (startedStatus.state != "pending") return@launch
@@ -358,7 +359,7 @@ class MemoryViewModel(
             )
         }
         viewModelScope.launch {
-            runCatching { getMemoryProviderOAuthStatus(provider) }
+            suspendResult { getMemoryProviderOAuthStatus(provider) }
                 .fold(
                     onSuccess = { status ->
                         _ui.update { current ->

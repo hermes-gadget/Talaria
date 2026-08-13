@@ -28,6 +28,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
+import com.hermesgadget.talaria.core.util.suspendResult
 
 data class ProviderCatalogSnapshot(
     val providers: List<ProviderSummary> = emptyList(),

@@ -41,6 +41,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonArray
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /**
  * Process-wide registry for the Hermes management profiles served by one

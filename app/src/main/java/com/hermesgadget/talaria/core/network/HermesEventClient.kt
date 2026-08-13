@@ -61,6 +61,7 @@ import com.hermesgadget.talaria.core.util.IngressOffer
 import com.hermesgadget.talaria.core.util.IngressRetention
 import com.hermesgadget.talaria.core.util.LossAwareIngress
 import com.hermesgadget.talaria.core.util.LossAwareIngressMetrics
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /** Immutable identity captured by one event-client start. */
 data class HermesEventScope(

@@ -82,6 +82,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.util.Locale
 import androidx.core.net.toUri
+import com.hermesgadget.talaria.core.util.suspendResult
 
 private val MCP_AUTH_MODES = setOf("none", "header", "oauth")
 private val MCP_EDITABLE_CONFIG_FIELDS = setOf(
@@ -198,7 +199,7 @@ fun McpScreen() {
         testResult = null
         error = null
         scope.launch {
-            runCatching {
+            suspendResult {
                 api.getConfig()["mcp_servers"] as? JsonObject
                     ?: error("Could not read the MCP configuration. Refresh and try again.")
             }.fold(

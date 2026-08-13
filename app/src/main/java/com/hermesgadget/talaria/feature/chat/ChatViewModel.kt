@@ -1436,7 +1436,7 @@ class ChatViewModel(
                 container.clientFactory.api().getSessions(limit = 50, offset = 0)
             }
         }.getOrNull() ?: return
-        runCatching { parseSessionBranchOrigins(raw) }
+        suspendResult { parseSessionBranchOrigins(raw) }
             .onSuccess { origins -> _ui.update { it.copy(sessionBranchOrigins = origins) } }
     }
 

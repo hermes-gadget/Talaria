@@ -103,6 +103,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.core.net.toUri
+import com.hermesgadget.talaria.core.util.suspendResult
 
 private const val FILES_PATH_ARGUMENT = "path"
 private const val FILES_WITH_PATH_ROUTE = "files?path={path}"
@@ -617,7 +618,7 @@ fun TalariaNavRoot(
             LaunchedEffect(pendingDeepLink, activeScopeId) {
                 val pending = pendingDeepLink ?: return@LaunchedEffect
                 if (pending.expectedScope != null && pending.expectedScope != activeScopeId) return@LaunchedEffect
-                val navigated = runCatching {
+                val navigated = suspendResult {
                     navController.currentBackStackEntryFlow.first()
                     when (val destination = pending.destination) {
                         PendingDeepLinkDestination.Voice -> navController.navigate(Routes.VOICE)

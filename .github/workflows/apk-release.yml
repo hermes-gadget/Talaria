@@ -64,6 +64,11 @@ jobs:
         # step the comment above is the only evidence the logic works.
         run: bash .github/scripts/version-code-fixtures.sh
 
+      - name: Suspend-catch gate (H2)
+        # runCatching swallows CancellationException in suspend paths; the
+        # production tree must keep using core.util.suspendResult there.
+        run: python3 .github/scripts/check-suspend-catches.py
+
       - name: Lint
         run: ./gradlew :app:lintDebug --no-daemon
 

@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import com.hermesgadget.talaria.core.util.suspendResult
 
 enum class ThemeMode {
     SYSTEM,

@@ -75,6 +75,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.jsonObject
+import com.hermesgadget.talaria.core.util.suspendResult
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -118,7 +119,7 @@ fun ConfigScreen() {
         modelJob = scope.launch {
             delay(CONFIG_MODEL_DEBOUNCE_MILLIS)
             val parsed = withContext(Dispatchers.Default) {
-                runCatching {
+                suspendResult {
                     JsonConfig.json.parseToJsonElement(newText.removePrefix("\uFEFF")).jsonObject
                 }.getOrNull()
             }
@@ -496,7 +497,7 @@ fun ConfigScreen() {
                             importing = true
                             importJob = scope.launch {
                                 val validation = withContext(Dispatchers.Default) {
-                                    runCatching {
+                                    suspendResult {
                                         JsonConfig.json.parseToJsonElement(pasted).jsonObject
                                     }
                                 }

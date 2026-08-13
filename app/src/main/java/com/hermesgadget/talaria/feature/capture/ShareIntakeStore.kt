@@ -22,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import com.hermesgadget.talaria.core.util.suspendResult
 
 @Serializable
 enum class ShareDraftDeliveryState {

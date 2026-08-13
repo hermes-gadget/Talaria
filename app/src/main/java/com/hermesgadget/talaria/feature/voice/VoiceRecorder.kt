@@ -21,6 +21,7 @@ import android.media.MediaRecorder
 import android.os.Handler
 import android.os.Looper
 import java.io.File
+import com.hermesgadget.talaria.core.util.suspendResult
 
 internal data class RecordedVoiceFile(
     val file: File,

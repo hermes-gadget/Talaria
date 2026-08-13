@@ -20,6 +20,7 @@ import android.content.Context
 import androidx.core.content.edit
 import com.hermesgadget.talaria.core.network.JsonConfig
 import kotlinx.serialization.encodeToString
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /** Immutable queue operations used by the ViewModel and unit tests. */
 internal object ComposerQueue {

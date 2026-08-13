@@ -39,6 +39,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import retrofit2.HttpException
+import com.hermesgadget.talaria.core.util.suspendResult
 
 enum class MessagingOnboardingPhase {
     Idle,
@@ -113,13 +114,13 @@ class ChannelsViewModel(
             it.copy(telegram = TelegramOnboardingState(phase = MessagingOnboardingPhase.Starting))
         }
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 api.startTelegramOnboarding(
                     buildJsonObject { put("bot_name", botName.trim()) },
                 )
             }.fold(
                 onSuccess = { response ->
-                    runCatching { parseTelegramStart(response) }
+                    suspendResult { parseTelegramStart(response) }
                         .fold(
                             onSuccess = { state ->
                                 _onboarding.update { it.copy(telegram = state) }
@@ -147,7 +148,7 @@ class ChannelsViewModel(
             )
         }
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 api.startWhatsAppOnboarding(
                     buildJsonObject {
                         put("mode", normalizedMode)
@@ -157,7 +158,7 @@ class ChannelsViewModel(
                 )
             }.fold(
                 onSuccess = { response ->
-                    runCatching { parseWhatsAppStart(response, normalizedMode, normalizedAllowedUsers) }
+                    suspendResult { parseWhatsAppStart(response, normalizedMode, normalizedAllowedUsers) }
                         .fold(
                             onSuccess = { state ->
                                 _onboarding.update { it.copy(whatsapp = state) }
@@ -194,7 +195,7 @@ class ChannelsViewModel(
             )
         }
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 api.applyTelegramOnboarding(
                     pairingId,
                     buildJsonObject {
@@ -242,7 +243,7 @@ class ChannelsViewModel(
             )
         }
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 api.applyWhatsAppOnboarding(
                     pairingId,
                     buildJsonObject {
@@ -286,7 +287,7 @@ class ChannelsViewModel(
             )
         }
         viewModelScope.launch {
-            runCatching { api.cancelTelegramOnboarding(pairingId) }.fold(
+            suspendResult { api.cancelTelegramOnboarding(pairingId) }.fold(
                 onSuccess = {
                     _onboarding.update {
                         if (it.telegram.pairingId != pairingId) it else it.copy(
@@ -321,7 +322,7 @@ class ChannelsViewModel(
             )
         }
         viewModelScope.launch {
-            runCatching { api.cancelWhatsAppOnboarding(pairingId) }.fold(
+            suspendResult { api.cancelWhatsAppOnboarding(pairingId) }.fold(
                 onSuccess = {
                     _onboarding.update {
                         if (it.whatsapp.pairingId != pairingId) it else it.copy(
@@ -348,7 +349,7 @@ class ChannelsViewModel(
         pollJobs[OnboardingPlatform.Telegram] = viewModelScope.launch {
             while (isActive) {
                 delay(pollIntervalMs.coerceAtLeast(250L))
-                val shouldContinue = runCatching {
+                val shouldContinue = suspendResult {
                     updateTelegramFromPoll(api.getTelegramOnboarding(pairingId), pairingId)
                 }.getOrElse { error ->
                     setTelegramError(error, pairingId)
@@ -364,7 +365,7 @@ class ChannelsViewModel(
         pollJobs[OnboardingPlatform.WhatsApp] = viewModelScope.launch {
             while (isActive) {
                 delay(pollIntervalMs.coerceAtLeast(250L))
-                val shouldContinue = runCatching {
+                val shouldContinue = suspendResult {
                     updateWhatsAppFromPoll(api.getWhatsAppOnboarding(pairingId), pairingId)
                 }.getOrElse { error ->
                     setWhatsAppError(error, pairingId)

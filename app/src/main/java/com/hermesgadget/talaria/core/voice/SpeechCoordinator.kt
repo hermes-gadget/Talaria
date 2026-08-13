@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import com.hermesgadget.talaria.core.util.suspendResult
 
 sealed class SttEvent {
     data class Partial(val text: String) : SttEvent()

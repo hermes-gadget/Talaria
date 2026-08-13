@@ -40,6 +40,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonArray
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /** A session plus its most recent messages, for the car conversation list. */
 data class CarConversation(

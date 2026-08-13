@@ -31,6 +31,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -49,6 +50,7 @@ import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -59,6 +61,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import com.hermesgadget.talaria.core.util.suspendResult
 
 @Composable
 fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
@@ -94,10 +97,13 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
     var setupCommandTarget by remember { mutableStateOf<String?>(null) }
     var setupCommand by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    // H1: generation guard so a slow reload cannot overwrite a newer one.
+    var reloadJob by remember { mutableStateOf<Job?>(null) }
+    var reloadGeneration by remember { mutableIntStateOf(0) }
 
     suspend fun loadSessions() {
         sessionsLoading = true
-        runCatching { container.clientFactory.api().getProfilesSessions() }
+        suspendResult { container.clientFactory.api().getProfilesSessions() }
             .onSuccess {
                 profileSessions = parseProfileSessions(it)
                 sessionsError = null
@@ -106,15 +112,23 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
         sessionsLoading = false
     }
 
-    fun reload() = scope.launch {
-        repo.getProfiles(force = true)
-            .onSuccess {
-                list = it
-                error = null
+    fun reload() {
+        reloadJob?.cancel()
+        val generation = ++reloadGeneration
+        reloadJob = scope.launch {
+            repo.getProfiles(force = true)
+                .onSuccess {
+                    if (generation == reloadGeneration) {
+                        list = it
+                        error = null
+                    }
+                }
+                .onFailure { if (generation == reloadGeneration) error = it.message }
+            repo.getActiveProfileName().onSuccess {
+                if (generation == reloadGeneration) activeName = it ?: "default"
             }
-            .onFailure { error = it.message }
-        repo.getActiveProfileName().onSuccess { activeName = it ?: "default" }
-        loadSessions()
+            loadSessions()
+        }
     }
     LaunchedEffect(Unit) { reload() }
 
@@ -277,7 +291,7 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
                         val model = modelName.trim()
                         modelTarget = null
                         scope.launch {
-                            runCatching {
+                            suspendResult {
                                 container.clientFactory.api().putProfileModel(
                                     target.name,
                                     buildJsonObject {
@@ -462,7 +476,7 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
                                             }
                                             TextButton(onClick = {
                                                 scope.launch {
-                                                    runCatching {
+                                                    suspendResult {
                                                         container.clientFactory.api().openProfileTerminal(p.name)
                                                     }
                                                         .onSuccess {
@@ -475,7 +489,7 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
                                             }
                                             TextButton(onClick = {
                                                 scope.launch {
-                                                    runCatching {
+                                                    suspendResult {
                                                         container.clientFactory.api().getProfileSetupCommand(p.name)
                                                     }
                                                         .onSuccess {

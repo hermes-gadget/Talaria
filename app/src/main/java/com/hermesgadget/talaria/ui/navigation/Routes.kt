@@ -22,6 +22,7 @@ import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import com.hermesgadget.talaria.core.util.suspendResult
 
 sealed class TopDest(val route: String, val label: String) {
     data object Chats : TopDest("chats", "Chats")

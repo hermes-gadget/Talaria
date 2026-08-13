@@ -20,6 +20,7 @@ package com.hermesgadget.talaria.core.security
 import okhttp3.CertificatePinner
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.Base64
+import com.hermesgadget.talaria.core.util.suspendResult
 
 object CertificatePinnerFactory {
     fun forPin(baseUrl: String, sha256Pin: String): CertificatePinner {

@@ -55,6 +55,7 @@ import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -72,6 +73,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import com.hermesgadget.talaria.core.util.suspendResult
 
 private const val BUILTIN_MEMORY_PROVIDER = "__hermes_memory_builtin__"
 
@@ -134,6 +136,9 @@ internal class PluginsViewModel(
     private val _ui = MutableStateFlow<PluginsUiState>(PluginsUiState.Loading)
     val ui: StateFlow<PluginsUiState> = _ui.asStateFlow()
 
+    private var loadGeneration = 0L
+    private var refreshJob: Job? = null
+
     init {
         refresh()
     }
@@ -145,10 +150,16 @@ internal class PluginsViewModel(
         } else {
             PluginsUiState.Content(previous.copy(refreshing = true, busyAction = null))
         }
-        viewModelScope.launch {
-            runCatching { loadContent() }
-                .onSuccess { _ui.value = PluginsUiState.Content(it) }
+        refreshJob?.cancel()
+        val generation = ++loadGeneration
+        refreshJob = viewModelScope.launch {
+            suspendResult { loadContent() }
+                .onSuccess {
+                    if (generation != loadGeneration) return@launch
+                    _ui.value = PluginsUiState.Content(it)
+                }
                 .onFailure { error ->
+                    if (generation != loadGeneration) return@launch
                     _ui.value = PluginsUiState.Failure(error.message, previous)
                 }
         }
@@ -192,9 +203,11 @@ internal class PluginsViewModel(
 
     private fun runAction(block: suspend () -> JsonElement) {
         val previous = currentContent() ?: return
+        // Re-entry guard: a double-tap must not install/delete twice (H1).
+        if (previous.busyAction != null) return
         _ui.value = PluginsUiState.Content(previous.copy(busyAction = ACTION_BUSY, refreshing = false))
         viewModelScope.launch {
-            runCatching { block() }
+            suspendResult { block() }
                 .onSuccess { refresh() }
                 .onFailure { error ->
                     _ui.value = PluginsUiState.Failure(

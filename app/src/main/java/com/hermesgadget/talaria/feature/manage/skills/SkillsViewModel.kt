@@ -38,6 +38,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import com.hermesgadget.talaria.core.util.suspendResult
 
 interface SkillsGateway {
     suspend fun skills(): Result<List<SkillInfo>>
@@ -71,22 +72,22 @@ class HermesSkillsGateway(
 
     override suspend fun skills(): Result<List<SkillInfo>> = repo.getSkills()
     override suspend fun toolsets(): Result<List<ToolsetInfo>> = repo.getToolsets()
-    override suspend fun getToolsetConfig(name: String): Result<JsonElement> = runCatching {
+    override suspend fun getToolsetConfig(name: String): Result<JsonElement> = suspendResult {
         api.getToolsetConfig(name, profile())
     }
-    override suspend fun putToolsetEnv(name: String, body: JsonObject): Result<JsonElement> = runCatching {
+    override suspend fun putToolsetEnv(name: String, body: JsonObject): Result<JsonElement> = suspendResult {
         api.putToolsetEnv(name, body, profile())
     }
-    override suspend fun putToolsetModel(name: String, body: JsonObject): Result<JsonElement> = runCatching {
+    override suspend fun putToolsetModel(name: String, body: JsonObject): Result<JsonElement> = suspendResult {
         api.putToolsetModel(name, body, profile())
     }
-    override suspend fun getToolsetModels(name: String): Result<JsonElement> = runCatching {
+    override suspend fun getToolsetModels(name: String): Result<JsonElement> = suspendResult {
         api.getToolsetModels(name, profile())
     }
-    override suspend fun putToolsetProvider(name: String, body: JsonObject): Result<JsonElement> = runCatching {
+    override suspend fun putToolsetProvider(name: String, body: JsonObject): Result<JsonElement> = suspendResult {
         api.putToolsetProvider(name, body, profile())
     }
-    override suspend fun runToolsetPostSetup(name: String, body: JsonObject): Result<JsonElement> = runCatching {
+    override suspend fun runToolsetPostSetup(name: String, body: JsonObject): Result<JsonElement> = suspendResult {
         api.runToolsetPostSetup(name, body, profile())
     }
     override suspend fun toggleSkill(name: String, enabled: Boolean): Result<Unit> = repo.toggleSkill(name, enabled)
@@ -97,11 +98,11 @@ class HermesSkillsGateway(
     override suspend fun installHub(identifier: String): Result<ActionStatus> = repo.installHubSkill(identifier)
     override suspend fun uninstallHub(name: String): Result<ActionStatus> = repo.uninstallHubSkill(name)
 
-    override suspend fun getContent(name: String): Result<SkillContentResponse> = runCatching {
+    override suspend fun getContent(name: String): Result<SkillContentResponse> = suspendResult {
         parseSkillContentResponse(api.getSkillContentRaw(name, profile()))
     }
 
-    override suspend fun putContent(name: String, content: String): Result<SkillWriteResponse> = runCatching {
+    override suspend fun putContent(name: String, content: String): Result<SkillWriteResponse> = suspendResult {
         val response = parseSkillWriteResponse(
             api.putSkillContentRaw(
                 buildJsonObject {
@@ -116,7 +117,7 @@ class HermesSkillsGateway(
         response
     }
 
-    override suspend fun updateHub(): Result<HubUpdateResponse> = runCatching {
+    override suspend fun updateHub(): Result<HubUpdateResponse> = suspendResult {
         parseHubUpdateResponse(
             api.updateSkillsHubRaw(
                 buildJsonObject { profile()?.let { put("profile", it) } },
@@ -240,7 +241,7 @@ class SkillsViewModel(
     fun refresh() {
         _ui.value = SkillsUiState.Loading
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 val skills = gateway.skills().getOrThrow()
                 val toolsets = gateway.toolsets().getOrThrow()
                 skills to toolsets
@@ -452,7 +453,7 @@ class SkillsViewModel(
 
     private fun loadToolsetConfig(name: String) {
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 val config = parseToolsetConfig(gateway.getToolsetConfig(name).getOrThrow())
                     .let { parsed -> if (parsed.name.isBlank()) parsed.copy(name = name) else parsed }
                 val models = gateway.getToolsetModels(name)

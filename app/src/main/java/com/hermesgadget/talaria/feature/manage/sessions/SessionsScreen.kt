@@ -69,6 +69,7 @@ import kotlinx.coroutines.withContext
 import androidx.compose.ui.res.stringResource
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import com.hermesgadget.talaria.core.util.suspendResult
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -162,7 +163,7 @@ fun SessionsScreen(
     val importFileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
-            runCatching {
+            suspendResult {
                 val bytes = withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)?.use(::readBoundedImport)
                         ?: error("Could not read selected file")

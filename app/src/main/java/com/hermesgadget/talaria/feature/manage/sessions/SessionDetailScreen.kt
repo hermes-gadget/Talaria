@@ -73,6 +73,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import com.hermesgadget.talaria.core.util.suspendResult
 
 @Composable
 fun SessionDetailScreen(
@@ -193,7 +194,7 @@ fun SessionDetailScreen(
                         confirmCompact = false
                         compacting = true
                         scope.launch {
-                            runCatching { compactionGateway.compact(sessionId) }
+                            suspendResult { compactionGateway.compact(sessionId) }
                                 .onSuccess { result ->
                                     message = result.message ?: when {
                                         result.lockHeld -> compactInProgressNotice
@@ -248,7 +249,7 @@ fun SessionDetailScreen(
                             scope.launch {
                                 repo.exportSessionMarkdown(sessionId)
                                     .onSuccess { md ->
-                                        runCatching {
+                                        suspendResult {
                                             val file = withContext(Dispatchers.IO) {
                                                 val dir = File(context.cacheDir, "exports").apply { mkdirs() }
                                                 File(dir, safeSessionExportFilename(sessionId)).also { it.writeText(md) }
