@@ -21,6 +21,7 @@ import java.io.InputStream
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.hermesgadget.talaria.core.util.suspendResult
 
 internal const val SHARE_FILE_TTL_MILLIS = 15L * 60L * 1000L
 internal const val SHARE_CACHE_LIMIT_BYTES = 32L * 1024L * 1024L

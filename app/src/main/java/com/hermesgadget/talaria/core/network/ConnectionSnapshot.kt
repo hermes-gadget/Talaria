@@ -25,6 +25,7 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.IOException
 import java.util.Locale
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /** Normalized transport origin used as the cleartext-consent binding key. */
 object ConnectionOrigin {

@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import com.hermesgadget.talaria.core.util.suspendResult
 
 data class SecureStoreDiagnostics(
     val code: String,

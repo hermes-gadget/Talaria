@@ -28,6 +28,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /** Decodes Hermes' audio data URL into a bounded cache file and plays it. */
 internal class VoiceAudioPlayer(

@@ -122,7 +122,7 @@ class WsAuthHelper(
                         // the PTY still connects — the app looks Live but chats
                         // never update. Sync is idempotent and best-effort.
                         if (current != snapshot.sessionToken) {
-                            runCatching {
+                            suspendResult {
                                 connectionStore.updateSessionToken(snapshot.connectionId, current)
                             }
                         }

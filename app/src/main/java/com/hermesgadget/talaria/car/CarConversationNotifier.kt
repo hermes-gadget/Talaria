@@ -22,6 +22,7 @@ import com.hermesgadget.talaria.core.notifications.NotificationActionReceiver
 import com.hermesgadget.talaria.core.notifications.NotificationChannels
 import com.hermesgadget.talaria.domain.model.SessionMessage
 import java.util.concurrent.ConcurrentHashMap
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /**
  * Android Auto message-center bridge.

@@ -16,6 +16,7 @@ import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 import kotlinx.serialization.Serializable
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /** The bounded, content-addressed rules for Android share intake. */
 internal object ShareIntakePolicy {

@@ -27,6 +27,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /** Quick Settings tile showing Hermes gateway up/down for the active profile. */
 class TalariaTileService : TileService() {
@@ -46,7 +47,7 @@ class TalariaTileService : TileService() {
         val down = getString(R.string.tile_status_down)
         val offline = getString(R.string.tile_status_offline)
         scope.launch {
-            val (label, state) = runCatching {
+            val (label, state) = suspendResult {
                 val status = TalariaApp.instance.container.hermesRepository.refreshStatus().getOrThrow()
                 if ((status.gateway?.running ?: status.gateway_running) == true) {
                     // A-38: ACTIVE only when the gateway is genuinely up;

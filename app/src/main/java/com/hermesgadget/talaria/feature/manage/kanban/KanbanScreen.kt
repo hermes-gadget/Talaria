@@ -65,6 +65,7 @@ import com.hermesgadget.talaria.ui.components.CollapsibleSection
 import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
@@ -84,6 +85,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import com.hermesgadget.talaria.core.util.suspendResult
 
 internal const val KANBAN_TRIAGE = "triage"
 internal const val KANBAN_TODO = "todo"
@@ -248,6 +250,11 @@ internal class KanbanViewModel(
 
     private var pendingTaskCreation: PendingKanbanTaskCreation? = null
 
+    // H1: monotonic generation so a slow board load can never replace the
+    // board the user is actually looking at (or mutate after leaving).
+    private var loadGeneration = 0L
+    private var refreshJob: Job? = null
+
     init {
         refresh()
     }
@@ -259,10 +266,18 @@ internal class KanbanViewModel(
         } else {
             KanbanUiState.Content(previous.copy(refreshing = true, busy = false))
         }
-        viewModelScope.launch {
-            runCatching { loadContent(board) }
-                .onSuccess { _ui.value = KanbanUiState.Content(it) }
-                .onFailure { error -> _ui.value = KanbanUiState.Failure(error.message, previous) }
+        refreshJob?.cancel()
+        val generation = ++loadGeneration
+        refreshJob = viewModelScope.launch {
+            suspendResult { loadContent(board) }
+                .onSuccess {
+                    if (generation != loadGeneration) return@launch
+                    _ui.value = KanbanUiState.Content(it)
+                }
+                .onFailure { error ->
+                    if (generation != loadGeneration) return@launch
+                    _ui.value = KanbanUiState.Failure(error.message, previous)
+                }
         }
     }
 
@@ -288,7 +303,7 @@ internal class KanbanViewModel(
         val previous = currentContent() ?: return
         _ui.value = KanbanUiState.Content(previous.copy(busy = true))
         viewModelScope.launch {
-            runCatching { api.switchKanbanBoard(slug) }
+            suspendResult { api.switchKanbanBoard(slug) }
                 .onSuccess { refresh(slug) }
                 .onFailure { error ->
                     _ui.value = KanbanUiState.Failure(error.message, currentContent()?.copy(busy = false))
@@ -350,7 +365,7 @@ internal class KanbanViewModel(
         if (previous.busy) return // N0.8 re-entry guard: no overlapping mutations
         _ui.value = KanbanUiState.Content(previous.copy(busy = true))
         viewModelScope.launch {
-            runCatching { api.deleteKanbanTask(taskId) }
+            suspendResult { api.deleteKanbanTask(taskId) }
                 .onSuccess {
                     _task.value = null
                     refresh()
@@ -371,11 +386,11 @@ internal class KanbanViewModel(
         _task.value = KanbanTaskState.Loading
         _run.value = null
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 coroutineScope {
                     val task = async { api.getKanbanTask(taskId) }
-                    val comments = async { runCatching { api.getKanbanTaskComments(taskId) }.getOrNull() }
-                    val log = async { runCatching { api.getKanbanTaskLog(taskId) }.getOrNull() }
+                    val comments = async { suspendResult { api.getKanbanTaskComments(taskId) }.getOrNull() }
+                    val log = async { suspendResult { api.getKanbanTaskLog(taskId) }.getOrNull() }
                     parseTaskDetail(task.await(), comments.await(), log.await())
                 }
             }.onSuccess {
@@ -399,7 +414,7 @@ internal class KanbanViewModel(
         val generation = taskGeneration
         _task.value = current.copy(value = current.value.copy(commentBusy = true, commentError = null))
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 api.addKanbanTaskComment(
                     taskId,
                     buildJsonObject { put("body", body) },
@@ -426,7 +441,7 @@ internal class KanbanViewModel(
         val generation = ++runGeneration
         _run.value = KanbanRunState.Loading
         viewModelScope.launch {
-            runCatching { api.getKanbanRun(runId) }
+            suspendResult { api.getKanbanRun(runId) }
                 .map(::parseRun)
                 .onSuccess {
                     if (generation == runGeneration) _run.value = KanbanRunState.Content(it)
@@ -441,7 +456,7 @@ internal class KanbanViewModel(
         if ((_run.value as? KanbanRunState.Content) == null && _run.value != KanbanRunState.Loading) return
         val generation = runGeneration
         viewModelScope.launch {
-            runCatching { api.terminateKanbanRun(runId) }
+            suspendResult { api.terminateKanbanRun(runId) }
                 .onSuccess {
                     if (generation != runGeneration) return@onSuccess
                     refresh()
@@ -459,7 +474,7 @@ internal class KanbanViewModel(
         if (previous.busy) return // re-entry guard: no overlapping mutations
         _ui.value = KanbanUiState.Content(previous.copy(busy = true, refreshing = false))
         viewModelScope.launch {
-            runCatching { block() }
+            suspendResult { block() }
                 .onSuccess {
                     refresh()
                     onSuccess()
@@ -487,10 +502,10 @@ internal class KanbanViewModel(
 
     private suspend fun loadContent(board: String?): KanbanContent = coroutineScope {
         val boardResponse = async { api.getKanbanBoard(board = board) }
-        val boardsResponse = async { runCatching { api.getKanbanBoards() }.getOrNull() }
-        val statsResponse = async { runCatching { api.getKanbanStats() }.getOrNull() }
-        val assigneesResponse = async { runCatching { api.getKanbanAssignees() }.getOrNull() }
-        val workersResponse = async { runCatching { api.getKanbanActiveWorkers() }.getOrNull() }
+        val boardsResponse = async { suspendResult { api.getKanbanBoards() }.getOrNull() }
+        val statsResponse = async { suspendResult { api.getKanbanStats() }.getOrNull() }
+        val assigneesResponse = async { suspendResult { api.getKanbanAssignees() }.getOrNull() }
+        val workersResponse = async { suspendResult { api.getKanbanActiveWorkers() }.getOrNull() }
 
         val boardRoot = boardResponse.await()
         val boardsRoot = boardsResponse.await()

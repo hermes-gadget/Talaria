@@ -27,6 +27,7 @@ import com.hermesgadget.talaria.core.data.prefs.CarHostTrustRecord
 import com.hermesgadget.talaria.core.data.prefs.CarHostTrustStore
 import java.security.MessageDigest
 import android.annotation.SuppressLint
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /**
  * The exact package/certificate pairs shipped by androidx.car.app:app.

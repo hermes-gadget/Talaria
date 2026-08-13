@@ -775,7 +775,7 @@ class HermesRepository(
     suspend fun getModelInfo(snapshot: ConnectionSnapshot? = null): Result<ModelInfo> =
         withBoundOperation(snapshot) { operation ->
             val el = operation.api.getModelInfo()
-            runCatching { json.decodeFromJsonElement<ModelInfo>(el) }.getOrElse {
+            suspendResult { json.decodeFromJsonElement<ModelInfo>(el) }.getOrElse {
                 ModelInfo(model = el.jsonObject["model"]?.toString()?.trim('"'))
             }
         }
@@ -784,12 +784,12 @@ class HermesRepository(
         val el = operation.api.getModelOptions()
         when (el) {
             is JsonArray -> el.mapNotNull {
-                runCatching { json.decodeFromJsonElement<ModelOption>(it) }.getOrNull()
+                suspendResult { json.decodeFromJsonElement<ModelOption>(it) }.getOrNull()
                     ?: ModelOption(id = it.jsonObject["id"]?.toString()?.trim('"'), name = it.toString())
             }
             is JsonObject -> {
                 val arr = el["options"]?.jsonArray ?: el["models"]?.jsonArray
-                arr?.mapNotNull { runCatching { json.decodeFromJsonElement<ModelOption>(it) }.getOrNull() }
+                arr?.mapNotNull { suspendResult { json.decodeFromJsonElement<ModelOption>(it) }.getOrNull() }
                     ?: emptyList()
             }
             else -> emptyList()

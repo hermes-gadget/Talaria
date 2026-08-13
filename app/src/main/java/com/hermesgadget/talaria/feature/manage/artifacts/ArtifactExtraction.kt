@@ -25,6 +25,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /** The compact set of artifact kinds surfaced by the mobile browser. */
 enum class ArtifactKind {

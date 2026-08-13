@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.withStyle
 import androidx.core.net.toUri
 import java.util.ArrayDeque
+import com.hermesgadget.talaria.core.util.suspendResult
 
 private const val LINK_TAG = "talaria-markdown-link"
 

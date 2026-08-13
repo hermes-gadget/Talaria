@@ -79,6 +79,7 @@ import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import kotlin.math.ceil
+import com.hermesgadget.talaria.core.util.suspendResult
 
 private const val ARTIFACTS_PAGE_SIZE = 24
 
@@ -106,7 +107,7 @@ fun ArtifactsScreen(
 
     LaunchedEffect(ui.shareRequest) {
         val request = ui.shareRequest ?: return@LaunchedEffect
-        runCatching {
+        suspendResult {
             val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
                 type = request.mimeType
                 putExtra(android.content.Intent.EXTRA_STREAM, request.uri)

@@ -39,6 +39,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
+import com.hermesgadget.talaria.core.util.suspendResult
 
 interface SessionAdminGateway {
     suspend fun stats(): SessionStats
@@ -232,7 +233,7 @@ class SessionAdminViewModel(
         }
         setBusy(true)
         viewModelScope.launch {
-            runCatching { compactor.compact(id) }
+            suspendResult { compactor.compact(id) }
                 .onSuccess { result ->
                     loadSnapshot(result.message ?: compactionNotice(result))
                     onFinished()
@@ -266,7 +267,7 @@ class SessionAdminViewModel(
         }
         setBusy(true)
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 gateway.bulkDelete(ids).also { result ->
                     check(result.ok) { "Bulk delete was rejected by Hermes" }
                     require(result.deleted in 0..ids.size) {
@@ -293,7 +294,7 @@ class SessionAdminViewModel(
         if (contentOf(_ui.value)?.busy == true) return
         setBusy(true)
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 gateway.deleteEmpty().also { result ->
                     check(result.ok) { "Deleting empty sessions was rejected by Hermes" }
                 }
@@ -312,7 +313,7 @@ class SessionAdminViewModel(
         }
         setBusy(true)
         viewModelScope.launch {
-            runCatching {
+            suspendResult {
                 gateway.importSessions(sessions).also { result ->
                     check(result.ok) { "Session import was rejected by Hermes" }
                 }
@@ -336,7 +337,7 @@ class SessionAdminViewModel(
         message: String? = null,
         selectedIds: Set<String>? = null,
     ) {
-        runCatching {
+        suspendResult {
             val stats = gateway.stats()
             val empty = gateway.emptyCount().count
             stats to empty
@@ -448,7 +449,7 @@ class LatestDescendantViewModel(
     fun load(sessionId: String) {
         _ui.value = LatestDescendantUiState.Loading
         viewModelScope.launch {
-            runCatching { gateway.latest(sessionId) }
+            suspendResult { gateway.latest(sessionId) }
                 .onSuccess { _ui.value = LatestDescendantUiState.Success(it) }
                 .onFailure { _ui.value = LatestDescendantUiState.Failure(it.message ?: "Could not find latest descendant") }
         }

@@ -34,6 +34,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /**
  * Coordinates work by a non-secret scope key and removes idle entries. The

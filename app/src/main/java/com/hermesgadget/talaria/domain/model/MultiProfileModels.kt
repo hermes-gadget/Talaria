@@ -17,6 +17,7 @@
 package com.hermesgadget.talaria.domain.model
 
 import java.time.Instant
+import com.hermesgadget.talaria.core.util.suspendResult
 
 const val HERMES_DEFAULT_PROFILE = "default"
 

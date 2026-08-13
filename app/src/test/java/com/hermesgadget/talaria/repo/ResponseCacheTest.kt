@@ -16,7 +16,10 @@
 package com.hermesgadget.talaria.repo
 
 import com.hermesgadget.talaria.core.data.repo.ResponseCache
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -141,5 +144,68 @@ class ResponseCacheTest {
 
         assertEquals(0, cache.entryCount)
         assertNull(cache.peek("short", 10_000))
+    }
+
+    @Test
+    fun `concurrent reads for the same key share one fetch`() = runTest {
+        val cache = ResponseCache()
+        var fetches = 0
+        val gate = CompletableDeferred<Unit>()
+        val first = async {
+            cache.readThrough("k", 10_000) {
+                fetches += 1
+                gate.await()
+                "value"
+            }
+        }
+        yield()
+        val second = async {
+            cache.readThrough("k", 10_000) {
+                fetches += 1
+                "never"
+            }
+        }
+        yield()
+        gate.complete(Unit)
+        assertEquals("value", first.await().getOrThrow())
+        assertEquals("value", second.await().getOrThrow())
+        assertEquals(1, fetches)
+        assertEquals("value", cache.peek("k", 10_000))
+    }
+
+    @Test
+    fun `invalidate during an in-flight fetch does not restore stale data`() = runTest {
+        val cache = ResponseCache()
+        val gate = CompletableDeferred<Unit>()
+        val read = async {
+            cache.readThrough("k", 10_000) {
+                gate.await()
+                "stale"
+            }
+        }
+        yield()
+        // The mutation lands while the fetch is still in flight: the completed
+        // fetch must NOT put its stale value back.
+        cache.invalidate("k")
+        gate.complete(Unit)
+        assertEquals("stale", read.await().getOrThrow())
+        assertNull("stale value must not be cached after invalidate", cache.peek("k", 10_000))
+    }
+
+    @Test
+    fun `clear during an in-flight fetch does not restore stale data`() = runTest {
+        val cache = ResponseCache()
+        val gate = CompletableDeferred<Unit>()
+        val read = async {
+            cache.readThrough("k", 10_000) {
+                gate.await()
+                "stale"
+            }
+        }
+        yield()
+        cache.clear()
+        gate.complete(Unit)
+        assertEquals("stale", read.await().getOrThrow())
+        assertNull("stale value must not be cached after clear", cache.peek("k", 10_000))
     }
 }

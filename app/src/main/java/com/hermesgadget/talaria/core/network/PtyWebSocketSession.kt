@@ -31,6 +31,7 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import com.hermesgadget.talaria.core.util.suspendResult
 
 sealed class PtyEvent {
     data class Output(val text: String, val raw: String) : PtyEvent()

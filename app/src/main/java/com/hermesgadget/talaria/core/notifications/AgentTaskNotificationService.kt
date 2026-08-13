@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /** Runtime identity fence used when a logical watcher id is reused. */
 internal class AgentWatchGenerationRegistry {

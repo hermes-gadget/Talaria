@@ -170,6 +170,7 @@ class FilesViewModel(
     private var uploadResolver: ContentResolver? = null
     private var directoryJob: Job? = null
     private var previewJob: Job? = null
+    private var previewGenerationCounter = 0L
     private var directoryGeneration = 0L
     private var requestedDirectoryPath: String? = null
     private var downloadJob: Job? = null
@@ -272,6 +273,10 @@ class FilesViewModel(
         if (scopeFlow != null && expectedScope == null) return
         val requestApi = boundApi
         val initialType = previewTypeFor(entry.name, entry.mimeType)
+        // M15: rapid taps must not pile concurrent downloads; cancel the
+        // previous preview and stamp a generation.
+        previewJob?.cancel()
+        val previewGeneration = ++previewGenerationCounter
         _ui.update {
             it.copy(
                 preview = ManagedFilePreview(
@@ -332,6 +337,7 @@ class FilesViewModel(
                 }
             }.fold(
                 onSuccess = { payload ->
+                    if (previewGeneration != previewGenerationCounter) return@launch
                     updateCurrentPreview(entry.path, expectedScope) {
                         it.copy(
                             previewLoading = false,
@@ -353,6 +359,7 @@ class FilesViewModel(
                     }
                 },
                 onFailure = { error ->
+                    if (previewGeneration != previewGenerationCounter) return@launch
                     updateCurrentPreview(entry.path, expectedScope) {
                         it.copy(
                             previewLoading = false,

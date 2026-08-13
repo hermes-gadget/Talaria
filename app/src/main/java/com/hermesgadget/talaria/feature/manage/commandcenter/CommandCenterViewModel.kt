@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.hermesgadget.talaria.core.util.suspendResult
 
 private sealed interface CommandCenterFetch<out T> {
     data class Success<T>(val value: T) : CommandCenterFetch<T>
@@ -143,13 +144,10 @@ class CommandCenterViewModel(
     }
 
     private suspend fun <T> fetch(block: suspend () -> Result<T>): CommandCenterFetch<T> =
-        runCatching { block() }.fold(
-            onSuccess = { result ->
-                result.fold(
-                    onSuccess = { CommandCenterFetch.Success(it) },
-                    onFailure = { CommandCenterFetch.Failure(it.userMessage()) },
-                )
-            },
+        // Repo calls already return Result; do not double-wrap (H2). Exceptions
+        // thrown before the Result is built propagate — cancellation included.
+        block().fold(
+            onSuccess = { CommandCenterFetch.Success(it) },
             onFailure = { CommandCenterFetch.Failure(it.userMessage()) },
         )
 

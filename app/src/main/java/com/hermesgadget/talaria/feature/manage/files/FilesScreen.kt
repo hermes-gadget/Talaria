@@ -96,6 +96,7 @@ import com.hermesgadget.talaria.ui.components.ErrorBox
 import com.hermesgadget.talaria.ui.components.LoadingBox
 import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import kotlinx.coroutines.awaitCancellation
+import com.hermesgadget.talaria.core.util.suspendResult
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -140,7 +141,7 @@ fun FilesScreen(vm: FilesViewModel = viewModel(factory = FilesViewModel.factory(
 
     LaunchedEffect(ui.sharePayload) {
         val payload = ui.sharePayload ?: return@LaunchedEffect
-        runCatching {
+        suspendResult {
             val intent = buildFileShareIntent(context, payload)
             context.startActivity(Intent.createChooser(intent, shareChooserTitle))
         }.onFailure { error ->
@@ -665,7 +666,7 @@ private fun decodeSampled(bytes: ByteArray, maxDimension: Int = 2048): Bitmap? {
 private fun ZoomableImagePreview(bytes: ByteArray, contentDescription: String) {
     val bitmap by produceState<ImageBitmap?>(null, bytes) {
         value = withContext(Dispatchers.Default) {
-            runCatching { decodeSampled(bytes)?.asImageBitmap() }.getOrNull()
+            suspendResult { decodeSampled(bytes)?.asImageBitmap() }.getOrNull()
         }
     }
     val loaded = bitmap

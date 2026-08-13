@@ -19,6 +19,7 @@ package com.hermesgadget.talaria.ui.components
 import android.net.Uri
 import androidx.core.net.toUri
 import java.util.Locale
+import com.hermesgadget.talaria.core.util.suspendResult
 
 private val SAFE_EXTERNAL_WEB_SCHEMES = setOf("http", "https")
 

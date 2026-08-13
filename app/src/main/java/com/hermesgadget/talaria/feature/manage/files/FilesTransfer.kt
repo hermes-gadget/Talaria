@@ -22,6 +22,7 @@ import java.io.ByteArrayOutputStream
 import okhttp3.MediaType
 import okhttp3.RequestBody
 import okio.BufferedSink
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /** Keep small uploads in the JSON data-URL request; stream larger files instead. */
 internal const val INLINE_UPLOAD_LIMIT_BYTES = 2L * 1024L * 1024L

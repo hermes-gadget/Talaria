@@ -43,6 +43,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /**
  * Car home screen, designed for minimal glances while driving:

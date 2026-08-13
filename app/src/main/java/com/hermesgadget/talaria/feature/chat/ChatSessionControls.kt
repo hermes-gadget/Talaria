@@ -25,6 +25,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
+import com.hermesgadget.talaria.core.util.suspendResult
 
 /** The destructive or session-mutating action currently represented by the chat UI. */
 enum class ChatSessionActionKind {
