@@ -153,22 +153,23 @@ class AgentTaskNotificationService : Service() {
             it.client.dispose()
             runtimes.remove(record.watcherId, it)
         }
-        // Call startForeground before opening sockets: startForegroundService
-        // callers have a strict five-second deadline on modern Android.
-        val previewNames = runtimes.values.map { it.watch.agentName } + record.agentName
-        startForeground(
-            TalariaNotifier.AGENT_MONITOR_NOTIFICATION_ID,
-            container.notifier.buildAgentMonitorNotification(previewNames),
-        )
-
+        // Resolve the snapshot BEFORE startForeground: a dead scope must not
+        // flash a foreground notification that has no subscriber (M19).
         val snapshot = container.clientFactory.snapshotFor(
             connectionId = record.connectionId.orEmpty(),
             managementProfile = record.managementProfile,
         )
         if (snapshot == null || !isForegroundBound(snapshot)) {
-            pause(record, "The saved Hermes connection is unavailable or is not the current bound connection")
+            dropWatch(record, "The saved Hermes connection is unavailable or is not the current bound connection")
             return
         }
+        // startForegroundService callers have a strict five-second deadline on
+        // modern Android; the snapshot check above is pure local state.
+        val previewNames = runtimes.values.map { it.watch.agentName } + record.agentName
+        startForeground(
+            TalariaNotifier.AGENT_MONITOR_NOTIFICATION_ID,
+            container.notifier.buildAgentMonitorNotification(previewNames),
+        )
 
         val client = HermesEventClient(
             container.clientFactory,
@@ -239,6 +240,24 @@ class AgentTaskNotificationService : Service() {
     private fun pause(record: PersistedAgentWatch, reason: String) {
         val watches = (runtimes.values.map(Runtime::watch) + record)
             .distinctBy(PersistedAgentWatch::watcherId)
+        container.settingsStore.saveAgentWatches(watches)
+        container.notifier.notifyError("${record.agentName} monitoring paused", reason)
+        if (runtimes.isEmpty()) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+    }
+
+    /**
+     * A watch whose connection is gone or not bound must not stay in settings:
+     * a dead scope would otherwise be restored and re-flash the foreground
+     * notification on every sticky start. The chat UI re-creates the watch
+     * when the user returns to that connection (M19).
+     */
+    private fun dropWatch(record: PersistedAgentWatch, reason: String) {
+        val watches = (runtimes.values.map(Runtime::watch) + record)
+            .distinctBy(PersistedAgentWatch::watcherId)
+            .filterNot { it.watcherId == record.watcherId }
         container.settingsStore.saveAgentWatches(watches)
         container.notifier.notifyError("${record.agentName} monitoring paused", reason)
         if (runtimes.isEmpty()) {

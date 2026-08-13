@@ -38,7 +38,15 @@ class ReplyWorker(
     params: WorkerParameters,
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
-        val text = inputData.getString(KEY_TEXT) ?: return Result.failure()
+        val text = inputData.getString(KEY_TEXT)
+            ?: inputData.getString(KEY_TEXT_FILE)?.let { path ->
+                // Oversized notification replies are spilled to a cache file
+                // by NotificationActionReceiver (M5); read and consume it.
+                runCatching { java.io.File(path).readText() }
+                    .getOrNull()
+                    ?.also { java.io.File(path).delete() }
+            }
+            ?: return Result.failure()
         val resumeSessionId = sessionIdFromDeepLink(inputData.getString(KEY_DEEP_LINK))
         val container = TalariaApp.instance.container
         val expectedConnectionId = inputData.getString(KEY_CONNECTION_ID) ?: return Result.failure()
@@ -124,6 +132,7 @@ class ReplyWorker(
 
     companion object {
         const val KEY_TEXT = "text"
+        const val KEY_TEXT_FILE = "text_file"
         const val KEY_DEEP_LINK = "deep_link"
         const val KEY_CONNECTION_ID = "connection_id"
         const val KEY_MANAGEMENT_PROFILE = "management_profile"

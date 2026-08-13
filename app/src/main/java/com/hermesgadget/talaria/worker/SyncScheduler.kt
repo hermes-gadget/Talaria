@@ -45,8 +45,27 @@ object SyncScheduler {
             .build()
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             UNIQUE,
-            ExistingPeriodicWorkPolicy.UPDATE,
+            // UPDATE on every cold start (TalariaApp.onCreate + boot) would
+            // cancel and replace the periodic work, resetting its period
+            // clock. KEEP preserves the enqueued work while the interval is
+            // unchanged; UPDATE only when the interval actually changed.
+            periodicSyncPolicy(settings.syncIntervalEnqueuedMinutes, minutes),
             request,
         )
+        settings.syncIntervalEnqueuedMinutes = minutes
     }
 }
+
+/**
+ * KEEP preserves the existing period clock on cold starts; UPDATE only when
+ * the interval changed (or nothing was ever enqueued).
+ */
+internal fun periodicSyncPolicy(
+    lastEnqueuedMinutes: Long?,
+    minutes: Long,
+): ExistingPeriodicWorkPolicy =
+    if (lastEnqueuedMinutes != null && lastEnqueuedMinutes == minutes) {
+        ExistingPeriodicWorkPolicy.KEEP
+    } else {
+        ExistingPeriodicWorkPolicy.UPDATE
+    }
