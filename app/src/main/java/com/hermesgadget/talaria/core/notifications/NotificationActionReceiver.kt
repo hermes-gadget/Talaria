@@ -22,11 +22,13 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
+import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.worker.PairingApproveWorker
 import com.hermesgadget.talaria.worker.ReplyWorker
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import java.io.File
 
 class NotificationActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
@@ -57,18 +59,34 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 val reply = RemoteInput.getResultsFromIntent(intent)
                     ?.getCharSequence(KEY_REPLY)?.toString()
                 if (!reply.isNullOrBlank()) {
-                    val work = OneTimeWorkRequestBuilder<ReplyWorker>()
-                        .setInputData(
-                            workDataOf(
-                                ReplyWorker.KEY_TEXT to reply,
-                                ReplyWorker.KEY_DEEP_LINK to intent.getStringExtra(EXTRA_DEEP_LINK),
-                                ReplyWorker.KEY_CONNECTION_ID to intent.getStringExtra(EXTRA_CONNECTION_ID),
-                                ReplyWorker.KEY_MANAGEMENT_PROFILE to
-                                    intent.getStringExtra(EXTRA_MANAGEMENT_PROFILE).orEmpty(),
-                            ),
+                    // WorkManager Data is capped at 10 KiB; spill oversized
+                    // pastes to a cache file instead of throwing on the main
+                    // thread (M5).
+                    val payload = ReplyPayloadBuilder(
+                        File(context.cacheDir, "notification-replies"),
+                    ).build(reply)
+                    try {
+                        val work = OneTimeWorkRequestBuilder<ReplyWorker>()
+                            .setInputData(
+                                workDataOf(
+                                    ReplyWorker.KEY_TEXT to payload.text,
+                                    ReplyWorker.KEY_TEXT_FILE to payload.filePath,
+                                    ReplyWorker.KEY_DEEP_LINK to intent.getStringExtra(EXTRA_DEEP_LINK),
+                                    ReplyWorker.KEY_CONNECTION_ID to intent.getStringExtra(EXTRA_CONNECTION_ID),
+                                    ReplyWorker.KEY_MANAGEMENT_PROFILE to
+                                        intent.getStringExtra(EXTRA_MANAGEMENT_PROFILE).orEmpty(),
+                                ),
+                            )
+                            .build()
+                        WorkManager.getInstance(context).enqueue(work)
+                    } catch (failure: IllegalStateException) {
+                        // A pathological oversize payload must never crash the
+                        // receiver; tell the user to open the app instead.
+                        TalariaApp.instance.container.notifier.notifyError(
+                            "Reply too long",
+                            "Open the app to send this reply",
                         )
-                        .build()
-                    WorkManager.getInstance(context).enqueue(work)
+                    }
                 }
                 NotificationManagerCompat.from(context).cancel(id)
             }
