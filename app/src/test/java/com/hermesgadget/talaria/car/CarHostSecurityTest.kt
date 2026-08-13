@@ -199,6 +199,38 @@ class CarHostSecurityTest {
         )
     }
 
+    @Test
+    fun `corrupt store fails closed with empty enrollment and no throw`() {
+        // Keystore unavailable (null prefs): construction must not throw, no
+        // host may be enrolled, and mutations must no-op without crashing.
+        val corrupt = CarHostTrustStore(prefs = null)
+        assertTrue(corrupt.list().isEmpty())
+        assertFalse(corrupt.isEnrolled(identity("com.example.carhost", 'a')))
+        corrupt.enroll(identity("com.example.carhost", 'a'))
+        corrupt.observe(identity("com.example.carhost", 'a'))
+        corrupt.approveActions(identity("com.example.carhost", 'a'))
+        assertTrue(corrupt.list().isEmpty())
+        assertTrue(corrupt.recentActions().isEmpty())
+        assertEquals(
+            CarHostTrustStore.CarHostTrustStoreState.Corrupt::class,
+            corrupt.state.value::class,
+        )
+        // No app context available for retry in this construction.
+        assertFalse(corrupt.retry())
+    }
+
+    @Test
+    fun `recovered store returns to available after retry`() {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        check(prefs.edit().clear().commit())
+        val store = CarHostTrustStore(prefs)
+        store.enroll(identity("com.example.carhost", 'a'))
+        assertTrue(store.isEnrolled(identity("com.example.carhost", 'a')))
+        assertEquals(CarHostTrustStore.CarHostTrustStoreState.Available, store.state.value)
+        // Already available: retry is a no-op success.
+        assertTrue(store.retry())
+    }
+
     private fun identity(packageName: String, hex: Char): CarHostIdentity =
         CarHostIdentity.create(packageName, hex.toString().repeat(64))!!
 

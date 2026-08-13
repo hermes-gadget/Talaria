@@ -16,6 +16,8 @@ import com.hermesgadget.talaria.core.security.CertificatePinnerFactory
 import com.hermesgadget.talaria.domain.model.AuthProvidersResponse
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
 import com.hermesgadget.talaria.domain.model.PasswordLoginRequest
+import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
@@ -185,6 +187,7 @@ class SnapshotPasswordSessionManager(
 class SnapshotOidcTokenRefresher(
     private val store: SecureConnectionStore,
     private val nowSeconds: () -> Long = { System.currentTimeMillis() / 1_000 },
+    private val onTokensRotated: (String) -> Unit = {},
 ) {
     /** The key is a profile scope, never the immutable credential snapshot. */
     private val singleFlights = ScopedSingleFlight<String>()
@@ -226,7 +229,19 @@ class SnapshotOidcTokenRefresher(
             // the refresh body is transmitted.
             SnapshotAuthGuard.requireCurrent(snapshot, store.snapshotFor(snapshot.connectionId))
             builder.build().newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use current.takeIf { nowSeconds() < expiresAt }
+                if (!response.isSuccessful) {
+                    // A definitive rejection (4xx revoked refresh — but not
+                    // transient 408/429) must not keep serving the dying bearer
+                    // until expiresAt, nor retry the same doomed refresh
+                    // forever. Clear the stored OIDC secret so the UI forces
+                    // re-authentication. 3xx is not a rejection: redirects are
+                    // never followed, so the response simply carries no token.
+                    if (response.code in 400..499 && response.code != 408 && response.code != 429) {
+                        store.clearOidcTokensIfSnapshot(snapshot)
+                        return@use null
+                    }
+                    return@use current.takeIf { nowSeconds() < expiresAt }
+                }
                 val root = JsonConfig.json.parseToJsonElement(response.body?.string().orEmpty()) as? JsonObject
                     ?: return@use current.takeIf { nowSeconds() < expiresAt }
                 val access = root["access_token"]?.jsonPrimitive?.contentOrNull
@@ -241,7 +256,12 @@ class SnapshotOidcTokenRefresher(
                 )
                 // Never hand a token to the caller when the exact snapshot CAS
                 // rejected it. The caller must not transmit a stale refresh.
-                if (committed) access else null
+                if (committed) {
+                    onTokensRotated(snapshot.connectionId)
+                    access
+                } else {
+                    null
+                }
             }
         } catch (failure: IOException) {
             if (failure.message == SnapshotAuthGuard.CHANGED_MESSAGE ||
@@ -250,7 +270,11 @@ class SnapshotOidcTokenRefresher(
                 throw failure
             }
             current.takeIf { nowSeconds() < expiresAt }
-        } catch (_: Throwable) {
+        } catch (cancelled: CancellationException) {
+            // An orderly cancel must never look like a refresh failure.
+            throw cancelled
+        } catch (failure: SerializationException) {
+            // Malformed refresh response: transient, keep the old token.
             current.takeIf { nowSeconds() < expiresAt }
         }
     }

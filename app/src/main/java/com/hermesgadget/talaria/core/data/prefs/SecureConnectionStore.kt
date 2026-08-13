@@ -340,6 +340,29 @@ class SecureConnectionStore internal constructor(
         true
     }
 
+    /**
+     * CAS-style clear of the OIDC secret set, used when a refresh is
+     * definitively rejected (401/400). Only succeeds when the stored
+     * connection still matches this snapshot; a newer snapshot's secrets are
+     * never clobbered.
+     */
+    fun clearOidcTokensIfSnapshot(snapshot: ConnectionSnapshot): Boolean = synchronized(mutationLock) {
+        val profile = _profiles.value.find { it.id == snapshot.connectionId } ?: return false
+        val secrets = readSecretsSafely(snapshot.connectionId, profile) ?: return false
+        val current = ConnectionSnapshot.from(profile, secrets)
+        if (!current.sameTransportAs(snapshot) || current.secrets != snapshot.secrets) return false
+        upsert(
+            profile.copy(hasBearerToken = false),
+            secrets.copy(
+                bearerToken = null,
+                oidcRefreshToken = null,
+                oidcExpiresAt = 0,
+                oidcProvider = null,
+            ),
+        )
+        true
+    }
+
     fun setManagementProfile(profileName: String) = synchronized(mutationLock) {
         val active = activeProfile() ?: return
         upsert(active.copy(managementProfile = normalizeManagementProfile(profileName)))

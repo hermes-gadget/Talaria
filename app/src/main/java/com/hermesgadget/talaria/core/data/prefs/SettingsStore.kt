@@ -161,6 +161,11 @@ class SettingsStore(context: Context) {
         get() = prefs.getLong("sync_interval_min", 30)
         set(value) = prefs.edit { putLong("sync_interval_min", value) }
 
+    /** Last interval actually enqueued as periodic work; -1 = never enqueued. */
+    var syncIntervalEnqueuedMinutes: Long
+        get() = prefs.getLong("sync_interval_enqueued_min", -1L)
+        set(value) = prefs.edit { putLong("sync_interval_enqueued_min", value) }
+
     var ttsEnabled: Boolean
         get() = prefs.getBoolean("tts", false)
         set(value) = prefs.edit { putBoolean("tts", value) }
@@ -195,6 +200,23 @@ class SettingsStore(context: Context) {
         val raw = prefs.getString("agent_notification_watches", null) ?: return emptyList()
         return runCatching { JsonConfig.json.decodeFromString<List<PersistedAgentWatch>>(raw) }
             .getOrDefault(emptyList())
+    }
+
+    /**
+     * Remove every preference key scoped to a deleted connection, including
+     * management-profile scope variants (`id` plus `id|profile|…`), and drop
+     * its agent watches. Called from the delete-connection purge.
+     */
+    @Synchronized
+    fun purgeScopedKeys(connectionId: String) {
+        val prefixes = listOf("chat_state_", "cache_status_line_", "cache_status_at_")
+        prefs.all.keys
+            .filter { key -> prefixes.any { key.startsWith(it + connectionId) } }
+            .forEach { key -> prefs.edit { remove(key) } }
+        val watches = loadAgentWatches()
+        if (watches.any { it.connectionId == connectionId }) {
+            saveAgentWatches(watches.filterNot { it.connectionId == connectionId })
+        }
     }
 
     /** Atomically suppress a replayed sidecar frame without hiding later turns. */

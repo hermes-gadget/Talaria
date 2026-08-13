@@ -1,7 +1,9 @@
 /* Copyright 2026 Talaria contributors; Licensed under the Apache License, Version 2.0. */
 package com.hermesgadget.talaria.core.data.repo
 
+import com.hermesgadget.talaria.core.data.db.TalariaDatabase
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
+import com.hermesgadget.talaria.core.data.prefs.SettingsStore
 import com.hermesgadget.talaria.core.network.ConnectionOrigin
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.HermesClientFactory
@@ -46,7 +48,10 @@ class ConnectionRepositoryCleartextConsentTest {
         )
         val clientFactory = mockk<HermesClientFactory>(relaxed = true)
         val wsAuth = mockk<WsAuthHelper>(relaxed = true)
-        return ConnectionRepository(store, clientFactory, wsAuth)
+        val database = mockk<TalariaDatabase>(relaxed = true)
+        val settings = mockk<SettingsStore>(relaxed = true)
+        val hermesRepository = mockk<HermesRepository>(relaxed = true)
+        return ConnectionRepository(store, clientFactory, wsAuth, database, settings, hermesRepository)
     }
 
     @Test
@@ -124,7 +129,14 @@ class ConnectionRepositoryCleartextConsentTest {
         every { store.state } returns kotlinx.coroutines.flow.MutableStateFlow(
             com.hermesgadget.talaria.core.data.prefs.SecureConnectionStoreState.Available(0),
         )
-        val repository = ConnectionRepository(store, clientFactory, wsAuth)
+        val repository = ConnectionRepository(
+            store,
+            clientFactory,
+            wsAuth,
+            mockk(relaxed = true),
+            mockk(relaxed = true),
+            mockk(relaxed = true),
+        )
 
         repository.recordCleartextConsent("migrated")
 
