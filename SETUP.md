@@ -24,8 +24,8 @@ sdk.dir=/home/you/Android/Sdk
 
 Required packages:
 
-- `platforms;android-36`
-- `build-tools;35.0.0`
+- `platforms;android-37.0`
+- `build-tools;36.0.0`
 - `platform-tools`
 
 Install via `sdkmanager` or Android Studio SDK Manager.

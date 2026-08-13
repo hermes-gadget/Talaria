@@ -75,7 +75,7 @@ Android backup and device transfer exclude encrypted connection state and Room d
 
 ## Voice
 
-`feature/voice/` implements server STT as primary dictation (`/api/voice/transcribe`) with on-device `SpeechRecognizer` fallback, continuous dictation with partials, and Android TTS of replies. Server capabilities are probed with generation guards; recording is bounded and lifecycle-scoped.
+`feature/voice/` implements server STT as primary dictation (`/api/audio/transcribe`) with on-device `SpeechRecognizer` fallback, continuous dictation with partials, and Android TTS of replies. Server capabilities are probed with generation guards; recording is bounded and lifecycle-scoped.
 
 ## Widgets, tile, and PiP
 

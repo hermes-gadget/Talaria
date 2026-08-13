@@ -131,7 +131,7 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(platform(libs.androidx.compose.bom))
 
-    // Latest stack that fully supports AGP 8.9 + compileSdk 36 (1.19/2.11 need AGP 9.1).
+    // AGP 9.1.1 + compileSdk 37 toolchain (core-ktx 1.19 / lifecycle 2.11).
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)

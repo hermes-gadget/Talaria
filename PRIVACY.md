@@ -10,7 +10,7 @@ Talaria is designed for people who run Hermes Agent themselves and do not want a
 4. **Secrets in Keystore.** Connection tokens/passwords use EncryptedSharedPreferences (AES-256 via Android Keystore master key).
 5. **Network scope.** HTTP/WS traffic goes to the base URL(s) you configure. User-started OIDC and MCP OAuth also open the authorization URL advertised by that server.
 6. **Optional pinning.** Per-profile SHA-256 certificate pins harden MITM resistance on untrusted networks.
-7. **Voice uses your own server for transcription when available.** Dictation prefers the connected Hermes server's STT (`/api/voice/transcribe`); on-device recognition is the fallback when the server has no STT. Both are bounded and lifecycle-scoped.
+7. **Voice uses your own server for transcription when available.** Dictation prefers the connected Hermes server's STT (`/api/audio/transcribe`); on-device recognition is the fallback when the server has no STT. Both are bounded and lifecycle-scoped.
 
 ## Data Talaria stores on device
 
