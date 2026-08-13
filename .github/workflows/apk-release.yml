@@ -59,6 +59,11 @@ jobs:
       - name: Unit tests
         run: ./gradlew :app:testDebugUnitTest --no-daemon
 
+      - name: Version-code fixture tests
+        # version-code.sh is unit-tested by its fixture script; without this
+        # step the comment above is the only evidence the logic works.
+        run: bash .github/scripts/version-code-fixtures.sh
+
       - name: Lint
         run: ./gradlew :app:lintDebug --no-daemon
 
