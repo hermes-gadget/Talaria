@@ -9,7 +9,6 @@ import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.HermesApi
 import com.hermesgadget.talaria.domain.model.ManagedFileEntry
 import com.hermesgadget.talaria.domain.model.ManagedFilesListResponse
-import com.hermesgadget.talaria.util.MainDispatcherRule
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -18,9 +17,14 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import okhttp3.ResponseBody.Companion.toResponseBody
@@ -31,15 +35,25 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
+/**
+ * Download/save/retry regression net (Wave 5 lows).
+ *
+ * Deterministic by construction: Main is installed sharing runTest's scheduler and the
+ * ViewModel's IO work runs on StandardTestDispatcher(testScheduler), drained by a
+ * real-paced awaitState (runCurrent + real delay — in-flight real file IO needs real
+ * time). Main is deliberately NOT reset afterwards: a late resume from an in-flight
+ * real-IO hop then dispatches into the dead scheduler instead of throwing the
+ * unset-Main IllegalStateException that poisons the next runTest class
+ * (cross-test UncaughtExceptionsBeforeTest flake).
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
 class FilesDownloadRetryTest {
     @get:Rule
     val tempFolder = TemporaryFolder()
 
-    @get:Rule
-    val mainDispatcherRule = MainDispatcherRule()
-
     @Test
     fun failedSaveRetainsThePayloadForRetry() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         val api = mockk<HermesApi>()
         coEvery { api.downloadManagedFile("/report.txt", any()) } returns
             "downloaded content".toResponseBody()
@@ -53,6 +67,7 @@ class FilesDownloadRetryTest {
             cacheDirectory = tempFolder.root,
             shareFileManager = manager,
             scopeFlow = scopeFlow,
+            ioDispatcher = StandardTestDispatcher(testScheduler),
         )
         val entry = ManagedFileEntry(name = "report.txt", path = "/report.txt", size = 18L)
         val uri = mockk<Uri>()
@@ -78,13 +93,19 @@ class FilesDownloadRetryTest {
         assertFalse(failedFile.exists())
     }
 
-    private suspend fun awaitState(
+    private suspend fun TestScope.awaitState(
         viewModel: FilesViewModel,
         predicate: (FilesUiState) -> Boolean,
     ) {
+        // Real-time paced so in-flight real IO (file writes, mocked resolvers) can
+        // complete; runCurrent() drains scheduler-queued VM continuations without
+        // advancing virtual time (advanceUntilIdle would fire the withTimeout timer).
         withContext(Dispatchers.Default) {
             withTimeout(5_000L) {
-                while (!predicate(viewModel.ui.value)) delay(1L)
+                while (!predicate(viewModel.ui.value)) {
+                    testScheduler.runCurrent()
+                    delay(1L)
+                }
             }
         }
     }

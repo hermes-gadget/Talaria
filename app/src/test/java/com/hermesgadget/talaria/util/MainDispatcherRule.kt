@@ -27,11 +27,22 @@ import org.junit.runner.Description
 /**
  * Swaps `Dispatchers.Main` for a test dispatcher around a test so ViewModels
  * that launch on the main dispatcher can be driven deterministically.
+ *
+ * Deliberately does NOT reset Main after the test: a ViewModel coroutine that is
+ * still suspended on a real dispatcher (e.g. an in-flight `withContext(Dispatchers.IO)`
+ * hop) can resume after the test ends. If Main were unset at that moment, the resume
+ * would throw the "Dispatchers.Main was accessed when the platform dispatcher was
+ * absent" IllegalStateException on a real thread, which the global kotlinx
+ * ExceptionCollector attributes to the NEXT runTest class as
+ * `UncaughtExceptionsBeforeTest` (intermittent CI flake, hit twice on
+ * LearningScopeSwitchTest). Keeping the dispatcher installed makes such late resumes
+ * dispatch into a dead scheduler — harmless. Tests that need their own Main (e.g.
+ * the scope-switch tests) call `setMain` themselves, which replaces this one.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainDispatcherRule(
     val dispatcher: CoroutineDispatcher = UnconfinedTestDispatcher(),
 ) : TestWatcher() {
     override fun starting(description: Description) = Dispatchers.setMain(dispatcher)
-    override fun finished(description: Description) = Dispatchers.resetMain()
+    override fun finished(description: Description) = Unit
 }

@@ -32,6 +32,7 @@ import com.hermesgadget.talaria.domain.model.ManagedFileReadResponse
 import com.hermesgadget.talaria.domain.model.MediaDataUrlResponse
 import com.hermesgadget.talaria.core.util.suspendResult
 import java.io.File
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -157,6 +158,7 @@ class FilesViewModel(
             ?: TalariaApp.instance.container.clientFactory.api()
     },
     private val scopeFlow: StateFlow<ConnectionScope?>? = null,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
     private val fixedApi = api
     private var boundApi: HermesApi = api ?: apiProvider(scopeFlow?.value)
@@ -453,7 +455,7 @@ class FilesViewModel(
         shareJob?.cancel()
         shareJob = viewModelScope.launch {
             suspendResult {
-                withContext(Dispatchers.IO) {
+                withContext(ioDispatcher) {
                     val coroutineContext = currentCoroutineContext()
                     val source = when (type) {
                         FilePreviewType.TEXT -> ByteArrayInputStream(file.text.toByteArray(Charsets.UTF_8))
@@ -575,7 +577,7 @@ class FilesViewModel(
         uploadJob?.cancel()
         uploadJob = viewModelScope.launch {
             suspendResult {
-                withContext(Dispatchers.IO) {
+                withContext(ioDispatcher) {
                     uploadCandidate(candidate, resolver, overwrite, totalBytes, requestApi, expectedScope)
                 }
             }.fold(
@@ -637,7 +639,7 @@ class FilesViewModel(
         downloadJob = viewModelScope.launch {
             var output: File? = null
             try {
-                val ready = withContext(Dispatchers.IO) {
+                val ready = withContext(ioDispatcher) {
                     val coroutineContext = currentCoroutineContext()
                     requestApi.downloadManagedFile(path).use { response ->
                         val total = response.contentLength().takeIf { it > 0L }
@@ -720,7 +722,7 @@ class FilesViewModel(
         }
         saveJob = viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) {
+                withContext(ioDispatcher) {
                     val output = resolver.openOutputStream(uri) ?: error("")
                     output.use { destination ->
                         payload.file.inputStream().use { source ->
