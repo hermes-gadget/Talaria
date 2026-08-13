@@ -1860,6 +1860,12 @@ class ChatViewModel(
                     ?.contentOrNull
                     ?.takeIf { it.isNotBlank() }
                 if (storedSessionId != null) {
+                    // Compaction replaces the session identity: claim the new
+                    // id, release the old, and update live/resume ids, the
+                    // runtime pointers, input history and the profile registry
+                    // so approvals, image attach, rewind, watches and auto-open
+                    // all target the compacted session (H6).
+                    bindSession(request.tabId, storedSessionId)
                     updateTab(request.tabId) { it.copy(resumeSessionId = storedSessionId) }
                 }
                 if (messages != null) {
@@ -2685,7 +2691,9 @@ class ChatViewModel(
         val tabId = _ui.value.active?.id ?: return
         val scopeId = activeChatScopeId()
         val generation = connectionScopeGeneration
-        voiceRecorder.start()
+        // The recorder auto-stops at its max duration/size; flip the UI state
+        // off through the same path as a manual stop (M14).
+        voiceRecorder.start(onLimitReached = { stopServerDictation() })
             .onSuccess {
                 if (!isCurrentVoiceScope(scopeId, generation, tabId)) {
                     voiceRecorder.cancel()
@@ -2757,14 +2765,31 @@ class ChatViewModel(
 
     /** On-device Android dictation fallback for servers without STT. */
     private fun startOnDeviceDictation() {
+        val tabId = _ui.value.active?.id ?: return
+        val scopeId = activeChatScopeId()
+        val generation = connectionScopeGeneration
         _ui.update { it.copy(listening = true) }
         sttJob = viewModelScope.launch {
             speech.listen(continuous = true).collect { event ->
                 when (event) {
-                    is SttEvent.Partial -> _ui.update { it.copy(partialDictation = event.text) }
+                    is SttEvent.Partial -> {
+                        // Partials are global UI state; only publish them while
+                        // this tab/scope is still the one being dictated.
+                        if (isCurrentVoiceScope(scopeId, generation, tabId)) {
+                            _ui.update { it.copy(partialDictation = event.text) }
+                        }
+                    }
                     is SttEvent.Final -> {
-                        val merged = (_ui.value.active?.draft.orEmpty() + " " + event.text).trim()
-                        updateDraft(merged)
+                        // The user may have switched tabs (or connection) while
+                        // listening — the transcript must land on the tab that
+                        // started the session, or nowhere (M13).
+                        if (!isCurrentVoiceScope(scopeId, generation, tabId)) {
+                            stopOnDeviceDictation()
+                            return@collect
+                        }
+                        val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return@collect
+                        val merged = (tab.draft.orEmpty() + " " + event.text).trim()
+                        updateDraft(tabId, merged, recordManualEdit = false)
                         _ui.update { it.copy(partialDictation = "") }
                     }
                     is SttEvent.Error -> {

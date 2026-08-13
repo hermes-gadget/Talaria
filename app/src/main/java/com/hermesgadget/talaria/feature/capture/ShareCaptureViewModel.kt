@@ -413,6 +413,11 @@ class ShareCaptureViewModel(
     fun discard() {
         val current = draft ?: return
         if (current.deliveryState != ShareDraftDeliveryState.DRAFT) return
+        // Cancel any pending debounced save first: a delayed write after
+        // remove() would resurrect the discarded draft (often pointing at
+        // files that are about to be deleted).
+        draftWriteJob?.cancel()
+        draftWriteJob = null
         draft = null
         _ui.update { it.copy(completed = true, error = null) }
         viewModelScope.launch {

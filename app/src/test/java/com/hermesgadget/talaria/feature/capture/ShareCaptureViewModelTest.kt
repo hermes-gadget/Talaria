@@ -21,6 +21,7 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -101,6 +102,36 @@ class ShareCaptureViewModelTest {
         awaitState { viewModel.ui.value.deliveryState == ShareDeliveryUiState.IDLE }
         assertEquals("original", viewModel.ui.value.text)
         assertTrue(viewModel.ui.value.error?.contains("offline") == true)
+    }
+
+    @Test
+    fun discardCancelsTheDebouncedSaveSoTheDraftCannotResurrect() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dependencies = dependencies(context)
+        val snapshot = ConnectionSnapshot.anonymous()
+        val draft = draft(snapshot, text = "original")
+        val viewModel = ShareCaptureViewModel(
+            snapshotOverride = snapshot,
+            deliveryOverride = GatedDelivery(),
+            initialDraft = draft,
+            activeSnapshotProvider = { snapshot },
+            dependencies = dependencies,
+            ioDispatcher = StandardTestDispatcher(testScheduler),
+        )
+
+        // Trigger a debounced save (100 ms), then discard inside the window.
+        viewModel.acceptIntent(
+            Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_TEXT, "edited"),
+        )
+        awaitState { viewModel.ui.value.importing == false && viewModel.ui.value.text.contains("edited") }
+        testScheduler.runCurrent()
+        viewModel.discard()
+
+        // Let the debounce window elapse: a stale save must NOT run.
+        testScheduler.advanceTimeBy(200)
+        testScheduler.runCurrent()
+        assertNull(dependencies.store.load(snapshot.scopeId))
     }
 
     private fun dependencies(context: Context): ShareCaptureDependencies =
