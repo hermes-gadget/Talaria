@@ -6,6 +6,8 @@ import com.hermesgadget.talaria.domain.model.ConnectionProfile
 import com.hermesgadget.talaria.domain.model.ConnectionSecrets
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
+import kotlinx.coroutines.CancellationException
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
@@ -294,6 +296,92 @@ class SnapshotCredentialHelpersTest {
         } finally {
             first.shutdown()
             second.shutdown()
+        }
+    }
+
+    @Test
+    fun oidcRefreshRejectsDefinitivelyAndClearsTokensOn401() {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.start()
+        try {
+            val saved = snapshot(
+                server.url("/").toString(),
+                authMode = AuthMode.OIDC_BROWSER,
+                bearerToken = "expired-access",
+                refreshToken = "refresh-secret",
+                expiresAt = 0,
+            )
+            val store = mockk<SecureConnectionStore>()
+            every { store.snapshotFor(saved.connectionId) } returns saved
+            var cleared = false
+            every { store.clearOidcTokensIfSnapshot(any()) } answers {
+                cleared = true
+                true
+            }
+
+            // A revoked refresh token must not keep serving the dying bearer.
+            assertNull(SnapshotOidcTokenRefresher(store, nowSeconds = { 1_000 }).accessToken(saved))
+            assertTrue(cleared)
+            verify(exactly = 1) { store.clearOidcTokensIfSnapshot(any()) }
+            assertEquals(1, server.requestCount)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun oidcRefreshKeepsOldTokenOnTransient429() {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(429))
+        server.start()
+        try {
+            val saved = snapshot(
+                server.url("/").toString(),
+                authMode = AuthMode.OIDC_BROWSER,
+                bearerToken = "expired-access",
+                refreshToken = "refresh-secret",
+                expiresAt = 1050, // past the refresh skew (1000 >= 990) but still valid
+            )
+            val store = mockk<SecureConnectionStore>()
+            every { store.snapshotFor(saved.connectionId) } returns saved
+            every { store.clearOidcTokensIfSnapshot(any()) } returns true
+
+            val result = SnapshotOidcTokenRefresher(store, nowSeconds = { 1_000 }).accessToken(saved)
+            assertEquals("expired-access", result)
+            // 429 is transient: the stored OIDC secret must survive.
+            verify(exactly = 0) { store.clearOidcTokensIfSnapshot(any()) }
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun oidcRefreshRethrowsCancellationInsteadOfSwallowing() {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(200))
+        server.start()
+        try {
+            val saved = snapshot(
+                server.url("/").toString(),
+                authMode = AuthMode.OIDC_BROWSER,
+                bearerToken = "expired-access",
+                refreshToken = "refresh-secret",
+                expiresAt = 0,
+            )
+            val store = mockk<SecureConnectionStore>()
+            var calls = 0
+            every { store.snapshotFor(saved.connectionId) } answers {
+                calls += 1
+                if (calls <= 1) saved else throw CancellationException("test cancel")
+            }
+
+            // An orderly cancel must propagate, not look like a refresh failure.
+            assertThrows(CancellationException::class.java) {
+                SnapshotOidcTokenRefresher(store, nowSeconds = { 1_000 }).accessToken(saved)
+            }
+        } finally {
+            server.shutdown()
         }
     }
 

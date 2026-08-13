@@ -856,7 +856,11 @@ class ConnectViewModel(
     }
 
     fun select(id: String) = repo.setActive(id)
-    fun delete(id: String) = repo.delete(id)
+
+    /** Delete the saved connection and purge its offline cache/settings. */
+    fun delete(id: String) {
+        viewModelScope.launch { repo.delete(id) }
+    }
 
     /** Revoke the saved profile's exact-origin approval under the store lock. */
     fun revokeCleartextConsent(id: String? = draftProfileId) {

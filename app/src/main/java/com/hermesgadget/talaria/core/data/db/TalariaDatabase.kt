@@ -72,6 +72,26 @@ abstract class TalariaDatabase : RoomDatabase() {
         )
     }
 
+    /**
+     * Delete every offline row belonging to a connection: transcripts, session
+     * metadata, activity, drafts, and local organization (collections, links,
+     * favorites, filters). Covers every management-profile scope variant of the
+     * connection (`id` plus `id|profile|…`), because a profile switch orphans
+     * the old scope while the connection id stays the same.
+     */
+    suspend fun purgeConnection(connectionId: String) {
+        // Connection ids are UUIDs (hex + dashes), so they can never contain
+        // the LIKE wildcards; the prefix match is exact for every scope variant.
+        val scopePrefix = "$connectionId|profile|%"
+        withTransaction {
+            sessions().purge(connectionId, scopePrefix)
+            messages().purge(connectionId, scopePrefix)
+            activity().purge(connectionId, scopePrefix)
+            drafts().purge(connectionId, scopePrefix)
+            sessionOrganization().purge(connectionId, scopePrefix)
+        }
+    }
+
     companion object {
         /**
          * v1 keyed cached sessions/messages only by the remote id. Two Hermes

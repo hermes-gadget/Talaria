@@ -101,15 +101,41 @@ private data class CarHostTrustState(
  * Observing a package with a new certificate replaces its record and clears any
  * prior enrollment. This makes application re-signing fail closed instead of
  * silently carrying trust forward by package name.
+ *
+ * Construction never throws: a keystore/encryption failure yields an empty,
+ * fail-closed store (no host is ever considered enrolled) with a
+ * [CarHostTrustStoreState.Corrupt] state so the UI can offer recovery.
  */
 class CarHostTrustStore internal constructor(
-    private val prefs: SharedPreferences,
+    private var prefs: SharedPreferences?,
+    private val appContext: Context? = null,
 ) {
-    constructor(context: Context) : this(createEncryptedPreferences(context.applicationContext))
+    constructor(context: Context) : this(openEncryptedPreferences(context.applicationContext), context.applicationContext)
+
+    sealed interface CarHostTrustStoreState {
+        data object Available : CarHostTrustStoreState
+        data class Corrupt(val diagnostics: String) : CarHostTrustStoreState
+    }
+
+    private val _state = MutableStateFlow<CarHostTrustStoreState>(
+        if (prefs != null) CarHostTrustStoreState.Available else CarHostTrustStoreState.Corrupt("Keystore unavailable"),
+    )
+    val state: StateFlow<CarHostTrustStoreState> = _state.asStateFlow()
 
     private val listeners = CopyOnWriteArraySet<() -> Unit>()
     private val _revision = MutableStateFlow(0L)
     val revision: StateFlow<Long> = _revision.asStateFlow()
+
+    /** Retry opening the encrypted store after a corruption; true when recovered. */
+    @Synchronized
+    fun retry(): Boolean {
+        if (prefs != null) return true
+        val context = appContext ?: return false
+        val reopened = runCatching { openEncryptedPreferences(context) }.getOrNull() ?: return false
+        prefs = reopened
+        _state.value = CarHostTrustStoreState.Available
+        return true
+    }
 
     @Synchronized
     fun list(): List<CarHostTrustRecord> = loadState().hosts
@@ -239,11 +265,17 @@ class CarHostTrustStore internal constructor(
     @SuppressLint("UseKtx") // KTX edit() cannot return the commit() result this check requires
 
     private fun mutate(transform: (CarHostTrustState) -> CarHostTrustState) {
+        val available = prefs
+        if (available == null) {
+            // Fail closed: nothing can be persisted, so nothing is recorded.
+            // Reads still work (empty) and the state flow tells the UI why.
+            return
+        }
         val changed = synchronized(this) {
             val current = loadState()
             val next = transform(current)
             if (next == current) return@synchronized false
-            check(prefs.edit().putString(KEY_STATE, JsonConfig.json.encodeToString(next)).commit()) {
+            check(available.edit().putString(KEY_STATE, JsonConfig.json.encodeToString(next)).commit()) {
                 "Could not persist car host trust"
             }
             _revision.value += 1L
@@ -253,7 +285,8 @@ class CarHostTrustStore internal constructor(
     }
 
     private fun loadState(): CarHostTrustState {
-        val encoded = prefs.getString(KEY_STATE, null) ?: return CarHostTrustState()
+        val available = prefs ?: return CarHostTrustState()
+        val encoded = available.getString(KEY_STATE, null) ?: return CarHostTrustState()
         return runCatching { JsonConfig.json.decodeFromString<CarHostTrustState>(encoded) }
             .getOrDefault(CarHostTrustState())
     }
@@ -262,17 +295,19 @@ class CarHostTrustStore internal constructor(
         private const val KEY_STATE = "car_host_trust_state"
         private const val MAX_ACTION_RECORDS = 50
 
-        private fun createEncryptedPreferences(context: Context): SharedPreferences {
-            val masterKey = MasterKey.Builder(context)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
-            return EncryptedSharedPreferences.create(
-                context,
-                "talaria_car_host_trust",
-                masterKey,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-            )
-        }
+        /** Never throws: a keystore/encryption failure yields null (fail closed). */
+        private fun openEncryptedPreferences(context: Context): SharedPreferences? =
+            runCatching {
+                val masterKey = MasterKey.Builder(context)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build()
+                EncryptedSharedPreferences.create(
+                    context,
+                    "talaria_car_host_trust",
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+                )
+            }.getOrNull()
     }
 }

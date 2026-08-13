@@ -41,7 +41,10 @@ class HermesClientFactory(
         val passwordSessionManager: SnapshotPasswordSessionManager,
     )
 
-    private val oidcTokenRefresher = SnapshotOidcTokenRefresher(connectionStore)
+    private val oidcTokenRefresher = SnapshotOidcTokenRefresher(
+        connectionStore,
+        onTokensRotated = { connectionId -> evictConnection(connectionId) },
+    )
     private val bundles = ConcurrentHashMap<ConnectionSnapshot, ClientBundle>()
 
     /** Capture the active profile, credentials, and logging policy before a request starts. */
@@ -65,24 +68,39 @@ class HermesClientFactory(
      * Deliberately NOT the store-bound bundle: a draft connection is never
      * persisted, so AuthInterceptor's ensureSnapshotStillStored() would throw
      * "connection changed" before the request leaves, and building a
-     * PersistentCookieJar on the calling thread is wasted disk I/O. The shell
-     * is public HTML with no credentials attached, so the only policy that
-     * must apply is the cleartext gate (consent) plus the emulator Host
-     * rewrite in debug builds.
+     * PersistentCookieJar on the calling thread is wasted disk I/O.
+     *
+     * The shell is public HTML but its body is scraped for
+     * `__HERMES_SESSION_TOKEN__` and that token authenticates WebSockets, so
+     * the response IS secret-bearing. The client therefore mirrors the
+     * credential-bearing bundle's transport guards where they apply to a
+     * never-persisted draft: no redirects (a hostile peer cannot bounce the
+     * fetch off-origin and mint a token), origin re-check on every hop,
+     * the profile's TLS pin when set, and a bounded body so an oversized
+     * dashboard page cannot OOM the process during connect.
      */
     fun shellClient(snapshot: ConnectionSnapshot): OkHttpClient =
         OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(120, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .followSslRedirects(false)
             .addInterceptor(CleartextPolicyInterceptor(snapshot))
             .addNetworkInterceptor(CleartextPolicyInterceptor(snapshot))
+            // No currentSnapshot callback: drafts are never persisted, so the
+            // store-current check is skipped; the origin check still runs on
+            // every network hop.
+            .addNetworkInterceptor(SnapshotOriginInterceptor(snapshot))
+            // SPA HTML is typically a few hundred KB; the 2 MiB default cap is
+            // plenty and prevents a hostile dashboard from exhausting memory.
+            .addInterceptor(ResponseBodyLimitInterceptor())
             // Emulator loopback rewrite is dev scaffolding; never ship it in release.
             .addEmulatorLoopbackInterceptorIf(BuildConfig.DEBUG)
             .apply {
                 // Same opt-in observability as the credential-bearing bundle:
-                // the SPA-shell fetch carries no secrets, so BASIC level with
-                // only Host redacted is safe to enable for diagnostics.
+                // BASIC level logs request lines/headers, never bodies — the
+                // scraped token stays out of logcat.
                 if (snapshot.httpLoggingEnabled) {
                     addInterceptor(
                         HttpLoggingInterceptor().apply {
@@ -90,6 +108,11 @@ class HermesClientFactory(
                             redactHeader("Host")
                         },
                     )
+                }
+            }
+            .apply {
+                snapshot.pinSha256?.takeIf { it.isNotBlank() }?.let { pin ->
+                    certificatePinner(CertificatePinnerFactory.forPin(snapshot.baseUrl, pin))
                 }
             }
             .build()
@@ -111,6 +134,17 @@ class HermesClientFactory(
             bundle.passwordSessionManager.clearFailure()
         }
         bundles.clear()
+    }
+
+    /**
+     * Close only the clients of one connection (e.g. after an OIDC token
+     * rotation commits). Unlike [invalidate], in-flight work on other
+     * connections is untouched.
+     */
+    fun evictConnection(connectionId: String) {
+        bundles.keys
+            .filter { it.connectionId == connectionId }
+            .forEach { key -> bundles.remove(key)?.let { close(it) } }
     }
 
     /** WebSocket clients intentionally have no HTTP logger: URLs carry auth queries. */

@@ -17,8 +17,10 @@
 
 package com.hermesgadget.talaria.core.data.repo
 
+import com.hermesgadget.talaria.core.data.db.TalariaDatabase
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
 import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStoreState
+import com.hermesgadget.talaria.core.data.prefs.SettingsStore
 import com.hermesgadget.talaria.core.network.CleartextPolicy
 import com.hermesgadget.talaria.core.network.CleartextConsentPolicy
 import com.hermesgadget.talaria.core.network.ConnectionOrigin
@@ -45,6 +47,9 @@ class ConnectionRepository(
     private val store: SecureConnectionStore,
     private val clientFactory: HermesClientFactory,
     private val wsAuthHelper: WsAuthHelper,
+    private val database: TalariaDatabase,
+    private val settingsStore: SettingsStore,
+    private val hermesRepository: HermesRepository,
 ) {
     val profiles: StateFlow<List<ConnectionProfile>> = store.profiles
     val activeId: StateFlow<String?> = store.activeId
@@ -173,8 +178,17 @@ class ConnectionRepository(
         clientFactory.invalidate()
     }
 
-    fun delete(id: String) {
+    /**
+     * Delete a connection: encrypted secrets, offline Room cache, scoped
+     * settings keys, and agent watches. "Delete connection" means the local
+     * transcript and tab state goes with it — nothing survives for someone
+     * with filesystem access.
+     */
+    suspend fun delete(id: String) = withContext(Dispatchers.IO) {
         store.delete(id)
+        database.purgeConnection(id)
+        settingsStore.purgeScopedKeys(id)
+        hermesRepository.clearCache()
         clientFactory.invalidate()
     }
 

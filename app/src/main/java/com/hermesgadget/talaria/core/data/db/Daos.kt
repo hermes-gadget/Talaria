@@ -40,6 +40,10 @@ interface SessionDao {
     @Query("DELETE FROM cached_sessions WHERE connectionId = :connectionId")
     suspend fun clear(connectionId: String)
 
+    /** Delete every row for a connection, including management-profile scope variants. */
+    @Query("DELETE FROM cached_sessions WHERE connectionId = :connectionId OR connectionId LIKE :scopePrefix")
+    suspend fun purge(connectionId: String, scopePrefix: String)
+
     @Query("DELETE FROM cached_sessions WHERE connectionId = :connectionId AND id IN (:ids)")
     suspend fun deleteByIdsBatch(connectionId: String, ids: List<String>)
 
@@ -142,6 +146,27 @@ interface SessionOrganizationDao {
             deleteFavoritesForSessionsBatch(connectionId, batch)
         }
     }
+
+    /** Delete every org row for a connection, including management-profile scope variants. */
+    @Query("DELETE FROM local_session_collections WHERE connectionId = :connectionId OR connectionId LIKE :scopePrefix")
+    suspend fun purgeCollections(connectionId: String, scopePrefix: String)
+
+    @Query("DELETE FROM local_session_collection_links WHERE connectionId = :connectionId OR connectionId LIKE :scopePrefix")
+    suspend fun purgeCollectionLinks(connectionId: String, scopePrefix: String)
+
+    @Query("DELETE FROM local_session_favorites WHERE connectionId = :connectionId OR connectionId LIKE :scopePrefix")
+    suspend fun purgeFavorites(connectionId: String, scopePrefix: String)
+
+    @Query("DELETE FROM saved_session_filters WHERE connectionId = :connectionId OR connectionId LIKE :scopePrefix")
+    suspend fun purgeSavedFilters(connectionId: String, scopePrefix: String)
+
+    @Transaction
+    suspend fun purge(connectionId: String, scopePrefix: String) {
+        purgeCollections(connectionId, scopePrefix)
+        purgeCollectionLinks(connectionId, scopePrefix)
+        purgeFavorites(connectionId, scopePrefix)
+        purgeSavedFilters(connectionId, scopePrefix)
+    }
 }
 
 @Dao
@@ -168,6 +193,10 @@ interface MessageDao {
         }
     }
 
+    /** Delete every row for a connection, including management-profile scope variants. */
+    @Query("DELETE FROM cached_messages WHERE connectionId = :connectionId OR connectionId LIKE :scopePrefix")
+    suspend fun purge(connectionId: String, scopePrefix: String)
+
     /** Atomic full-transcript replace: no window where readers see half-old/half-new rows. */
     @Transaction
     suspend fun replaceSessionMessages(
@@ -193,6 +222,10 @@ interface ActivityDao {
 
     @Query("UPDATE activity_events SET read = 1 WHERE connectionId = :connectionId")
     suspend fun markAllRead(connectionId: String)
+
+    /** Delete every row for a connection, including management-profile scope variants. */
+    @Query("DELETE FROM activity_events WHERE connectionId = :connectionId OR connectionId LIKE :scopePrefix")
+    suspend fun purge(connectionId: String, scopePrefix: String)
 }
 
 @Dao
@@ -202,4 +235,8 @@ interface DraftDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(draft: ChatDraftEntity)
+
+    /** Delete every row for a connection, including management-profile scope variants. */
+    @Query("DELETE FROM chat_drafts WHERE connectionId = :connectionId OR connectionId LIKE :scopePrefix")
+    suspend fun purge(connectionId: String, scopePrefix: String)
 }

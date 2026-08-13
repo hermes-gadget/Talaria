@@ -70,8 +70,15 @@ class AppContainer(context: Context) {
     val nativeOidcLogin = NativeOidcLogin(clientFactory, connectionStore)
     val wsAuthHelper = WsAuthHelper(clientFactory, connectionStore)
     val eventClient = HermesEventClient(clientFactory, wsAuthHelper)
-    val connectionRepository = ConnectionRepository(connectionStore, clientFactory, wsAuthHelper)
     val hermesRepository = HermesRepository(clientFactory, database, connectionStore, appContext)
+    val connectionRepository = ConnectionRepository(
+        connectionStore,
+        clientFactory,
+        wsAuthHelper,
+        database,
+        settingsStore,
+        hermesRepository,
+    )
     val sessionOrganizationRepository = SessionOrganizationRepository(database.sessionOrganization())
     val chatRepository = ChatRepository(clientFactory, database, connectionStore, wsAuthHelper)
     val notifier = TalariaNotifier(appContext, settingsStore)
