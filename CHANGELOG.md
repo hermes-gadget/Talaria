@@ -2,6 +2,55 @@
 
 All notable Talaria changes are documented here. Versions below correspond to repository tags; there has never been a `1.0.0` release.
 
+## [0.10.0] — 2026-08-14
+
+2026-08-13 audit remediation (Waves 0–9): transport/persistence hardening,
+share/chat/dictation fixes, background-work fixes, cancellation transparency,
+the snapshot boundary, terminal/logging hygiene, Room schema export, and
+ChatViewModel structural slices.
+
+### Security & transport
+
+- SPA-shell token discovery now refuses redirects, checks origin per hop,
+  bounds the body (2 MiB) and applies the profile's TLS pin (H7)
+- Deleting a connection purges the offline Room cache, scoped settings keys
+  and agent watches (H8)
+- OIDC refresh treats definitive 4xx (except 408/429) as revocation: stored
+  tokens are cleared instead of serving a dying bearer (M16)
+- Car host trust store never throws from construction; keystore failure
+  yields a fail-closed store with recovery state (M17)
+- Opt-in HTTP logging redacts cookies as well as bearer/session headers (M4)
+- Notification replies over 4 KiB spill to a cache file; WorkManager payloads
+  can no longer crash the receiver (M5)
+- ProGuard keeps reflection-instantiated classes by name + constructor only
+  (M12); Room schema is exported and committed (M6)
+
+### Correctness
+
+- Share discard cancels the debounced draft write (H5); compaction rebinds
+  the session identity (H6); dictation is tab/scope-safe and auto-stops cleanly
+  (M13/M14)
+- Periodic sync no longer resets its clock on cold starts (H9); failed agent
+  watches stop re-flashing the foreground notification (M19)
+- `runCatching` in suspend paths migrated to `suspendResult` (H2), guarded in
+  CI; generation guards on Kanban/Plugins/SimpleManage/Profiles (H1);
+  ResponseCache is single-flight and cannot restore stale data after
+  invalidation (M18)
+- Feature code binds to explicit connection snapshots; activity observation
+  follows the active scope (H4/M1/M2)
+- Terminal ANSI parsing is stateful per socket (M3); Channels onboarding
+  fails closed on missing pairing ids (M10); collection membership checks
+  ownership (L13)
+
+### Structure & debt
+
+- ChatSlashCompleter extracted with tests; Kanban/Plugins ViewModels and Mcp
+  helpers split out of their screen files (H3 slices)
+- Manifest permission cleanup, BootReceiver permission, ShareCapture no
+  longer accepts `*/*`, default theme follows the system, gitStatus carries
+  the profile query, QS tile refreshes coalesce, ops-import leftovers are
+  cleared on start (L2/L3/L5/L6/L7/L8/L9/L12/L19)
+
 ## [0.9.1] — 2026-08-12
 
 Audit remediation wave (Waves 0–5) plus targeted reliability fixes — 37 commits since v0.9.0.
