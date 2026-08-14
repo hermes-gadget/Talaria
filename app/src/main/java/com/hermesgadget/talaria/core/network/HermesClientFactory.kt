@@ -183,6 +183,24 @@ class HermesClientFactory(
         bundle.passwordSessionManager.clearFailure()
     }
 
+    /**
+     * Opt-in REST diagnostics. BASIC level logs request/response lines and
+     * headers; credential headers are redacted so logcat never carries the
+     * live session (M4). WebSocket URLs carry auth queries and intentionally
+     * have no logger at all.
+     */
+    internal fun buildHttpLogger(
+        logger: HttpLoggingInterceptor.Logger = HttpLoggingInterceptor.Logger.DEFAULT,
+    ): HttpLoggingInterceptor = HttpLoggingInterceptor(logger).apply {
+        level = HttpLoggingInterceptor.Level.BASIC
+        redactHeader("Authorization")
+        redactHeader(AuthInterceptor.SESSION_HEADER)
+        // Password-gated sessions authenticate with session cookies; a
+        // BASIC-level logger prints headers.
+        redactHeader("Cookie")
+        redactHeader("Set-Cookie")
+    }
+
     private fun buildBundle(snapshot: ConnectionSnapshot): ClientBundle {
         val cookieJar = PersistentCookieJar()
         val passwordSessionManager = SnapshotPasswordSessionManager(
@@ -227,13 +245,7 @@ class HermesClientFactory(
         // before a converter or feature-level parser can retain more data.
         restBuilder.addInterceptor(ResponseBodyLimitInterceptor())
         if (snapshot.httpLoggingEnabled) {
-            restBuilder.addInterceptor(
-                HttpLoggingInterceptor().apply {
-                    level = HttpLoggingInterceptor.Level.BASIC
-                    redactHeader("Authorization")
-                    redactHeader(AuthInterceptor.SESSION_HEADER)
-                },
-            )
+            restBuilder.addInterceptor(buildHttpLogger())
         }
         snapshot.pinSha256?.takeIf { it.isNotBlank() }?.let { pin ->
             restBuilder.certificatePinner(CertificatePinnerFactory.forPin(snapshot.baseUrl, pin))
