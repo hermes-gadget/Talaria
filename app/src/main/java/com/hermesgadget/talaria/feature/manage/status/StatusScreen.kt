@@ -169,7 +169,7 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
 
         suspendResult {
             val profile = container.connectionStore.activeProfile()?.effectiveManagementProfile()
-            container.clientFactory.api().getComputerUseStatus(profile)
+            container.clientFactory.apiForActive().getComputerUseStatus(profile)
         }.onSuccess {
             computerUse = parseComputerUseStatus(it)
             computerUseError = null
@@ -314,7 +314,7 @@ fun StatusScreen(onOpenSession: ((String) -> Unit)? = null) {
                                             suspendResult {
                                                 val profile = container.connectionStore.activeProfile()
                                                     ?.effectiveManagementProfile()
-                                                container.clientFactory.api()
+                                                container.clientFactory.apiForActive()
                                                     .grantComputerUsePermissions(profile)
                                             }.onSuccess {
                                                 grantingComputerUse = false

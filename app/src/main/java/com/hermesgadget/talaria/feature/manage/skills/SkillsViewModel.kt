@@ -519,7 +519,7 @@ class SkillsViewModel(
     companion object {
         fun factory(
             gateway: SkillsGateway = HermesSkillsGateway(
-                api = TalariaApp.instance.container.clientFactory.api(),
+                api = TalariaApp.instance.container.clientFactory.apiForActive(),
                 repo = TalariaApp.instance.container.hermesRepository,
             ),
         ) = object : ViewModelProvider.Factory {

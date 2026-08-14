@@ -131,7 +131,7 @@ internal sealed interface PluginsUiState {
 }
 
 internal class PluginsViewModel(
-    private val api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
+    private val api: HermesApi = TalariaApp.instance.container.clientFactory.apiForActive(),
 ) : ViewModel() {
     private val _ui = MutableStateFlow<PluginsUiState>(PluginsUiState.Loading)
     val ui: StateFlow<PluginsUiState> = _ui.asStateFlow()
@@ -234,7 +234,7 @@ internal class PluginsViewModel(
         private const val ACTION_BUSY = "busy"
 
         fun factory(
-            api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
+            api: HermesApi = TalariaApp.instance.container.clientFactory.apiForActive(),
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = PluginsViewModel(api) as T

@@ -103,7 +103,7 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
 
     suspend fun loadSessions() {
         sessionsLoading = true
-        suspendResult { container.clientFactory.api().getProfilesSessions() }
+        suspendResult { container.clientFactory.apiForActive().getProfilesSessions() }
             .onSuccess {
                 profileSessions = parseProfileSessions(it)
                 sessionsError = null
@@ -292,7 +292,7 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
                         modelTarget = null
                         scope.launch {
                             suspendResult {
-                                container.clientFactory.api().putProfileModel(
+                                container.clientFactory.apiForActive().putProfileModel(
                                     target.name,
                                     buildJsonObject {
                                         put("provider", provider)
@@ -477,7 +477,7 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
                                             TextButton(onClick = {
                                                 scope.launch {
                                                     suspendResult {
-                                                        container.clientFactory.api().openProfileTerminal(p.name)
+                                                        container.clientFactory.apiForActive().openProfileTerminal(p.name)
                                                     }
                                                         .onSuccess {
                                                             message = profilesTerminalOpenedTpl.format(p.name)
@@ -490,7 +490,7 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
                                             TextButton(onClick = {
                                                 scope.launch {
                                                     suspendResult {
-                                                        container.clientFactory.api().getProfileSetupCommand(p.name)
+                                                        container.clientFactory.apiForActive().getProfileSetupCommand(p.name)
                                                     }
                                                         .onSuccess {
                                                             setupCommand = parseProfileCommand(it)

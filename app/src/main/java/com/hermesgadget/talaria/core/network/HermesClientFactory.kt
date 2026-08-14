@@ -117,8 +117,18 @@ class HermesClientFactory(
             }
             .build()
 
-    fun api(snapshot: ConnectionSnapshot? = snapshot()): HermesApi =
-        bundle(snapshot ?: ConnectionSnapshot.anonymous(settingsStore.httpLoggingEnabled)).api
+    fun api(snapshot: ConnectionSnapshot): HermesApi =
+        bundle(snapshot).api
+
+    /**
+     * Feature-code convenience: bind to the connection that is active right
+     * now (or an anonymous client when none is). Call this ONCE per
+     * ViewModel/factory/screen composition — never inside a per-request loop
+     * or after a suspend point (H4). The returned client is immutable for
+     * that captured snapshot.
+     */
+    fun apiForActive(): HermesApi =
+        api(snapshot() ?: ConnectionSnapshot.anonymous(settingsStore.httpLoggingEnabled))
 
     /**
      * Invalidate every old-scope client and cancel its calls. New calls must

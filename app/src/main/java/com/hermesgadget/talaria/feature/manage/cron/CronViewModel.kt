@@ -313,7 +313,7 @@ class CronViewModel(
     companion object {
         private val localTarget = CronDeliveryTarget("local", "Local (save only)", homeTargetSet = true)
 
-        fun factory(gateway: CronGateway = HermesCronGateway(TalariaApp.instance.container.clientFactory.api())) =
+        fun factory(gateway: CronGateway = HermesCronGateway(TalariaApp.instance.container.clientFactory.apiForActive())) =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T = CronViewModel(gateway) as T

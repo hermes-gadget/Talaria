@@ -37,6 +37,7 @@ import com.hermesgadget.talaria.core.network.HermesEventScope
 import com.hermesgadget.talaria.core.network.HermesSideEvent
 import com.hermesgadget.talaria.core.network.CleartextPolicy
 import com.hermesgadget.talaria.core.network.ConnectionOrigin
+import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.ProfileRegistry
 import com.hermesgadget.talaria.core.network.PromptKind
 import com.hermesgadget.talaria.core.network.PtyEvent
@@ -650,7 +651,7 @@ class ChatViewModel(
 
     private suspend fun refreshProfileRegistry(): Result<ProfileRegistryState> =
         ProfileRegistry.refresh(
-            api = container.clientFactory.api(),
+            api = container.clientFactory.apiForActive(),
             preferredProfiles = preferredRegistryProfiles(),
         )
 
@@ -1431,9 +1432,12 @@ class ChatViewModel(
      * empty map and the rail remains a normal flat session list.
      */
     private suspend fun refreshSessionBranchOrigins() {
+        // H4: bind to the snapshot the active tab's sockets use, never the
+        // mutable active profile.
+        val snapshot = activeTabSnapshot() ?: return
         val raw = suspendResult {
             withContext(Dispatchers.IO) {
-                container.clientFactory.api().getSessions(limit = 50, offset = 0)
+                container.clientFactory.api(snapshot).getSessions(limit = 50, offset = 0)
             }
         }.getOrNull() ?: return
         suspendResult { parseSessionBranchOrigins(raw) }
@@ -2657,9 +2661,11 @@ class ChatViewModel(
         if (serverSttChecked) return
         serverSttChecked = true
         val probeGeneration = ++serverSttProbeGeneration
+        // H4: probe the connection the active tab is bound to.
+        val probeSnapshot = activeTabSnapshot() ?: return
         viewModelScope.launch {
             val capabilities = suspendResult {
-                val root = container.clientFactory.api().getOpenApi()
+                val root = container.clientFactory.api(probeSnapshot).getOpenApi()
                 VoiceCapabilities.fromOpenApiPaths(root["paths"]?.jsonObject?.keys.orEmpty())
             }.getOrNull()
             if (
@@ -2732,7 +2738,12 @@ class ChatViewModel(
                         audio.file.delete()
                     }
                 }
-                val response = container.clientFactory.api().transcribeAudio(
+                // H4: transcribe through the snapshot the dictating tab is
+                // bound to, never the mutable active profile.
+                val snapshot = tabSnapshot(tabId)
+                    ?: container.clientFactory.snapshot()
+                    ?: ConnectionSnapshot.anonymous()
+                val response = container.clientFactory.api(snapshot).transcribeAudio(
                     VoiceTranscriptionRequest(dataUrl = dataUrl, mimeType = audio.mimeType),
                     profile = profileNameForTab(tabId),
                 )
@@ -3259,8 +3270,14 @@ class ChatViewModel(
         }
         return withContext(Dispatchers.IO) {
             suspendResult {
+                // H4: bind to the requested profile's snapshot for THIS
+                // connection, never the mutable active profile.
+                val snapshot = container.connectionStore.activeProfile()?.id
+                    ?.let { container.clientFactory.snapshotFor(it, profileName) }
+                    ?: container.clientFactory.snapshot()
+                    ?: ConnectionSnapshot.anonymous()
                 parseSessionsForProfile(
-                    container.clientFactory.api().getSessionsForProfile(profile = profileName),
+                    container.clientFactory.api(snapshot).getSessionsForProfile(profile = profileName),
                 )
             }.getOrElse { emptyList() }
         }
@@ -3514,6 +3531,16 @@ class ChatViewModel(
         if (full.isNotEmpty() && _ui.value.activeTabId == tabId) tts.speak(full)
         applyProfileRegistry(ProfileRegistry.state.value)
     }
+
+    /** The immutable snapshot the active tab's sockets are bound to (H4). */
+    private fun activeTabSnapshot(): ConnectionSnapshot? {
+        val tabId = _ui.value.active?.id ?: return null
+        return tabSnapshot(tabId)
+    }
+
+    /** The immutable snapshot a tab's sockets are bound to (H4). */
+    private fun tabSnapshot(tabId: String): ConnectionSnapshot? =
+        runtimes[tabId]?.eventClient?.fixedSnapshot
 
     /** Prefer the session id carried by live gateway events over polling heuristics. */
     private fun bindSession(tabId: String, sessionId: String?) {

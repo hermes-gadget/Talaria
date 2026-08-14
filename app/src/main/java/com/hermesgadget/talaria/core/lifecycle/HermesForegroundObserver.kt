@@ -97,6 +97,11 @@ class HermesForegroundObserver(
         if (key == lastKey && now - lastAt < 4_000) return
         lastKey = key
         lastAt = now
-        hermesRepository.recordActivity(type, title, body)
+        // M1: attribute the activity row to the connection that was active
+        // when the event arrived — never the live profile read after a
+        // suspend point (a foreground switch mid-handling would otherwise
+        // write into the wrong Room scope).
+        val snapshot = connectionStore.activeSnapshot() ?: return
+        hermesRepository.recordActivity(type, title, body, snapshot)
     }
 }

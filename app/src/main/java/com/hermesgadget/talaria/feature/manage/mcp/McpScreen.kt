@@ -102,7 +102,7 @@ private val mcpConfigWriteMutex = Mutex()
 fun McpScreen() {
     val container = TalariaApp.instance.container
     val repo = container.hermesRepository
-    val api = container.clientFactory.api()
+    val api = container.clientFactory.apiForActive()
     val context = LocalContext.current
     // Resource templates hoisted to composition (LocalContext.getString in
     // non-composable callbacks would trip LocalContextGetResourceValueCall).

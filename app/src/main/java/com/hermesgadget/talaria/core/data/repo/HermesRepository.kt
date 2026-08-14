@@ -60,6 +60,7 @@ import com.hermesgadget.talaria.domain.model.scopeId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -168,7 +169,7 @@ class HermesRepository(
     ): Result<T> {
         val captured = snapshot ?: clientFactory.snapshot()
         return cache.readThrough(cacheKey(captured, key), ttlMs) {
-            withContext(Dispatchers.IO) { fetch(clientFactory.api(captured)) }
+            withContext(Dispatchers.IO) { fetch(clientFactory.api(captured ?: ConnectionSnapshot.anonymous())) }
         }
     }
 
@@ -179,13 +180,25 @@ class HermesRepository(
         const val TRANSCRIPT_FINGERPRINT_TTL_MS = 5L * 60L * 1000L
     }
 
-    fun observeSessions(): Flow<List<CachedSessionEntity>> = db.sessions().observeSessions(connId())
-    fun observeActivity(): Flow<List<ActivityEventEntity>> = db.activity().observe(connId())
+    /**
+     * M2: bind the observation to the ACTIVE scope at collection time. A flow
+     * collected across a profile switch follows the new connection instead of
+     * freezing the id captured at subscribe time.
+     */
+    fun observeSessions(): Flow<List<CachedSessionEntity>> =
+        connectionStore.scope.flatMapLatest { scope ->
+            db.sessions().observeSessions(scope?.snapshot?.scopeId ?: "none")
+        }
+
+    fun observeActivity(): Flow<List<ActivityEventEntity>> =
+        connectionStore.scope.flatMapLatest { scope ->
+            db.activity().observe(scope?.snapshot?.scopeId ?: "none")
+        }
 
     suspend fun refreshStatus(snapshot: ConnectionSnapshot? = null): Result<StatusResponse> {
         val captured = snapshot ?: clientFactory.snapshot()
         return withContext(Dispatchers.IO) {
-            suspendResult { clientFactory.api(captured).getStatus(profile = captured?.managementProfile) }
+            suspendResult { clientFactory.api(captured ?: ConnectionSnapshot.anonymous()).getStatus(profile = captured?.managementProfile) }
         }
     }
 
@@ -353,7 +366,7 @@ class HermesRepository(
         val snapshot = clientFactory.snapshot()
         return withContext(Dispatchers.IO) {
             suspendResult {
-                clientFactory.api(snapshot).getSession(sessionId, profile = snapshot?.managementProfile)
+                clientFactory.api(snapshot ?: ConnectionSnapshot.anonymous()).getSession(sessionId, profile = snapshot?.managementProfile)
             }
         }
     }
@@ -640,7 +653,7 @@ class HermesRepository(
         val bound = snapshot ?: clientFactory.snapshot()
         return withContext(Dispatchers.IO) {
             suspendResult {
-                clientFactory.api(bound).approvePairing(buildJsonObject {
+                clientFactory.api(bound ?: ConnectionSnapshot.anonymous()).approvePairing(buildJsonObject {
                     put("platform", platform)
                     put("request_id", requestId)
                     bound?.managementProfile?.let { put("profile", it) }

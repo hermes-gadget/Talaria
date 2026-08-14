@@ -97,7 +97,7 @@ private class InvalidOnboardingResponse : IllegalStateException()
 
 /** Owns the short-lived guided Telegram and WhatsApp pairing sessions. */
 class ChannelsViewModel(
-    private val api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
+    private val api: HermesApi = TalariaApp.instance.container.clientFactory.apiForActive(),
     private val profileProvider: () -> String? = {
         TalariaApp.instance.container.connectionStore.activeProfile()?.effectiveManagementProfile()
     },

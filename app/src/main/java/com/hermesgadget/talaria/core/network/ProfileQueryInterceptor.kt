@@ -17,7 +17,6 @@
 
 package com.hermesgadget.talaria.core.network
 
-import com.hermesgadget.talaria.core.data.prefs.SecureConnectionStore
 import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.Response
@@ -32,9 +31,6 @@ class ProfileQueryInterceptor(
     private val snapshotProvider: () -> ConnectionSnapshot?,
 ) : Interceptor {
     constructor(snapshot: ConnectionSnapshot) : this({ snapshot })
-
-    /** Compatibility constructor for legacy callers; the factory uses a fixed snapshot. */
-    constructor(connectionStore: SecureConnectionStore) : this({ connectionStore.activeSnapshot() })
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val profile = snapshotProvider()?.managementProfile.orEmpty()

@@ -116,7 +116,7 @@ interface SystemGateway {
 
 private class DefaultSystemGateway(
     private val repo: HermesRepository = TalariaApp.instance.container.hermesRepository,
-    private val api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
+    private val api: HermesApi = TalariaApp.instance.container.clientFactory.apiForActive(),
 ) : SystemGateway {
     override suspend fun getSystemStats() = repo.getSystemStats()
     override suspend fun getPortal() = repo.getPortal()

@@ -237,7 +237,7 @@ private class KanbanTaskStatusReconciliationException(
 )
 
 internal class KanbanViewModel(
-    private val api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
+    private val api: HermesApi = TalariaApp.instance.container.clientFactory.apiForActive(),
 ) : ViewModel() {
     private val _ui = MutableStateFlow<KanbanUiState>(KanbanUiState.Loading)
     val ui: StateFlow<KanbanUiState> = _ui.asStateFlow()
@@ -532,7 +532,7 @@ internal class KanbanViewModel(
 
     companion object {
         fun factory(
-            api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
+            api: HermesApi = TalariaApp.instance.container.clientFactory.apiForActive(),
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = KanbanViewModel(api) as T
