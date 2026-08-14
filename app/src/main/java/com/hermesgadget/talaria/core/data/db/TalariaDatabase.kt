@@ -35,7 +35,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SavedSessionFilterEntity::class,
     ],
     version = 4,
-    exportSchema = false,
+    exportSchema = true,
 )
 abstract class TalariaDatabase : RoomDatabase() {
     abstract fun sessions(): SessionDao

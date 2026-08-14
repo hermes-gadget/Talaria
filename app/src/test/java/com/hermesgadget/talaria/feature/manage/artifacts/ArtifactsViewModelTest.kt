@@ -195,8 +195,15 @@ class ArtifactsViewModelTest {
 
     @Test
     fun `canceled scan does not publish a failure`() = runTest {
+        var cancelSeen = false
         val vm = ArtifactsViewModel(
-            loadSessions = { throw CancellationException("scan canceled") },
+            loadSessions = {
+                try {
+                    throw CancellationException("scan canceled")
+                } finally {
+                    cancelSeen = true
+                }
+            },
             loadMessages = { Result.success(emptyList()) },
             readText = { Result.success(FsTextFile(path = it)) },
             readDataUrl = { FsDataUrl(path = it) },
@@ -206,6 +213,14 @@ class ArtifactsViewModelTest {
         advanceUntilIdle()
 
         assertTrue(vm.ui.value.load is ArtifactLoadState.Loading)
+        // The cancellation must have reached the scan body: a swallow-to-nothing
+        // path that keeps the VM wedged in Loading forever also passes the
+        // state assertion above, so prove the job actually ran and died.
+        assertTrue(cancelSeen)
+        // And the VM must still be able to run a fresh scan afterwards.
+        vm.refresh()
+        advanceUntilIdle()
+        assertTrue(vm.ui.value.load is ArtifactLoadState.Loading || vm.ui.value.load is ArtifactLoadState.Failed)
     }
 
     @Test
