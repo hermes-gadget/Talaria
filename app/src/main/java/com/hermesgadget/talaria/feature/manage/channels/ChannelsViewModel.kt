@@ -124,7 +124,14 @@ class ChannelsViewModel(
                         .fold(
                             onSuccess = { state ->
                                 _onboarding.update { it.copy(telegram = state) }
-                                startTelegramPolling(state.pairingId!!)
+                                val pairingId = state.pairingId
+                                if (pairingId.isNullOrBlank()) {
+                                    // M10: a Waiting phase with a missing
+                                    // pairing id is malformed, not a crash.
+                                    setTelegramError(IllegalStateException("Hermes returned no Telegram pairing id"))
+                                    return@fold
+                                }
+                                startTelegramPolling(pairingId)
                             },
                             onFailure = { error -> setTelegramError(error) },
                         )
@@ -163,7 +170,14 @@ class ChannelsViewModel(
                             onSuccess = { state ->
                                 _onboarding.update { it.copy(whatsapp = state) }
                                 if (!state.readyForApply) {
-                                    startWhatsAppPolling(state.pairingId!!)
+                                    val pairingId = state.pairingId
+                                    if (pairingId.isNullOrBlank()) {
+                                        // M10: fail closed instead of crashing
+                                        // on a malformed start response.
+                                        setWhatsAppError(IllegalStateException("Hermes returned no WhatsApp pairing id"))
+                                        return@fold
+                                    }
+                                    startWhatsAppPolling(pairingId)
                                 }
                             },
                             onFailure = { error -> setWhatsAppError(error) },

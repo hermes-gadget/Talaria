@@ -125,6 +125,12 @@ android {
             "GradleDependency",
         )
     }
+    ksp {
+        // M6: export the Room schema so the next migration is never guesswork
+        // and CI can fail on an illegal identity change. Committed under
+        // app/schemas/ and validated by MigrationTestHelper.
+        arg("room.schemaLocation", "$projectDir/schemas")
+    }
 }
 
 dependencies {
