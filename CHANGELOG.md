@@ -2,7 +2,7 @@
 
 All notable Talaria changes are documented here. Versions below correspond to repository tags; there has never been a `1.0.0` release.
 
-## [0.10.0] — 2026-08-14
+## [0.9.2] — 2026-08-14
 
 2026-08-13 audit remediation (Waves 0–9): transport/persistence hardening,
 share/chat/dictation fixes, background-work fixes, cancellation transparency,
