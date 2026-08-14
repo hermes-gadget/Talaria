@@ -81,6 +81,9 @@ interface SessionOrganizationDao {
     @Query("SELECT * FROM local_session_collections WHERE connectionId = :connectionId ORDER BY kind ASC, name COLLATE NOCASE ASC")
     suspend fun getCollections(connectionId: String): List<LocalSessionCollectionEntity>
 
+    @Query("SELECT * FROM local_session_collections WHERE connectionId = :connectionId AND id = :collectionId LIMIT 1")
+    suspend fun getCollection(connectionId: String, collectionId: Long): LocalSessionCollectionEntity?
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertCollection(collection: LocalSessionCollectionEntity): Long
 

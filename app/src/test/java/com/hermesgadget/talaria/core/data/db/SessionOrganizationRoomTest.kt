@@ -8,6 +8,7 @@ package com.hermesgadget.talaria.core.data.db
 import android.app.Application
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import com.hermesgadget.talaria.core.data.repo.SessionOrganizationRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -115,6 +116,44 @@ class SessionOrganizationRoomTest {
             database.sessionOrganization().observeFavorites(scopeB).first().map { it.sessionId },
         )
         assertTrue(database.sessionOrganization().observeCollectionLinks(scopeA).first().isEmpty())
+    }
+
+    @Test
+    fun collectionMembershipRejectsForeignCollections() = runTest {
+        val dao = database.sessionOrganization()
+        val foreignCollection = dao.insertCollection(
+            LocalSessionCollectionEntity(
+                connectionId = "scope-b",
+                name = "Foreign",
+                kind = LocalSessionCollectionKind.LABEL.name,
+            ),
+        )
+        val repository = SessionOrganizationRepository(dao)
+
+        // scope-a tries to link its session to scope-b's collection: denied.
+        repository.setCollectionMembership(
+            connectionId = "scope-a",
+            sessionId = "session-1",
+            collectionId = foreignCollection,
+            assigned = true,
+        )
+        assertTrue(dao.observeCollectionLinks("scope-a").first().isEmpty())
+
+        // A collection owned by the same connection is linkable.
+        val ownCollection = dao.insertCollection(
+            LocalSessionCollectionEntity(
+                connectionId = "scope-a",
+                name = "Mine",
+                kind = LocalSessionCollectionKind.LABEL.name,
+            ),
+        )
+        repository.setCollectionMembership(
+            connectionId = "scope-a",
+            sessionId = "session-1",
+            collectionId = ownCollection,
+            assigned = true,
+        )
+        assertEquals(1, dao.observeCollectionLinks("scope-a").first().size)
     }
 
     private fun cachedSession(id: String, connectionId: String) = CachedSessionEntity(

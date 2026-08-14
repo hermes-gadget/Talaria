@@ -133,11 +133,14 @@ class SessionOrganizationRepository(
         assigned: Boolean,
     ) {
         if (assigned) {
+            // L13: never link a session to a collection that belongs to a
+            // different connection (there is no Room FK on the links table).
+            val owned = dao.getCollection(connectionId, collectionId) ?: return
             dao.addCollectionLink(
                 LocalSessionCollectionLinkEntity(
                     connectionId = connectionId,
                     sessionId = sessionId,
-                    collectionId = collectionId,
+                    collectionId = owned.id,
                 ),
             )
         } else {

@@ -24,6 +24,8 @@ Manual dependency injection lives in `di/AppContainer`, created by `TalariaApp`.
 
 A saved connection and its selected Hermes management profile form one local scope. Room caches, drafts, restored chat tabs, sync fingerprints, widget summaries, REST caches, PTY sessions, sidecar sockets, and notification actions use that scope. Switching either part tears down live transports and recreates the navigation/ViewModel graph, preventing data from one Hermes home appearing in another.
 
+**`key(activeScope)` is the data boundary** (L10): destination ViewModels are recreated per connection/profile scope, so their captured `ConnectionSnapshot` stays valid for their lifetime. Never lift a data-bound screen out of its `key { }` block "to preserve state" — the `ViewModelStore` at the Activity is not the boundary, and an un-keyed host reopens the credential-mixup class of bugs. Feature code must call `clientFactory.api(snapshot)` (or `apiForActive()` at construction/composition time) and never read the active profile after a suspend point.
+
 The local blank profile name represents Hermes’ `default` profile. Profile-scoped REST and WebSocket calls still send `profile=default` explicitly, so Talaria does not inherit the dashboard process’s sticky CLI profile by accident.
 
 ## Authentication

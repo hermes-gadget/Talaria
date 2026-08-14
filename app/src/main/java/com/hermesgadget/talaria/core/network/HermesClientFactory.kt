@@ -37,7 +37,7 @@ class HermesClientFactory(
         val rest: OkHttpClient,
         val webSocket: OkHttpClient,
         val api: HermesApi,
-        val cookieJar: PersistentCookieJar,
+        val cookieJar: SessionCookieJar,
         val passwordSessionManager: SnapshotPasswordSessionManager,
     )
 
@@ -68,7 +68,7 @@ class HermesClientFactory(
      * Deliberately NOT the store-bound bundle: a draft connection is never
      * persisted, so AuthInterceptor's ensureSnapshotStillStored() would throw
      * "connection changed" before the request leaves, and building a
-     * PersistentCookieJar on the calling thread is wasted disk I/O.
+     * SessionCookieJar on the calling thread is wasted disk I/O.
      *
      * The shell is public HTML but its body is scraped for
      * `__HERMES_SESSION_TOKEN__` and that token authenticates WebSockets, so
@@ -202,7 +202,7 @@ class HermesClientFactory(
     }
 
     private fun buildBundle(snapshot: ConnectionSnapshot): ClientBundle {
-        val cookieJar = PersistentCookieJar()
+        val cookieJar = SessionCookieJar()
         val passwordSessionManager = SnapshotPasswordSessionManager(
             snapshot = snapshot,
             cookieJar = cookieJar,

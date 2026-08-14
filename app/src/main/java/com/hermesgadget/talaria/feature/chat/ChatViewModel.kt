@@ -41,6 +41,7 @@ import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.ProfileRegistry
 import com.hermesgadget.talaria.core.network.PromptKind
 import com.hermesgadget.talaria.core.network.PtyEvent
+import com.hermesgadget.talaria.feature.voice.encodeRecordedVoiceDataUrl
 import com.hermesgadget.talaria.core.network.PtyPromptDeliveryLedger
 import com.hermesgadget.talaria.core.network.PtyPromptDeliveryStart
 import com.hermesgadget.talaria.core.network.PtyTransportFactory
@@ -410,6 +411,7 @@ class ChatViewModel(
     private var lastRows = 24
     private var initialDraft: String = ""
     private var slashCatalog: List<SlashCommand> = SlashCommands.defaults
+    private val slashCompleter = ChatSlashCompleter()
     private var slashRequestGeneration: Long = 0
     private var boundConnectionScope: String? = null
     private var boundConnectionId: String? = null
@@ -2165,24 +2167,9 @@ class ChatViewModel(
                 if (active?.id != tabId || active.draft != text || completions.isEmpty()) {
                     return@requestSlashCompletions
                 }
-                val remote = completions.asSequence().map { completion ->
-                    val replacement = completion.replacement.trimEnd()
-                    val token = replacement.substringBefore(' ')
-                    val known = slashCatalog.firstOrNull { it.command.equals(token, ignoreCase = true) }
-                    SlashCommand(
-                        command = replacement,
-                        description = completion.description.ifBlank { known?.description ?: "Hermes command" },
-                        category = known?.category ?: if (completion.kind == "skill") "Skills" else "Commands",
-                        aliases = known?.aliases.orEmpty(),
-                        argumentMode = known?.argumentMode ?: if (
-                            completion.replacement.endsWith(' ') || replacement.contains(' ')
-                        ) {
-                            SlashArgumentMode.MIXED
-                        } else {
-                            SlashArgumentMode.NONE
-                        },
-                    )
-                }.distinctBy { it.command.lowercase() }.take(12).toList()
+                // H3: the merge policy lives in ChatSlashCompleter (tested);
+                // the ViewModel keeps only the RPC + generation guard.
+                val remote = slashCompleter.mergeRemote(completions)
                 _ui.update { it.copy(showSlashPalette = true, slashSuggestions = remote) }
             }
         }
@@ -2732,8 +2719,9 @@ class ChatViewModel(
             try {
                 val dataUrl = withContext(Dispatchers.IO) {
                     try {
-                        val encoded = Base64.getEncoder().encodeToString(audio.file.readBytes())
-                        "data:${audio.mimeType};base64,$encoded"
+                        // L19: streaming encoder with ceilings instead of an
+                        // unbounded readBytes + Base64 double buffer.
+                        encodeRecordedVoiceDataUrl(audio.file, audio.mimeType)
                     } finally {
                         audio.file.delete()
                     }

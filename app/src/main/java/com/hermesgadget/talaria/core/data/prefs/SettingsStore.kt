@@ -70,10 +70,10 @@ class SettingsStore(context: Context) {
             if (value.isNullOrBlank()) remove(KEY_LOCALE_TAG) else putString(KEY_LOCALE_TAG, value)
         }
 
-    private fun readThemeMode(): ThemeMode = when (prefs.getString("theme_mode", ThemeMode.DARK.name)) {
+    private fun readThemeMode(): ThemeMode = when (prefs.getString("theme_mode", ThemeMode.SYSTEM.name)) {
         ThemeMode.LIGHT.name -> ThemeMode.LIGHT
-        ThemeMode.SYSTEM.name -> ThemeMode.SYSTEM
-        else -> ThemeMode.DARK
+        ThemeMode.DARK.name -> ThemeMode.DARK
+        else -> ThemeMode.SYSTEM
     }
 
     private fun readThemePreset(): String = prefs.getString(KEY_THEME_PRESET, DEFAULT_THEME_PRESET)

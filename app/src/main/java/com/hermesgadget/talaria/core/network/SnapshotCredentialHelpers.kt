@@ -67,7 +67,7 @@ internal class ScopedSingleFlight<K> {
 /** Password login helper whose URL, credentials, and cookie jar are snapshot-bound. */
 class SnapshotPasswordSessionManager(
     private val snapshot: ConnectionSnapshot,
-    private val cookieJar: PersistentCookieJar,
+    private val cookieJar: SessionCookieJar,
     private val currentSnapshot: () -> ConnectionSnapshot? = { snapshot },
 ) {
     private val lock = Any()

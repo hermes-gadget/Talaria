@@ -22,6 +22,7 @@ import com.hermesgadget.talaria.core.notifications.NotificationChannels
 import com.hermesgadget.talaria.di.AppContainer
 import com.hermesgadget.talaria.feature.manage.files.ShareFileManager
 import com.hermesgadget.talaria.worker.SyncScheduler
+import java.io.File
 
 class TalariaApp : Application() {
     lateinit var container: AppContainer
@@ -35,6 +36,10 @@ class TalariaApp : Application() {
         // managed-file screen can observe them. Fresh ACTION_SEND files are
         // retained by ShareFileManager until their explicit TTL expires.
         ShareFileManager(cacheDir).cleanupStaleFiles()
+        // L7: ops-import temp files can survive a process kill; clear them on
+        // the next cold start (SystemViewModel already cleans them on
+        // success/failure/onCleared).
+        File(cacheDir, "ops-import").deleteRecursively()
         container.localeManager.apply(this)
         NotificationChannels.ensure(this)
         SyncScheduler.ensurePeriodic(this)

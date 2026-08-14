@@ -10,7 +10,7 @@ import org.junit.Test
 class PersistentCookieJarTest {
     @Test
     fun retainsSameNameCookiesWithDifferentPaths() {
-        val jar = PersistentCookieJar()
+        val jar = SessionCookieJar()
         val root = "https://example.test/".toHttpUrl()
         jar.saveFromResponse(
             root,
@@ -29,7 +29,7 @@ class PersistentCookieJarTest {
 
     @Test
     fun doesNotSendSecureCookieOverHttp() {
-        val jar = PersistentCookieJar()
+        val jar = SessionCookieJar()
         jar.saveFromResponse(
             "https://example.test/".toHttpUrl(),
             listOf(
