@@ -45,4 +45,16 @@ class TerminalOutputBufferTest {
         assertTrue(buffer.displayText.startsWith(TerminalOutputBuffer.TRUNCATION_MARKER))
         assertTrue(buffer.diagnosticTailText.isNotEmpty())
     }
+
+    @Test
+    fun `escape sequence split across frames is parsed as one sequence`() {
+        val buffer = TerminalOutputBuffer()
+        // CSI intro arrives in one frame, the rest in the next (M3).
+        buffer.append("\u001B[")
+        val output = buffer.append("31mRED\u001B[0m")
+
+        assertEquals("RED", output)
+        assertFalse(output.contains("31m"))
+        assertFalse(output.contains("\u001B"))
+    }
 }

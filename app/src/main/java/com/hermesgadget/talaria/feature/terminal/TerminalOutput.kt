@@ -34,6 +34,22 @@ internal object TerminalOutputSanitizer {
             stripped.trimEnd('\n') + "\n".repeat(trailingNewlines)
         }
     }
+
+    /**
+     * M3: stateful variant for a socket lifetime. One [AnsiStripper.Stream]
+     * per connection means an escape sequence split across two WebSocket
+     * frames is parsed as one sequence instead of leaking CSI garbage.
+     */
+    fun strip(raw: String, stream: AnsiStripper.Stream): String {
+        if (raw.isEmpty()) return ""
+        val trailingNewlines = raw.takeLastWhile { it == '\n' }.length
+        val stripped = stream.append(raw)
+        return if (trailingNewlines == 0) {
+            stripped
+        } else {
+            stripped.trimEnd('\n') + "\n".repeat(trailingNewlines)
+        }
+    }
 }
 
 /** Bounded PTY output so a long-lived terminal cannot grow the Compose state forever. */
@@ -43,6 +59,9 @@ internal class TerminalOutputBuffer(
 ) {
     private val buffer = StringBuilder()
     private val diagnosticTail = StringBuilder()
+    // M3: one parser for the socket lifetime, so split escape sequences
+    // cannot corrupt the transcript between frames.
+    private val ansi = AnsiStripper.Stream()
     private var truncated = false
     private var droppedCharCount = 0L
 
@@ -69,7 +88,7 @@ internal class TerminalOutputBuffer(
         get() = droppedCharCount
 
     fun append(raw: String): String {
-        val sanitized = TerminalOutputSanitizer.strip(raw)
+        val sanitized = TerminalOutputSanitizer.strip(raw, ansi)
         buffer.append(sanitized)
         if (buffer.length > maxChars) {
             val removed = buffer.length - maxChars
