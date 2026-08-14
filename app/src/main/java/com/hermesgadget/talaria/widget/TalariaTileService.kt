@@ -32,6 +32,9 @@ import com.hermesgadget.talaria.core.util.suspendResult
 /** Quick Settings tile showing Hermes gateway up/down for the active profile. */
 class TalariaTileService : TileService() {
     private val scope = CoroutineScope(Dispatchers.IO + Job())
+    // L12: coalesce overlapping refreshes — a stale fetch must not updateTile
+    // out of order after a newer one.
+    private var refreshJob: Job? = null
 
     override fun onStartListening() {
         refresh()
@@ -43,10 +46,11 @@ class TalariaTileService : TileService() {
 
     private fun refresh() {
         val tile = qsTile ?: return
-        val up = getString(R.string.tile_status_up)
-        val down = getString(R.string.tile_status_down)
-        val offline = getString(R.string.tile_status_offline)
-        scope.launch {
+        refreshJob?.cancel()
+        refreshJob = scope.launch {
+            val up = getString(R.string.tile_status_up)
+            val down = getString(R.string.tile_status_down)
+            val offline = getString(R.string.tile_status_offline)
             val (label, state) = suspendResult {
                 val status = TalariaApp.instance.container.hermesRepository.refreshStatus().getOrThrow()
                 if ((status.gateway?.running ?: status.gateway_running) == true) {

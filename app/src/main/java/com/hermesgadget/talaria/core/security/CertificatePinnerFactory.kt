@@ -24,8 +24,10 @@ import com.hermesgadget.talaria.core.util.suspendResult
 
 object CertificatePinnerFactory {
     fun forPin(baseUrl: String, sha256Pin: String): CertificatePinner {
+        // L6: never silently pin the wrong host — a caller that skipped URL
+        // validation must fail loudly instead of trusting a fallback host.
         val host = baseUrl.toHttpUrlOrNull()?.host
-            ?: baseUrl.removePrefix("https://").removePrefix("http://").substringBefore('/')
+            ?: error("invalid dashboard URL for TLS pinning: $baseUrl")
         val pin = normalizePin(sha256Pin)
         return CertificatePinner.Builder().add(host, pin).build()
     }

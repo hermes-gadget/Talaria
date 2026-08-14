@@ -154,7 +154,7 @@ class SnapshotCredentialHelpersTest {
             var checks = 0
             val manager = SnapshotPasswordSessionManager(
                 saved,
-                PersistentCookieJar(),
+                SessionCookieJar(),
                 currentSnapshot = {
                     checks += 1
                     if (checks >= 3) changed else saved
@@ -286,7 +286,7 @@ class SnapshotCredentialHelpersTest {
                 password = "password-secret",
             )
             assertThrows(IOException::class.java) {
-                SnapshotPasswordSessionManager(saved, PersistentCookieJar())
+                SnapshotPasswordSessionManager(saved, SessionCookieJar())
                     .ensureSession(first.url("/"))
             }
             assertTrue(

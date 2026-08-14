@@ -544,7 +544,10 @@ interface HermesApi {
     // --- Git review (Desktop parity §1.5 / §9.8) ---
 
     @GET("api/git/status")
-    suspend fun gitStatus(@Query("path") path: String): GitStatus
+    suspend fun gitStatus(
+        @Query("path") path: String,
+        @Query("profile") profile: String? = null,
+    ): GitStatus
 
     @GET("api/git/worktrees")
     suspend fun gitWorktrees(@Query("path") path: String): GitWorktreesResponse

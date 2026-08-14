@@ -23,7 +23,7 @@ import okhttp3.HttpUrl
 import java.util.concurrent.ConcurrentHashMap
 
 /** In-memory cookie jar for gated-mode `hermes_session_at` cookies. */
-class PersistentCookieJar : CookieJar {
+class SessionCookieJar : CookieJar {
     private val store = ConcurrentHashMap<String, ConcurrentHashMap<String, Cookie>>()
 
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
