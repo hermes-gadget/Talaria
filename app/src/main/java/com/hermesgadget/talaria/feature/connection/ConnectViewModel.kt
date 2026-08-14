@@ -537,7 +537,7 @@ class ConnectViewModel(
         _ui.value = _ui.value.copy(providerOAuthSession = null)
     }
 
-    private fun providerApi() = TalariaApp.instance.container.clientFactory.api()
+    private fun providerApi() = TalariaApp.instance.container.clientFactory.apiForActive()
 
     private suspend fun saveConnectionDraft(s: ConnectUiState): ConnectionProfile = repo.save(
         name = s.name,

@@ -112,7 +112,7 @@ class HermesEventClient(
     private val clientFactory: HermesClientFactory,
     private val wsAuth: WsAuthHelper,
     /** Optional immutable connection snapshot for background runtimes. */
-    private val fixedSnapshot: ConnectionSnapshot? = null,
+    val fixedSnapshot: ConnectionSnapshot? = null,
     /** Optional immutable tab/session scope captured with [fixedSnapshot]. */
     private val fixedEventScope: HermesEventScope? = null,
     /** Optional client built from [fixedSnapshot]. */

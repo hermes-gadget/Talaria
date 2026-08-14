@@ -395,7 +395,7 @@ class SessionAdminViewModel(
     companion object {
         fun factory(
             gateway: SessionAdminGateway = HermesSessionAdminGateway(
-                TalariaApp.instance.container.clientFactory.api(),
+                TalariaApp.instance.container.clientFactory.apiForActive(),
                 reconcileAfterMutation = {
                     TalariaApp.instance.container.hermesRepository.refreshSessions().getOrThrow()
                 },
@@ -462,7 +462,7 @@ class LatestDescendantViewModel(
     companion object {
         fun factory(
             gateway: LatestDescendantGateway = HermesLatestDescendantGateway(
-                TalariaApp.instance.container.clientFactory.api(),
+                TalariaApp.instance.container.clientFactory.apiForActive(),
             ),
         ) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")

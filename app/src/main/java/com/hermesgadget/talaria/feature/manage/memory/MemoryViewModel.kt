@@ -54,7 +54,7 @@ data class MemoryUiState(
 
 class MemoryViewModel(
     private val repo: HermesRepository = TalariaApp.instance.container.hermesRepository,
-    private val api: HermesApi = TalariaApp.instance.container.clientFactory.api(),
+    private val api: HermesApi = TalariaApp.instance.container.clientFactory.apiForActive(),
 ) : ViewModel() {
     private val _ui = MutableStateFlow(MemoryUiState())
     val ui: StateFlow<MemoryUiState> = _ui.asStateFlow()

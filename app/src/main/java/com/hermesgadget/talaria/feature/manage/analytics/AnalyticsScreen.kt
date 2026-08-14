@@ -76,7 +76,7 @@ import kotlinx.serialization.json.longOrNull
 @Composable
 fun AnalyticsScreen() {
     val repo = TalariaApp.instance.container.hermesRepository
-    val api = TalariaApp.instance.container.clientFactory.api()
+    val api = TalariaApp.instance.container.clientFactory.apiForActive()
     var data by remember { mutableStateOf<AnalyticsUsage?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }

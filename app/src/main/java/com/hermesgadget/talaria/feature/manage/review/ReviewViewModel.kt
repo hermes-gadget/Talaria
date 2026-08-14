@@ -78,7 +78,7 @@ class ReviewViewModel(
     api: HermesApi? = null,
     private val apiProvider: (ConnectionScope?) -> HermesApi = { scope ->
         scope?.snapshot?.let { TalariaApp.instance.container.clientFactory.api(it) }
-            ?: TalariaApp.instance.container.clientFactory.api()
+            ?: TalariaApp.instance.container.clientFactory.apiForActive()
     },
     private val scopeFlow: StateFlow<ConnectionScope?>? = null,
 ) : ViewModel() {
@@ -307,7 +307,7 @@ class ReviewViewModel(
                 return ReviewViewModel(
                     apiProvider = { scope ->
                         scope?.snapshot?.let { container.clientFactory.api(it) }
-                            ?: container.clientFactory.api()
+                            ?: container.clientFactory.apiForActive()
                     },
                     scopeFlow = container.connectionStore.scope,
                 ) as T

@@ -131,7 +131,7 @@ class ArtifactsViewModel(
         TalariaApp.instance.container.hermesRepository.fsReadText(path)
     },
     private val readDataUrl: suspend (String) -> FsDataUrl = { path ->
-        TalariaApp.instance.container.clientFactory.api()
+        TalariaApp.instance.container.clientFactory.apiForActive()
             .fsReadDataUrlBody(path)
             .decodeJsonResponse<FsDataUrl>()
     },
@@ -570,7 +570,7 @@ class ArtifactsViewModel(
                     readTextSnapshot = { snapshot, path -> repository.fsReadText(path, snapshot) },
                     readDataUrlSnapshot = { snapshot, path ->
                         val api = snapshot?.let { container.clientFactory.api(it) }
-                            ?: container.clientFactory.api()
+                            ?: container.clientFactory.apiForActive()
                         api.fsReadDataUrlBody(path).decodeJsonResponse<FsDataUrl>()
                     },
                 ) as T
