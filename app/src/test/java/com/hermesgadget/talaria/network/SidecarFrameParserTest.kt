@@ -206,4 +206,28 @@ class SidecarFrameParserTest {
         assertNull(SidecarFrameParser.parse("not json"))
         assertNull(SidecarFrameParser.parse("""{"no":"type"}"""))
     }
+
+    /** B13: object/array values in scalar slots must classify, not throw. */
+    @Test
+    fun objectValuedScalarFieldsDoNotCrashTheClassifier() {
+        // Object-valued type/event: unusable as a type, must be contained.
+        assertNull(SidecarFrameParser.parse("""{"type":{"nested":"object"}}"""))
+        // Object-valued session_id with a valid type: contained, null field.
+        val broken = SidecarFrameParser.parse(
+            """{"type":"message.complete","session_id":{"bad":"shape"},"payload":{"text":"hi"}}""",
+        )
+        assertTrue(broken is HermesSideEvent.MessageComplete)
+        assertNull((broken as HermesSideEvent.MessageComplete).sessionId)
+        // Array-valued usage payload: contained (Raw or Usage, never a throw).
+        val usage = SidecarFrameParser.parse(
+            """{"type":"usage.update","payload":{"usage":["not","an","object"]}}""",
+        )
+        assertTrue(usage != null)
+        // Object-valued choices: no crash, no choices.
+        val prompt = SidecarFrameParser.parse(
+            """{"type":"approval.request","payload":{"message":"m","choices":{"0":"once"}}}""",
+        )
+        assertTrue(prompt is HermesSideEvent.Prompt)
+        assertTrue((prompt as HermesSideEvent.Prompt).choices.isEmpty())
+    }
 }

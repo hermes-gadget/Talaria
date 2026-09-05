@@ -83,4 +83,65 @@ class LossAwareIngressTest {
         assertFalse(metrics.toString().contains("status-old"))
         assertTrue(queue.poll() == null)
     }
+
+    @Test
+    fun `B14 merged coalesce accumulates ordered text instead of dropping it`() {
+        data class Delta(val sessionId: String, val text: String)
+
+        val queue = LossAwareIngress<Delta>(
+            capacity = 8,
+            retention = { IngressRetention.REPLACEABLE },
+            coalesceKey = { it.sessionId },
+            merge = { old, new -> Delta(old.sessionId, old.text + new.text) },
+        )
+        queue.offer(Delta("s1", "Hello, "))
+        assertEquals(IngressOffer.COALESCED, queue.offer(Delta("s1", "wor")))
+        assertEquals(IngressOffer.COALESCED, queue.offer(Delta("s1", "ld!")))
+
+        val drained = buildList {
+            while (true) add(queue.poll() ?: break)
+        }
+        // Earlier chunks survive: nothing was replaced away.
+        assertEquals(listOf(Delta("s1", "Hello, world!")), drained)
+    }
+
+    @Test
+    fun `B14 merge returning null falls back to replacement`() {
+        data class Delta(val sessionId: String, val text: String)
+
+        val queue = LossAwareIngress<Delta>(
+            capacity = 8,
+            retention = { IngressRetention.REPLACEABLE },
+            coalesceKey = { it.sessionId },
+            merge = { _, _ -> null },
+        )
+        queue.offer(Delta("s1", "old"))
+        assertEquals(IngressOffer.COALESCED, queue.offer(Delta("s1", "new")))
+
+        val drained = buildList {
+            while (true) add(queue.poll() ?: break)
+        }
+        assertEquals(listOf(Delta("s1", "new")), drained)
+    }
+
+    @Test
+    fun `B14 merge overflow beyond budget evicts and reports drop`() {
+        data class Delta(val sessionId: String, val text: String)
+
+        val queue = LossAwareIngress<Delta>(
+            capacity = 2,
+            retention = { IngressRetention.REPLACEABLE },
+            coalesceKey = { it.sessionId },
+            merge = { old, new -> Delta(old.sessionId, old.text + new.text) },
+            sizeOf = { it.text.length },
+            mergeBudget = 8,
+        )
+        queue.offer(Delta("s1", "123456"))
+        // Merged length 12 exceeds budget 8: the merged result must be refused.
+        assertEquals(
+            IngressOffer.DROPPED_REPLACEABLE,
+            queue.offer(Delta("s1", "789012")),
+        )
+        assertEquals(1, queue.metrics().droppedReplaceable)
+    }
 }

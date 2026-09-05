@@ -62,6 +62,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
@@ -93,6 +95,43 @@ class HermesRepository(
 
     private val json = JsonConfig.json
     private fun connId() = connectionStore.activeProfile()?.scopeId() ?: "none"
+
+    /**
+     * Per-session transcript ordering (B10): concurrent loads of the same
+     * session must not interleave "fetch, replace Room rows, publish
+     * fingerprint" across generations — an older slow response must never
+     * overwrite a newer completed transcript. One mutex per session key,
+     * created under [transcriptLocksGuard]; the map is bounded by removing
+     * entries when the last concurrent holder leaves, so it cannot grow with
+     * every session ever opened.
+     */
+    private val transcriptLocksGuard = Any()
+    private val transcriptLocks = HashMap<String, Mutex>()
+    private val transcriptLockCounts = HashMap<String, Int>()
+
+    private suspend fun <T> withTranscriptLock(key: String, block: suspend () -> T): T {
+        val mutex = synchronized(transcriptLocksGuard) {
+            transcriptLocks.getOrPut(key) { Mutex() }.also { locked ->
+                transcriptLockCounts[key] = (transcriptLockCounts[key] ?: 0) + 1
+            }
+        }
+        try {
+            return mutex.withLock { block() }
+        } finally {
+            synchronized(transcriptLocksGuard) {
+                val remaining = (transcriptLockCounts[key] ?: 1) - 1
+                if (remaining <= 0) {
+                    transcriptLockCounts.remove(key)
+                    // Remove only if this entry is still the one we locked.
+                    if (transcriptLocks[key] === mutex && !mutex.isLocked) {
+                        transcriptLocks.remove(key)
+                    }
+                } else {
+                    transcriptLockCounts[key] = remaining
+                }
+            }
+        }
+    }
 
     /** Capture the destination, REST facade, and cache scope as one operation boundary. */
     private fun captureOperation(snapshot: ConnectionSnapshot? = null): BoundOperation {
@@ -269,17 +308,20 @@ class HermesRepository(
     ): Pair<List<SessionSummary>, Boolean> {
         val first = fetchSessionsPage(operation, source = source, limit = limit, offset = 0)
         // A filtered list is never authoritative for the entire session cache.
-        if (source != null) return first.sessions to false
+        if (source != null) return first.page.sessions to false
+        // B09: an untrusted page (dropped rows, unknown shape) must never
+        // authorize pruning the cached sessions — reconcile only upserts.
+        if (!first.decodeComplete) return first.page.sessions to false
 
         val pageLimit = limit.coerceAtLeast(1)
-        val total = first.total
-        if (total != null && total <= first.sessions.distinctBy { it.id }.size) {
-            return first.sessions.distinctBy { it.id } to true
+        val total = if (first.totalTrusted) first.page.total else null
+        if (total != null && total <= first.page.sessions.distinctBy { it.id }.size) {
+            return first.page.sessions.distinctBy { it.id } to true
         }
 
-        val all = first.sessions.toMutableList()
+        val all = first.page.sessions.toMutableList()
         var offset = all.size
-        var complete = total == null && first.sessions.size < pageLimit
+        var complete = total == null && first.page.sessions.size < pageLimit
         while (!complete && (total == null || offset < total)) {
             val requestLimit = if (total == null) {
                 pageLimit
@@ -292,17 +334,23 @@ class HermesRepository(
                 limit = requestLimit,
                 offset = offset,
             )
-            if (page.sessions.isEmpty()) {
+            // B09: keep successfully decoded rows, but a page with dropped
+            // rows or an unknown shape voids completeness for the whole fetch.
+            if (!page.decodeComplete) {
+                all += page.page.sessions
+                return all.distinctBy { it.id } to false
+            }
+            if (page.page.sessions.isEmpty()) {
                 complete = true
                 break
             }
             val previousIds = all.asSequence().map { it.id }.toSet()
-            all += page.sessions
-            offset += page.sessions.size
+            all += page.page.sessions
+            offset += page.page.sessions.size
             // If an endpoint ignores offset and repeats a full page, do not
             // claim completeness and accidentally prune valid cached rows.
-            val madeProgress = page.sessions.any { it.id !in previousIds }
-            complete = page.sessions.size < requestLimit ||
+            val madeProgress = page.page.sessions.any { it.id !in previousIds }
+            complete = page.page.sessions.size < requestLimit ||
                 (total != null && all.distinctBy { it.id }.size >= total)
             if (!madeProgress) {
                 complete = false
@@ -320,7 +368,9 @@ class HermesRepository(
     ): Result<com.hermesgadget.talaria.domain.model.SessionsPage> {
         val operation = captureOperation(snapshot)
         return withContext(Dispatchers.IO) {
-            suspendResult { fetchSessionsPage(operation, source = source, limit = limit, offset = offset) }
+            suspendResult {
+                fetchSessionsPage(operation, source = source, limit = limit, offset = offset).page
+            }
         }
     }
 
@@ -329,7 +379,7 @@ class HermesRepository(
         source: String? = null,
         limit: Int = 50,
         offset: Int = 0,
-    ): com.hermesgadget.talaria.domain.model.SessionsPage {
+    ): TrustedSessionsPage {
         val element = operation.api.getSessions(
             limit = limit,
             offset = offset,
@@ -340,25 +390,78 @@ class HermesRepository(
     }
 
     private fun parseSessions(element: JsonElement): List<SessionSummary> =
-        parseSessionsPage(element).sessions
+        parseSessionsPage(element).page.sessions
 
-    private fun parseSessionsPage(element: JsonElement): com.hermesgadget.talaria.domain.model.SessionsPage =
+    /**
+     * Decode a sessions page together with how much of it can be trusted
+     * (B09). A page is only decode-complete when every row parsed; an
+     * unknown shape (no recognizable array) or any dropped row marks the
+     * result untrusted so callers never reconcile destructively against a
+     * partial payload. A bare array conveys rows but no server total, so its
+     * total is untrusted for completeness decisions.
+     */
+    internal data class TrustedSessionsPage(
+        val page: com.hermesgadget.talaria.domain.model.SessionsPage,
+        val decodeComplete: Boolean,
+        val totalTrusted: Boolean,
+    )
+
+    private fun parseSessionsPage(element: JsonElement): TrustedSessionsPage =
         when (element) {
-            is JsonArray -> com.hermesgadget.talaria.domain.model.SessionsPage(
-                sessions = element.map { json.decodeFromJsonElement(it) },
-                total = element.size,
-            )
+            is JsonArray -> {
+                var dropped = 0
+                val sessions = element.mapNotNull { row ->
+                    runCatching { json.decodeFromJsonElement<SessionSummary>(row) }
+                        .onFailure { dropped += 1 }
+                        .getOrNull()
+                }
+                TrustedSessionsPage(
+                    page = com.hermesgadget.talaria.domain.model.SessionsPage(
+                        sessions = sessions,
+                        total = element.size,
+                    ),
+                    decodeComplete = dropped == 0,
+                    // The bare array's length is this page's row count, not a
+                    // server-acknowledged total: never use it to claim that
+                    // reconciliation has seen every session.
+                    totalTrusted = false,
+                )
+            }
             is JsonObject -> {
                 val arr = element["sessions"]?.jsonArray ?: element["results"]?.jsonArray
-                val sessions = arr?.mapNotNull {
-                    runCatching { json.decodeFromJsonElement<SessionSummary>(it) }.getOrNull()
-                } ?: emptyList()
-                val total = element["total"]?.let {
-                    runCatching { it.toString().trim('"').toInt() }.getOrNull()
+                if (arr == null) {
+                    // Unknown shape: an empty page is NOT a trustworthy answer
+                    // (an error object must never read as "zero sessions").
+                    TrustedSessionsPage(
+                        page = com.hermesgadget.talaria.domain.model.SessionsPage(),
+                        decodeComplete = false,
+                        totalTrusted = false,
+                    )
+                } else {
+                    var dropped = 0
+                    val sessions = arr.mapNotNull { row ->
+                        runCatching { json.decodeFromJsonElement<SessionSummary>(row) }
+                            .onFailure { dropped += 1 }
+                            .getOrNull()
+                    }
+                    val total = element["total"]?.let {
+                        runCatching { it.toString().trim('"').toInt() }.getOrNull()
+                    }
+                    TrustedSessionsPage(
+                        page = com.hermesgadget.talaria.domain.model.SessionsPage(
+                            sessions = sessions,
+                            total = total,
+                        ),
+                        decodeComplete = dropped == 0,
+                        totalTrusted = total != null,
+                    )
                 }
-                com.hermesgadget.talaria.domain.model.SessionsPage(sessions = sessions, total = total)
             }
-            else -> com.hermesgadget.talaria.domain.model.SessionsPage()
+            else -> TrustedSessionsPage(
+                page = com.hermesgadget.talaria.domain.model.SessionsPage(),
+                decodeComplete = false,
+                totalTrusted = false,
+            )
         }
 
     /** Single-session summary (model, tokens, live flag) for the detail header. */
@@ -393,45 +496,62 @@ class HermesRepository(
         val boundSnapshot = operation.snapshot
         return withContext(Dispatchers.IO) {
             suspendResult {
-                val profile = profileName ?: boundSnapshot.managementProfile
-                val response = operation.api
-                    .getSessionMessages(sessionId, profile = profile)
-                val fingerprint = TranscriptFingerprintFactory.from(response)
-                val key = "${boundSnapshot.connectionId}|$profile|${boundSnapshot.baseUrl}|$sessionId"
-                val previous = transcriptFingerprints.peek(
-                    key,
-                    TRANSCRIPT_FINGERPRINT_TTL_MS,
-                ) as? TranscriptFingerprint
-                val contentChanged = TranscriptFingerprintFactory.contentChanged(previous, fingerprint)
-
-                if (contentChanged && profile == boundSnapshot.managementProfile) {
-                    val cid = boundSnapshot.scopeId
-                    val rows = response.messages.mapIndexed { index, message ->
-                        CachedMessageEntity(
-                            key = "$sessionId-$index",
-                            sessionId = sessionId,
-                            connectionId = cid,
-                            role = message.role,
-                            content = message.content,
-                            timestamp = message.timestamp,
-                            ordinal = index,
-                        )
-                    }
-                    val existing = db.messages().getSessionMessages(cid, sessionId)
-                    if (existing != rows) {
-                        // The DAO transaction makes the replacement atomic; a
-                        // failure leaves the previous transcript observable.
-                        db.messages().replaceSessionMessages(cid, sessionId, rows)
-                    }
+                // B10: serialize fetch→replace→fingerprint per session so a
+                // slow older response can never commit after a newer one.
+                withTranscriptLock("${boundSnapshot.connectionId}|$sessionId") {
+                    loadMessagesSnapshotLocked(
+                        operation = operation,
+                        sessionId = sessionId,
+                        profileName = profileName,
+                    )
                 }
-                transcriptFingerprints.put(key, fingerprint, TRANSCRIPT_FINGERPRINT_TTL_MS)
-                TranscriptSnapshot(
-                    messages = response.messages,
-                    fingerprint = fingerprint,
-                    contentChanged = contentChanged,
-                )
             }
         }
+    }
+
+    private suspend fun loadMessagesSnapshotLocked(
+        operation: BoundOperation,
+        sessionId: String,
+        profileName: String?,
+    ): TranscriptSnapshot {
+        val boundSnapshot = operation.snapshot
+        val profile = profileName ?: boundSnapshot.managementProfile
+        val response = operation.api
+            .getSessionMessages(sessionId, profile = profile)
+        val fingerprint = TranscriptFingerprintFactory.from(response)
+        val key = "${boundSnapshot.connectionId}|$profile|${boundSnapshot.baseUrl}|$sessionId"
+        val previous = transcriptFingerprints.peek(
+            key,
+            TRANSCRIPT_FINGERPRINT_TTL_MS,
+        ) as? TranscriptFingerprint
+        val contentChanged = TranscriptFingerprintFactory.contentChanged(previous, fingerprint)
+
+        if (contentChanged && profile == boundSnapshot.managementProfile) {
+            val cid = boundSnapshot.scopeId
+            val rows = response.messages.mapIndexed { index, message ->
+                CachedMessageEntity(
+                    key = "$sessionId-$index",
+                    sessionId = sessionId,
+                    connectionId = cid,
+                    role = message.role,
+                    content = message.content,
+                    timestamp = message.timestamp,
+                    ordinal = index,
+                )
+            }
+            val existing = db.messages().getSessionMessages(cid, sessionId)
+            if (existing != rows) {
+                // The DAO transaction makes the replacement atomic; a
+                // failure leaves the previous transcript observable.
+                db.messages().replaceSessionMessages(cid, sessionId, rows)
+            }
+        }
+        transcriptFingerprints.put(key, fingerprint, TRANSCRIPT_FINGERPRINT_TTL_MS)
+        return TranscriptSnapshot(
+            messages = response.messages,
+            fingerprint = fingerprint,
+            contentChanged = contentChanged,
+        )
     }
 
     suspend fun getConfig(): Result<JsonObject> = cached("config") { api -> api.getConfig() }

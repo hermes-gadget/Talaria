@@ -22,6 +22,7 @@ import com.hermesgadget.talaria.domain.model.AuthMode
 import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.Response
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 
 /**
  * Attaches Hermes dashboard auth for one immutable connection snapshot.
@@ -50,8 +51,15 @@ class AuthInterceptor(
             AuthMode.SESSION_TOKEN -> snapshot.sessionToken
                 ?.takeIf { it.isNotBlank() && request.header(SESSION_HEADER) == null }
                 ?.let { raw ->
-                req.header(SESSION_HEADER, sanitizeToken(raw))
-            }
+                    val token = sanitizeToken(raw)
+                    // B15: a non-header-safe stored credential must fail the
+                    // call at this boundary, not throw on the OkHttp
+                    // dispatcher thread.
+                    if (!isHeaderSafeCredential(token)) {
+                        return unsendableCredentialResponse(request, "session token")
+                    }
+                    req.header(SESSION_HEADER, token)
+                }
             AuthMode.BASIC -> {
                 if (!isPasswordBootstrapPath(request.url.encodedPath)) {
                     passwordSessionManager(snapshot, request.url)
@@ -59,16 +67,28 @@ class AuthInterceptor(
                 snapshot.sessionToken
                     ?.takeIf { it.isNotBlank() && request.header(SESSION_HEADER) == null }
                     ?.let { raw ->
-                    req.header(SESSION_HEADER, sanitizeToken(raw))
-                }
+                        val token = sanitizeToken(raw)
+                        if (!isHeaderSafeCredential(token)) {
+                            return unsendableCredentialResponse(request, "session token")
+                        }
+                        req.header(SESSION_HEADER, token)
+                    }
             }
             AuthMode.BEARER -> snapshot.bearerToken?.takeIf { it.isNotBlank() }?.let {
-                req.header("Authorization", "Bearer ${sanitizeToken(it)}")
+                val token = sanitizeToken(it)
+                if (!isHeaderSafeCredential(token)) {
+                    return unsendableCredentialResponse(request, "bearer token")
+                }
+                req.header("Authorization", "Bearer $token")
             }
             AuthMode.OIDC_BROWSER -> {
                 oidcTokenRefresher(snapshot)?.let {
-                    oidcToken = it
-                    req.header("Authorization", "Bearer ${sanitizeToken(it)}")
+                    val token = sanitizeToken(it)
+                    if (!isHeaderSafeCredential(token)) {
+                        return unsendableCredentialResponse(request, "bearer token")
+                    }
+                    oidcToken = token
+                    req.header("Authorization", "Bearer $token")
                 }
             }
             // NONE is intentionally credential-free. A retained token must not
@@ -115,6 +135,37 @@ class AuthInterceptor(
                 }
             }
             return stripped.trim()
+        }
+
+        /**
+         * B15: header values must be printable ASCII. sanitizeToken removes
+         * C0/DEL but a stored credential can still carry non-ASCII characters,
+         * and OkHttp 4.12 rejects those in header values with
+         * IllegalArgumentException — thrown on the dispatcher thread, outside
+         * the interceptor's IOException conversion boundary. Callers must check
+         * this before building a credential header and surface a typed
+         * recoverable error instead.
+         */
+        fun isHeaderSafeCredential(value: String): Boolean =
+            value.isNotEmpty() && value.all { it.code in 0x20..0x7e }
+
+        /**
+         * Synthesized response for a stored credential that cannot be placed
+         * in a header. Fails the call at the boundary (no network side
+         * effects) with a typed, diagnosable status instead of throwing.
+         */
+        fun unsendableCredentialResponse(request: okhttp3.Request, credentialKind: String): okhttp3.Response {
+            val body = okhttp3.ResponseBody.create(
+                "application/json; charset=utf-8".toMediaTypeOrNull(),
+                """{"ok":false,"error":"credential_unsendable","credential":"$credentialKind"}""",
+            )
+            return okhttp3.Response.Builder()
+                .request(request)
+                .protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(581)
+                .message("Stored $credentialKind contains characters that cannot be sent in an HTTP header")
+                .body(body)
+                .build()
         }
 
         private fun isPasswordBootstrapPath(path: String): Boolean =

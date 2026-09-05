@@ -324,7 +324,17 @@ fun ChatScreen(
                 .map { it.trim().lowercase() }
                 .filter { it.isNotEmpty() && it != "deny" }
                 .distinct()
-            offered.ifEmpty { listOf(ApprovalChoicePolicy.SAFE_ONESHOT_CHOICES.first()) }
+            // S04: distinguish "server offered nothing" (safe one-shot button
+            // is legitimate) from "server offered a nonempty list with no
+            // affirmative option" (deny-only) — the latter must NOT get an
+            // invented Approve button, or deny-only prompts can be approved.
+            offered.ifEmpty {
+                if (prompt.choices.any { it.isNotBlank() }) {
+                    emptyList()
+                } else {
+                    listOf(ApprovalChoicePolicy.SAFE_ONESHOT_CHOICES.first())
+                }
+            }
         }
         AlertDialog(
             onDismissRequest = {

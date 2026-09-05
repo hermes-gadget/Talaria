@@ -135,6 +135,77 @@ class SecureConnectionStoreRecoveryTest {
         assertEquals("keep-car-host-trust", storage.unrelatedEncryptedData)
     }
 
+    @Test
+    fun secretReadFailureInvalidatesThePublishedScopeWithAGenerationBump() {
+        // B04: a runtime credential-read failure must not leave the previous
+        // credential-bearing ConnectionScope published. The scope flow must
+        // emit a bumped-generation null so observers re-run.
+        var readFails = false
+        val data = releasedFixture()
+        // readFails is captured by reference: the throwing stub is installed on
+        // the SAME mock instance the store opens at construction, and only
+        // starts throwing once the flag flips.
+        val storage = FakeStorage {
+            val prefs = preferences(data)
+            every { prefs.getString(match { it.startsWith("secret_") }, any()) } answers {
+                if (readFails) throw AEADBadTagException("ciphertext fixture")
+                data[firstArg<String>()] as? String ?: secondArg()
+            }
+            prefs
+        }
+        val store = SecureConnectionStore(storage)
+        val scopeBefore = store.scope.value
+        assertEquals("released", scopeBefore?.snapshot?.connectionId)
+
+        readFails = true
+        assertNull(store.activeSnapshot())
+        assertNull(store.secretsFor("released"))
+
+        assertNull("stale credential scope must be invalidated", store.scope.value)
+        val state = store.state.value
+        assertTrue(state is SecureConnectionStoreState.RecoverableCorruption)
+        // Raw state is preserved for recovery.
+        assertEquals(RELEASED_PROFILES, data[SecureConnectionStore.KEY_PROFILES])
+        assertEquals(RELEASED_SECRETS, data[SecureConnectionStore.secretKeyForTest("released")])
+        assertEquals(0, storage.resetCount)
+    }
+
+    @Test
+    fun consentCasRejectsWhenTheConnectionChangedSinceTheSnapshot() {
+        // B06: recordCleartextConsentIfSnapshot is a compare-and-set. If the
+        // stored profile changed since `expected` was read, it must fail
+        // instead of overwriting the newer state.
+        val data = releasedFixture()
+        val storage = FakeStorage { preferences(data) }
+        val store = SecureConnectionStore(storage)
+        val expected = store.snapshotFor("released")!!
+
+        // Concurrent edit lands after the snapshot was taken.
+        store.setActive("released")
+        val edited = store.activeProfile()!!.copy(name = "Renamed mid-flight")
+        store.upsert(edited, store.secretsFor("released"))
+
+        val applied = store.recordCleartextConsentIfSnapshot(expected, "http://host:1")
+        assertFalse("CAS must reject a changed profile", applied)
+        assertEquals("Renamed mid-flight", store.activeProfile()?.name)
+        assertEquals(false, store.activeProfile()?.cleartextConsentRecorded)
+    }
+
+    @Test
+    fun consentCasRejectsWhenTheConnectionWasDeleted() {
+        val data = releasedFixture()
+        val storage = FakeStorage { preferences(data) }
+        val store = SecureConnectionStore(storage)
+        val expected = store.snapshotFor("released")!!
+
+        store.delete("released")
+
+        val applied = store.recordCleartextConsentIfSnapshot(expected, "http://host:1")
+        assertFalse("CAS must not resurrect a deleted connection", applied)
+        assertTrue(store.profiles.value.isEmpty())
+        assertTrue(store.state.value is SecureConnectionStoreState.Available)
+    }
+
     private class FakeStorage(private val opener: () -> SharedPreferences) : SecureConnectionStorage {
         var resetCount = 0
         override fun open(): SharedPreferences = opener()

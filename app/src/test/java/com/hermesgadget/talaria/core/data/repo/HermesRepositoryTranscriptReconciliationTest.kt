@@ -26,7 +26,9 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -232,6 +234,59 @@ class HermesRepositoryTranscriptReconciliationTest {
             assertEquals(
                 "last good",
                 database.messages().getSessionMessages(snapshot.scopeId, sessionId).single().content,
+            )
+        }
+
+    @Test
+    fun `older slow transcript response cannot roll back a newer completed one (B10)`() =
+        runTest(StandardTestDispatcher()) {
+            val sessionId = "racy"
+            seed(sessionId)
+            val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+            // Newer generation arrives first and completes immediately.
+            coEvery {
+                api.getSessionMessages("newer", profile = snapshot.managementProfile)
+            } returns SessionMessagesResponse(
+                messages = listOf(SessionMessage(role = "assistant", content = "newest")),
+                revision = "2",
+                message_count = 1,
+                hash = "newest-hash",
+            )
+            // Older generation starts first but only finishes after being released.
+            coEvery {
+                api.getSessionMessages("older", profile = snapshot.managementProfile)
+            } coAnswers {
+                gate.await()
+                SessionMessagesResponse(
+                    messages = listOf(SessionMessage(role = "assistant", content = "oldest")),
+                    revision = "1",
+                    message_count = 1,
+                    hash = "oldest-hash",
+                )
+            }
+
+            val slow = launch { repository.loadMessagesSnapshot("older") }
+            // Give the slow request a chance to start and acquire the lock.
+            runCurrent()
+            val fast = repository.loadMessagesSnapshot("newer")
+
+            // While the older fetch is parked, the newer one must have
+            // committed: per-session serialization makes the fast caller wait
+            // only for the in-flight older fetch, but its OWN fingerprint
+            // (newest) wins the final publication order.
+            gate.complete(Unit)
+            fast.getOrThrow()
+            slow.join()
+
+            assertEquals(
+                "the last completed publication must be the newer transcript",
+                "newest",
+                database.messages().getSessionMessages(snapshot.scopeId, "newer").single().content,
+            )
+            assertEquals(
+                "oldest",
+                database.messages().getSessionMessages(snapshot.scopeId, "older").single().content,
             )
         }
 

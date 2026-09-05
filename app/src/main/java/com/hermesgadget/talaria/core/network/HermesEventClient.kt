@@ -44,7 +44,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.Request
 import okhttp3.OkHttpClient
@@ -126,11 +125,25 @@ class HermesEventClient(
     /**
      * Critical events occupy measured FIFO capacity and are never evicted.
      * Replaceable status/progress/delta events are coalesced by [eventKey].
+     * B14: same-session MessageDelta arrivals are merged (text concatenated)
+     * so queued chunks never lose earlier text; merge overflow beyond the
+     * byte budget drops the entry and the consumer reconciles authoritatively.
      */
     private val eventIngress = LossAwareIngress<HermesEventEnvelope>(
         capacity = EVENT_INGRESS_CAPACITY,
         retention = { eventRetention(it.event) },
         coalesceKey = { eventKey(it.event) },
+        merge = { old, new ->
+            val o = old.event
+            val n = new.event
+            if (o is HermesSideEvent.MessageDelta && n is HermesSideEvent.MessageDelta &&
+                o.text.length + n.text.length <= MAX_MERGED_DELTA_CHARS
+            ) {
+                new.copy(event = o.copy(text = o.text + n.text))
+            } else {
+                null
+            }
+        },
     )
     /** A wake-up channel carries no event payload and is safe to conflate. */
     private val eventWake = Channel<Unit>(Channel.CONFLATED)
@@ -439,8 +452,8 @@ class HermesEventClient(
         sendRpc(method, params) { result ->
             val root = result as? JsonObject
             val success = when (kind) {
-                PromptKind.APPROVAL -> root?.get("resolved")?.jsonPrimitive?.booleanOrNull != false && root != null
-                else -> root?.get("status")?.jsonPrimitive?.contentOrNull in setOf("ok", "expired")
+                PromptKind.APPROVAL -> root?.get("resolved")?.boolScalarOrNull() != false && root != null
+                else -> root?.get("status")?.scalarOrNull() in setOf("ok", "expired")
             }
             onResult(success)
         }
@@ -457,11 +470,11 @@ class HermesEventClient(
                 onResult(emptyList())
                 return@sendRpc
             }
-            val replaceFrom = root["replace_from"]?.jsonPrimitive?.intOrNull ?: 1
+            val replaceFrom = root["replace_from"]?.intScalarOrNull() ?: 1
             val prefix = if (replaceFrom > 1) text.take(replaceFrom.coerceAtMost(text.length)) else ""
             val completions = (root["items"] as? JsonArray).orEmpty().mapNotNull { element ->
                 val item = element as? JsonObject ?: return@mapNotNull null
-                val raw = item["text"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                val raw = item["text"]?.scalarOrNull() ?: return@mapNotNull null
                 val replacement = when {
                     replaceFrom > 1 -> prefix + raw
                     raw.startsWith('/') -> raw
@@ -469,8 +482,8 @@ class HermesEventClient(
                 }
                 SidecarSlashCompletion(
                     replacement = replacement,
-                    description = item["meta"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    kind = item["kind"]?.jsonPrimitive?.contentOrNull,
+                    description = item["meta"]?.scalarOrNull().orEmpty(),
+                    kind = item["kind"]?.scalarOrNull(),
                 )
             }
             onResult(completions)
@@ -627,11 +640,11 @@ class HermesEventClient(
                     // model notifies on change, so ask once on connect.
                     sendRpc(registration, "model.info") { result ->
                         val obj = (result as? JsonObject) ?: return@sendRpc
-                        val name = obj["model"]?.jsonPrimitive?.contentOrNull
-                            ?: obj["name"]?.jsonPrimitive?.contentOrNull
+                        val name = obj["model"]?.scalarOrNull()
+                            ?: obj["name"]?.scalarOrNull()
                             ?: return@sendRpc
                         publish(
-                            HermesSideEvent.Model(name, obj["connected"]?.jsonPrimitive?.booleanOrNull),
+                            HermesSideEvent.Model(name, obj["connected"]?.boolScalarOrNull()),
                             registration,
                         )
                     }
@@ -721,7 +734,24 @@ class HermesEventClient(
     private fun parseRpc(text: String, registration: SocketRegistration) {
         if (!isCurrentRegistration(registration)) return
         val el = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
-        val id = el["id"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+        // B13: a well-formed JSON object with hostile field types (an
+        // object-valued id, a non-string method, an array in a scalar slot)
+        // must surface as a contained protocol error, never escape into the
+        // OkHttp reader thread.
+        val contained = runCatching { dispatchRpc(el, registration) }
+        if (contained.isFailure) {
+            publish(
+                HermesSideEvent.TransportError(
+                    registration.name,
+                    "malformed sidecar frame: ${contained.exceptionOrNull()?.javaClass?.simpleName}",
+                ),
+                registration,
+            )
+        }
+    }
+
+    private fun dispatchRpc(el: JsonObject, registration: SocketRegistration) {
+        val id = el["id"]?.scalarOrNull()?.toLongOrNull()
         if (id != null && el.containsKey("result")) {
             pendingRpc.remove(id)?.let { pending ->
                 pending.timeout.cancel()
@@ -997,6 +1027,12 @@ class HermesEventClient(
         const val EVENT_INGRESS_CAPACITY = 256
         /** Replay matches ingress capacity so an accepted critical burst is not truncated. */
         const val EVENT_REPLAY_CAPACITY = EVENT_INGRESS_CAPACITY
+        /**
+         * B14: ceiling for merged MessageDelta text in one queued entry. A
+         * merge beyond this budget returns null → entry replaced → consumer
+         * sees the newest chunk and the UI falls back to reconciliation.
+         */
+        const val MAX_MERGED_DELTA_CHARS = 64 * 1024
         private val TERMINAL_CLOSE_CODES = setOf(
             4401,
             4403,
@@ -1013,8 +1049,8 @@ class HermesEventClient(
         fun addPairs(pairs: JsonElement?, category: String) {
             (pairs as? JsonArray).orEmpty().forEach { pairElement ->
                 val pair = pairElement as? JsonArray ?: return@forEach
-                val command = pair.getOrNull(0)?.jsonPrimitive?.contentOrNull ?: return@forEach
-                val description = pair.getOrNull(1)?.jsonPrimitive?.contentOrNull.orEmpty()
+                val command = pair.getOrNull(0)?.scalarOrNull() ?: return@forEach
+                val description = pair.getOrNull(1)?.scalarOrNull().orEmpty()
                 if (!command.startsWith('/')) return@forEach
                 commands.putIfAbsent(
                     command.lowercase(),
@@ -1025,7 +1061,7 @@ class HermesEventClient(
 
         (root["categories"] as? JsonArray).orEmpty().forEach { sectionElement ->
             val section = sectionElement as? JsonObject ?: return@forEach
-            val category = section["name"]?.jsonPrimitive?.contentOrNull.orEmpty().ifBlank { "Commands" }
+            val category = section["name"]?.scalarOrNull().orEmpty().ifBlank { "Commands" }
             addPairs(section["pairs"], category)
         }
         // Quick commands and skills can be present only in the flat list.
@@ -1038,15 +1074,38 @@ class HermesEventClient(
  * Pure classifier for sidecar frames (both flat and JSON-RPC `event` envelopes).
  * Kept side-effect-free so it can be unit-tested without sockets.
  */
+/**
+ * B13: null-safe scalar reads. `jsonPrimitive` throws when a peer sends an
+ * object/array where a scalar belongs; these accessors yield null instead so
+ * malformed shapes classify into contained protocol errors rather than
+ * crashing the socket reader.
+ */
+private fun JsonElement?.scalarOrNull(): String? = when (this) {
+    is JsonPrimitive -> contentOrNull
+    else -> null
+}
+
+private fun JsonElement?.boolScalarOrNull(): Boolean? = (this as? JsonPrimitive)?.booleanOrNull
+
+private fun JsonElement?.intScalarOrNull(): Int? = (this as? JsonPrimitive)?.intOrNull
+
 object SidecarFrameParser {
     fun parse(raw: String): HermesSideEvent? =
         runCatching { JsonConfig.json.parseToJsonElement(raw).jsonObject }.getOrNull()?.let { parse(it) }
 
-    fun parse(el: JsonObject): HermesSideEvent? {
+    fun parse(el: JsonObject): HermesSideEvent? = try {
+        parseUnsafe(el)
+    } catch (failure: IllegalArgumentException) {
+        // B13: classification is total — malformed shapes yield null instead
+        // of throwing into the frame reader.
+        null
+    }
+
+    private fun parseUnsafe(el: JsonObject): HermesSideEvent? {
         // Unwrap a JSON-RPC envelope. `event`-method frames carry the real event
         // name in params.type (session.info, sessions.changed) — keep it rather
         // than clobbering with the outer "event" method name.
-        val method = el["method"]?.jsonPrimitive?.contentOrNull
+        val method = el["method"]?.scalarOrNull()
         val frame: JsonObject = when {
             method == null -> el
             method == "event" -> (el["params"] as? JsonObject) ?: return null
@@ -1055,18 +1114,18 @@ object SidecarFrameParser {
                 JsonObject(params + ("type" to JsonPrimitive(method)))
             }
         }
-        val type = frame["type"]?.jsonPrimitive?.contentOrNull
-            ?: frame["event"]?.jsonPrimitive?.contentOrNull
+        val type = frame["type"]?.scalarOrNull()
+            ?: frame["event"]?.scalarOrNull()
             ?: return null
         // Gateway event envelopes keep event-specific fields under `payload`.
         // Flat frames used by older Hermes versions keep them at the top level.
         val payload = (frame["payload"] as? JsonObject) ?: frame
-        val sessionId = frame["session_id"]?.jsonPrimitive?.contentOrNull
-            ?: payload["session_id"]?.jsonPrimitive?.contentOrNull
-        val revision = payload["revision"]?.jsonPrimitive?.contentOrNull
-            ?: payload["version"]?.jsonPrimitive?.contentOrNull
-            ?: frame["revision"]?.jsonPrimitive?.contentOrNull
-            ?: frame["version"]?.jsonPrimitive?.contentOrNull
+        val sessionId = frame["session_id"]?.scalarOrNull()
+            ?: payload["session_id"]?.scalarOrNull()
+        val revision = payload["revision"]?.scalarOrNull()
+            ?: payload["version"]?.scalarOrNull()
+            ?: frame["revision"]?.scalarOrNull()
+            ?: frame["version"]?.scalarOrNull()
         val sequence = payload.longField("sequence", "seq", "event_sequence")
             ?: frame.longField("sequence", "seq", "event_sequence")
         return when {
@@ -1078,39 +1137,39 @@ object SidecarFrameParser {
             type == "session.ended" || type == "session.end" || type == "session.closed" ->
                 HermesSideEvent.SessionEnded(
                     sessionId = sessionId,
-                    reason = payload["reason"]?.jsonPrimitive?.contentOrNull
-                        ?: payload["end_reason"]?.jsonPrimitive?.contentOrNull,
+                    reason = payload["reason"]?.scalarOrNull()
+                        ?: payload["end_reason"]?.scalarOrNull(),
                 )
             type == "event.gap" || type == "events.gap" || type == "sessions.gap" ||
-                payload["gap"]?.jsonPrimitive?.booleanOrNull == true ||
-                (payload["dropped"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L) > 0L ->
+                payload["gap"]?.boolScalarOrNull() == true ||
+                (payload["dropped"]?.scalarOrNull()?.toLongOrNull() ?: 0L) > 0L ->
                 HermesSideEvent.EventGap(
-                    reason = payload["reason"]?.jsonPrimitive?.contentOrNull ?: type,
+                    reason = payload["reason"]?.scalarOrNull() ?: type,
                     sessionId = sessionId,
                 )
             type == "message.start" -> HermesSideEvent.MessageStart(sessionId)
             type == "message.delta" -> HermesSideEvent.MessageDelta(
                 sessionId = sessionId,
-                text = payload["text"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                text = payload["text"]?.scalarOrNull().orEmpty(),
             )
             type == "message.interim" -> HermesSideEvent.MessageInterim(
                 sessionId = sessionId,
-                text = payload["text"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                alreadyStreamed = payload["already_streamed"]?.jsonPrimitive?.booleanOrNull == true,
+                text = payload["text"]?.scalarOrNull().orEmpty(),
+                alreadyStreamed = payload["already_streamed"]?.boolScalarOrNull() == true,
             )
             type == "message.complete" -> {
                 val usage = payload["usage"] as? JsonObject
-                val failureReason = payload["failure_reason"]?.jsonPrimitive?.contentOrNull
+                val failureReason = payload["failure_reason"]?.scalarOrNull()
                 val prompt = usage?.longField("prompt_tokens", "input_tokens", "prompt")
                 val completion = usage?.longField("completion_tokens", "output_tokens", "completion")
                 val total = usage?.longField("total_tokens", "tokens")
                     ?: if (prompt != null || completion != null) (prompt ?: 0) + (completion ?: 0) else null
                 HermesSideEvent.MessageComplete(
                     sessionId = sessionId,
-                    text = payload["text"]?.jsonPrimitive?.contentOrNull
-                        ?: payload["rendered"]?.jsonPrimitive?.contentOrNull
+                    text = payload["text"]?.scalarOrNull()
+                        ?: payload["rendered"]?.scalarOrNull()
                         ?: failureReason.orEmpty(),
-                    status = payload["status"]?.jsonPrimitive?.contentOrNull
+                    status = payload["status"]?.scalarOrNull()
                         ?: failureReason?.let { "error" },
                     totalTokens = total,
                     costUsd = usage?.doubleField("cost", "cost_usd", "total_cost"),
@@ -1118,39 +1177,39 @@ object SidecarFrameParser {
             }
             type == "status.update" -> HermesSideEvent.Status(
                 sessionId = sessionId,
-                kind = payload["kind"]?.jsonPrimitive?.contentOrNull,
-                text = payload["text"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                kind = payload["kind"]?.scalarOrNull(),
+                text = payload["text"]?.scalarOrNull().orEmpty(),
             )
             type.contains("tool") -> {
-                val name = payload["name"]?.jsonPrimitive?.contentOrNull
-                    ?: payload["tool"]?.jsonPrimitive?.contentOrNull
+                val name = payload["name"]?.scalarOrNull()
+                    ?: payload["tool"]?.scalarOrNull()
                     ?: "tool"
-                val id = payload["tool_id"]?.jsonPrimitive?.contentOrNull
-                    ?: payload["id"]?.jsonPrimitive?.contentOrNull
-                    ?: payload["call_id"]?.jsonPrimitive?.contentOrNull
+                val id = payload["tool_id"]?.scalarOrNull()
+                    ?: payload["id"]?.scalarOrNull()
+                    ?: payload["call_id"]?.scalarOrNull()
                     ?: name
                 val status = when {
                     type.endsWith("complete") || type.endsWith("end") || type.endsWith("done") -> ToolCallStatus.DONE
                     type.endsWith("error") || type.endsWith("fail") -> ToolCallStatus.ERROR
                     else -> ToolCallStatus.RUNNING
                 }
-                val args = payload["args_text"]?.jsonPrimitive?.contentOrNull
+                val args = payload["args_text"]?.scalarOrNull()
                     ?: payload["args"]?.toString()
                     ?: payload["arguments"]?.toString()
-                val message = payload["summary"]?.jsonPrimitive?.contentOrNull
-                    ?: payload["error"]?.jsonPrimitive?.contentOrNull
-                    ?: payload["message"]?.jsonPrimitive?.contentOrNull
+                val message = payload["summary"]?.scalarOrNull()
+                    ?: payload["error"]?.scalarOrNull()
+                    ?: payload["message"]?.scalarOrNull()
                 HermesSideEvent.Tool(id, name, status, args, message)
             }
             type.endsWith(".expire") -> HermesSideEvent.PromptExpired(
                 sessionId = sessionId,
-                requestId = payload["request_id"]?.jsonPrimitive?.contentOrNull,
+                requestId = payload["request_id"]?.scalarOrNull(),
             )
             type == "background.complete" -> {
-                val text = payload["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                val text = payload["text"]?.scalarOrNull().orEmpty()
                 HermesSideEvent.BackgroundComplete(
                     sessionId = sessionId,
-                    taskId = payload["task_id"]?.jsonPrimitive?.contentOrNull,
+                    taskId = payload["task_id"]?.scalarOrNull(),
                     text = text,
                     failed = text.trimStart().startsWith("error:", ignoreCase = true),
                 )
@@ -1159,11 +1218,11 @@ object SidecarFrameParser {
                 type.startsWith("approval.") || type.startsWith("clarify.") ||
                     type.startsWith("sudo.") || type.startsWith("secret.")
                 ) -> {
-                val message = payload["message"]?.jsonPrimitive?.contentOrNull
-                    ?: payload["prompt"]?.jsonPrimitive?.contentOrNull
-                    ?: payload["question"]?.jsonPrimitive?.contentOrNull
-                    ?: payload["description"]?.jsonPrimitive?.contentOrNull
-                    ?: payload["command"]?.jsonPrimitive?.contentOrNull
+                val message = payload["message"]?.scalarOrNull()
+                    ?: payload["prompt"]?.scalarOrNull()
+                    ?: payload["question"]?.scalarOrNull()
+                    ?: payload["description"]?.scalarOrNull()
+                    ?: payload["command"]?.scalarOrNull()
                     ?: "Approval required"
                 val kind = when {
                     type.contains("sudo") -> PromptKind.SUDO
@@ -1172,13 +1231,13 @@ object SidecarFrameParser {
                     else -> PromptKind.APPROVAL
                 }
                 val choices = (payload["choices"] as? JsonArray).orEmpty().mapNotNull {
-                    it.jsonPrimitive.contentOrNull
+                    it.scalarOrNull()
                 }
                 HermesSideEvent.Prompt(
                     kind = kind,
                     message = message,
                     sessionId = sessionId,
-                    requestId = payload["request_id"]?.jsonPrimitive?.contentOrNull,
+                    requestId = payload["request_id"]?.scalarOrNull(),
                     choices = choices,
                     raw = payload,
                 )
@@ -1187,13 +1246,13 @@ object SidecarFrameParser {
             type == "session.info" -> {
                 val payload = (frame["payload"] as? JsonObject) ?: frame
                 HermesSideEvent.SessionInfo(
-                    sessionId = frame["session_id"]?.jsonPrimitive?.contentOrNull,
-                    model = payload["model"]?.jsonPrimitive?.contentOrNull,
-                    provider = payload["provider"]?.jsonPrimitive?.contentOrNull,
-                    reasoningEffort = payload["reasoning_effort"]?.jsonPrimitive?.contentOrNull,
-                    approvalMode = payload["approval_mode"]?.jsonPrimitive?.contentOrNull,
-                    yolo = payload["yolo"]?.jsonPrimitive?.booleanOrNull,
-                    fast = payload["fast"]?.jsonPrimitive?.booleanOrNull,
+                    sessionId = frame["session_id"]?.scalarOrNull(),
+                    model = payload["model"]?.scalarOrNull(),
+                    provider = payload["provider"]?.scalarOrNull(),
+                    reasoningEffort = payload["reasoning_effort"]?.scalarOrNull(),
+                    approvalMode = payload["approval_mode"]?.scalarOrNull(),
+                    yolo = payload["yolo"]?.boolScalarOrNull(),
+                    fast = payload["fast"]?.boolScalarOrNull(),
                 )
             }
             // Token/cost accounting when a provider emits it (not all do).
@@ -1213,10 +1272,10 @@ object SidecarFrameParser {
                 }
             }
             type.contains("model") -> {
-                val model = payload["model"]?.jsonPrimitive?.contentOrNull
-                    ?: payload["name"]?.jsonPrimitive?.contentOrNull
+                val model = payload["model"]?.scalarOrNull()
+                    ?: payload["name"]?.scalarOrNull()
                 if (model != null) {
-                    HermesSideEvent.Model(model, payload["connected"]?.jsonPrimitive?.booleanOrNull)
+                    HermesSideEvent.Model(model, payload["connected"]?.boolScalarOrNull())
                 } else {
                     HermesSideEvent.Raw(type, frame)
                 }
@@ -1228,7 +1287,7 @@ object SidecarFrameParser {
 
 private fun JsonObject.longField(vararg names: String): Long? {
     for (n in names) {
-        val v = this[n]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+        val v = this[n]?.scalarOrNull()?.toLongOrNull()
         if (v != null) return v
     }
     return null
@@ -1236,7 +1295,7 @@ private fun JsonObject.longField(vararg names: String): Long? {
 
 private fun JsonObject.doubleField(vararg names: String): Double? {
     for (n in names) {
-        val v = this[n]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()
+        val v = this[n]?.scalarOrNull()?.toDoubleOrNull()
         if (v != null) return v
     }
     return null

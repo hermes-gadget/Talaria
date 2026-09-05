@@ -91,7 +91,9 @@ interface SessionOrganizationDao {
     suspend fun deleteLinksForCollection(connectionId: String, collectionId: Long)
 
     @Query(
-        "UPDATE saved_session_filters SET labelId = NULL, groupId = NULL " +
+        "UPDATE saved_session_filters SET labelId = " +
+            "CASE WHEN labelId = :collectionId THEN NULL ELSE labelId END, " +
+            "groupId = CASE WHEN groupId = :collectionId THEN NULL ELSE groupId END " +
             "WHERE connectionId = :connectionId AND (labelId = :collectionId OR groupId = :collectionId)",
     )
     suspend fun clearFilterCollectionReferences(connectionId: String, collectionId: Long)

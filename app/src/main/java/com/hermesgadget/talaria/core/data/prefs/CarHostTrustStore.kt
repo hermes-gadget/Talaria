@@ -130,11 +130,54 @@ class CarHostTrustStore internal constructor(
     /** Retry opening the encrypted store after a corruption; true when recovered. */
     @Synchronized
     fun retry(): Boolean {
-        if (prefs != null) return true
+        // B05: recovery must revalidate the actual stored content — returning
+        // true merely because prefs is non-null would re-expose a damaged
+        // record (or silently overwrite it on the next mutation).
+        val available = prefs
+        if (available != null) {
+            return if (readsHealthy()) {
+                if (_state.value !is CarHostTrustStoreState.Available) {
+                    _state.value = CarHostTrustStoreState.Available
+                }
+                true
+            } else {
+                _state.value = CarHostTrustStoreState.Corrupt("Encrypted state unreadable")
+                false
+            }
+        }
         val context = appContext ?: return false
         val reopened = runCatching { openEncryptedPreferences(context) }.getOrNull() ?: return false
         prefs = reopened
+        return if (readsHealthy()) {
+            _state.value = CarHostTrustStoreState.Available
+            true
+        } else {
+            // The reopened store still fails to serve its state: keep the typed
+            // corruption published instead of declaring a false recovery.
+            _state.value = CarHostTrustStoreState.Corrupt("Reopened store still unreadable")
+            false
+        }
+    }
+
+    /**
+     * Deliberate user-recovery action for a corrupted store: wipe the damaged
+     * state (which is already fail-closed — no host is trusted) so fresh
+     * trust records can be enrolled again. Only valid while corrupted;
+     * returns false when the store is healthy (use [clear] instead).
+     */
+    @Synchronized
+    fun resetCorruptState(): Boolean {
+        val available = prefs ?: return false
+        if (readsHealthy()) return false
+        val wiped = try {
+            available.edit().remove(KEY_STATE).commit()
+        } catch (failure: Exception) {
+            false
+        }
+        if (!wiped) return false
         _state.value = CarHostTrustStoreState.Available
+        _revision.value += 1L
+        listeners.forEach { it.invoke() }
         return true
     }
 
@@ -273,6 +316,14 @@ class CarHostTrustStore internal constructor(
             return
         }
         val changed = synchronized(this) {
+            // B05: a store whose encrypted content cannot be authenticated is
+            // corrupt. Never overwrite a damaged record with fresh data — the
+            // corrupted trust evidence would be silently replaced, letting a
+            // revoked or re-signed host appear trusted again.
+            if (!readsHealthy()) {
+                _state.value = CarHostTrustStoreState.Corrupt("Encrypted state unreadable")
+                return@synchronized false
+            }
             val current = loadState()
             val next = transform(current)
             if (next == current) return@synchronized false
@@ -287,9 +338,42 @@ class CarHostTrustStore internal constructor(
 
     private fun loadState(): CarHostTrustState {
         val available = prefs ?: return CarHostTrustState()
-        val encoded = available.getString(KEY_STATE, null) ?: return CarHostTrustState()
-        return runCatching { JsonConfig.json.decodeFromString<CarHostTrustState>(encoded) }
-            .getOrDefault(CarHostTrustState())
+        // B05: getString on EncryptedSharedPreferences can itself throw when
+        // the keystore cannot authenticate the stored value. Both failure
+        // modes publish typed corruption and fail CLOSED (no host trusted) —
+        // reads must never throw into car/template/UI callers.
+        val encoded = try {
+            available.getString(KEY_STATE, null)
+        } catch (failure: Exception) {
+            _state.value = CarHostTrustStoreState.Corrupt(
+                "Encrypted read failed: ${failure.javaClass.simpleName}",
+            )
+            return CarHostTrustState()
+        } ?: return CarHostTrustState()
+        return try {
+            JsonConfig.json.decodeFromString<CarHostTrustState>(encoded)
+        } catch (failure: Exception) {
+            _state.value = CarHostTrustStoreState.Corrupt(
+                "Stored state not decodable: ${failure.javaClass.simpleName}",
+            )
+            CarHostTrustState()
+        }
+    }
+
+    /**
+     * True when the persisted state can be read and decoded. A missing key is
+     * a valid empty state, not a corruption.
+     */
+    private fun readsHealthy(): Boolean {
+        val available = prefs ?: return true
+        return try {
+            available.getString(KEY_STATE, null)?.let { raw ->
+                JsonConfig.json.decodeFromString<CarHostTrustState>(raw)
+                true
+            } ?: true
+        } catch (failure: Exception) {
+            false
+        }
     }
 
     companion object {

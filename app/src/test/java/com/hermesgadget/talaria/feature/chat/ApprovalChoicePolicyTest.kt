@@ -50,6 +50,33 @@ class ApprovalChoicePolicyTest {
     }
 
     @Test
+    fun `deny-only list fails closed instead of inventing an approval (S04)`() {
+        // Reproduced upstream with the production policy: serverChoices=[deny]
+        // and tapped=once previously resolved to "once", allowing an approval
+        // the server never offered.
+        assertNull(ApprovalChoicePolicy.resolveChoice(listOf("deny"), "once"))
+        // The generic (no-tap) approve path must also fail closed.
+        assertNull(
+            ApprovalChoicePolicy.resolveChoice(
+                listOf("deny"),
+                ApprovalChoicePolicy.SAFE_ONESHOT_CHOICES.first(),
+            ),
+        )
+        // Deny itself is still accepted from a deny-only list.
+        assertEquals("deny", ApprovalChoicePolicy.resolveChoice(listOf("deny"), "deny"))
+    }
+
+    @Test
+    fun `blank-only choice list counts as no choices`() {
+        assertEquals("once", ApprovalChoicePolicy.resolveChoice(listOf("  ", ""), "once"))
+    }
+
+    @Test
+    fun `mixed deny list with an affirmative choice still resolves that choice`() {
+        assertEquals("once", ApprovalChoicePolicy.resolveChoice(listOf("once", "deny"), "once"))
+    }
+
+    @Test
     fun `broad confirmation is required for anything beyond one-shot`() {
         assertTrue(ApprovalChoicePolicy.requiresExplicitBroadConfirm("always"))
         assertTrue(ApprovalChoicePolicy.requiresExplicitBroadConfirm("Always"))
