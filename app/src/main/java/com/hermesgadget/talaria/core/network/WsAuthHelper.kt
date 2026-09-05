@@ -63,7 +63,14 @@ class WsAuthHelper(
      * Returns e.g. `ticket=…` or `token=…` (without leading `?` / `&`).
      * Empty string when no credentials are available.
      */
-    suspend fun authQueryParam(snapshot: ConnectionSnapshot): String = try {
+    /** B20: the query AND the snapshot it is valid for (post-rotation). */
+    data class FreshAuth(val snapshot: ConnectionSnapshot, val query: String)
+
+    suspend fun authQueryParam(snapshot: ConnectionSnapshot): String =
+        authQueryWithSnapshot(snapshot).query
+
+    /** B20: full result — callers bound to a client must use [FreshAuth.snapshot]. */
+    suspend fun authQueryWithSnapshot(snapshot: ConnectionSnapshot): FreshAuth = try {
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 SnapshotAuthGuard.requireCurrent(
@@ -96,7 +103,7 @@ class WsAuthHelper(
                         )
                     }
                     val ticket = ticketResult.getOrNull()
-                    if (!ticket.isNullOrBlank()) return@withLock "ticket=${ticket.trim()}"
+                    if (!ticket.isNullOrBlank()) return@withLock FreshAuth(snapshot, "ticket=${ticket.trim()}")
                     // A gated dashboard must never receive an empty auth query:
                     // doing so turns a transient ticket response problem into a
                     // terminal 4401 and bypasses the existing retry supervisor.
@@ -125,15 +132,26 @@ class WsAuthHelper(
                             suspendResult {
                                 connectionStore.updateSessionToken(snapshot.connectionId, current)
                             }
+                            // B20: the token write bumped the store revision;
+                            // the caller's client is still bound to the OLD
+                            // snapshot. Re-acquire from the refreshed snapshot
+                            // so the next current-snapshot guard accepts the
+                            // handshake instead of rejecting it as stale.
+                            val refreshed = connectionStore.snapshotFor(snapshot.connectionId)
+                            if (refreshed != null) {
+                                refreshed.withHttpLogging(snapshot.httpLoggingEnabled)
+                                    .takeIf { it.secrets.sessionToken == current }
+                                    ?.let { bound -> return@withLock FreshAuth(bound, "token=$current") }
+                            }
                         }
-                        return@withLock "token=$current"
+                        return@withLock FreshAuth(snapshot, "token=$current")
                     }
                 }
 
                 snapshot.sessionToken?.takeIf { it.isNotBlank() }?.let {
-                    return@withLock "token=${it.trim()}"
+                    return@withLock FreshAuth(snapshot, "token=${it.trim()}")
                 }
-                ""
+                FreshAuth(snapshot, "")
             }
         }
     } catch (cancelled: CancellationException) {

@@ -106,7 +106,11 @@ class PtyWebSocketSession(
         // callbackFlow's builder is already suspendable. Waiting directly keeps
         // token discovery and ticket minting off the main thread instead of
         // freezing Compose during a remote HTTP round trip.
-        val auth = fixedAuthQuery ?: wsAuth.authQueryParam(snapshot)
+        // B20: discovery may rotate the stored token; use the refreshed
+        // snapshot for the handshake URL so the guard accepts it.
+        val (bound, auth) = fixedAuthQuery
+            ?.let { snapshot to it }
+            ?: wsAuth.authQueryWithSnapshot(snapshot).let { it.snapshot to it.query }
         if (!generationIsCurrent()) {
             state = SocketState.DISCONNECTED
             trySendBlocking(PtyEvent.Failure(staleGenerationMessage()))
@@ -114,12 +118,12 @@ class PtyWebSocketSession(
             return@callbackFlow
         }
         val url = HermesWebSocketUrlBuilder.build(
-            baseUrl = snapshot.baseUrl,
+            baseUrl = bound.baseUrl,
             endpoint = "api/pty",
             authQuery = auth,
             query = listOf(
                 "channel" to channelId,
-                "profile" to snapshot.managementProfile,
+                "profile" to bound.managementProfile,
                 "resume" to resumeSessionId,
                 "attach" to attachToken,
                 "cols" to cols.toString(),

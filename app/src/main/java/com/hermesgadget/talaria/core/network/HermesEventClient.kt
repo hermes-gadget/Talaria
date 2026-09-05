@@ -712,9 +712,16 @@ class HermesEventClient(
     private suspend fun authFor(registration: SocketRegistration, retryOnFailure: Boolean): String? {
         val snapshot = transportSnapshot ?: return null
         return try {
-            wsAuth.authQueryParam(snapshot).also {
-                if (!isCurrentRegistration(registration)) return null
+            // B20: token discovery may rotate the stored token; the returned
+            // auth query is only valid with the snapshot it was minted for.
+            val fresh = wsAuth.authQueryWithSnapshot(snapshot)
+            if (!isCurrentRegistration(registration)) return null
+            if (fresh.snapshot != snapshot) {
+                // Rebuild the handshake against the refreshed credentials so
+                // the current-snapshot guard accepts the socket.
+                transportSnapshot = fresh.snapshot
             }
+            fresh.query
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
