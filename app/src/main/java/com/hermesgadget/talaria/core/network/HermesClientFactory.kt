@@ -43,7 +43,11 @@ class HermesClientFactory(
 
     private val oidcTokenRefresher = SnapshotOidcTokenRefresher(
         connectionStore,
-        onTokensRotated = { connectionId -> evictConnection(connectionId) },
+        // B19: rotation must retire the OLD-credential bundles for future
+        // acquisition WITHOUT cancelling the in-flight call that produced the
+        // new token — cancelAll() here killed the caller's original request
+        // mid-flight (its interceptor is awaiting the refreshed access token).
+        onTokensRotated = { connectionId -> retireConnectionBundles(connectionId) },
     )
     private val bundles = ConcurrentHashMap<ConnectionSnapshot, ClientBundle>()
 
@@ -151,6 +155,23 @@ class HermesClientFactory(
      * rotation commits). Unlike [invalidate], in-flight work on other
      * connections is untouched.
      */
+    /**
+     * B19: detach the connection's bundles from the map so every FUTURE
+     * api()/okHttp() call builds clients against the rotated credentials, but
+     * leave their dispatchers alive — the refreshing request is still running
+     * on one of them and must complete with the new token.
+     */
+    private fun retireConnectionBundles(connectionId: String) {
+        bundles.keys
+            .filter { it.connectionId == connectionId }
+            .forEach { key -> bundles.remove(key) }
+    }
+
+    /** Test-only exposure of the B19 retirement path. */
+    internal fun onTokensRotatedForTest(connectionId: String) {
+        retireConnectionBundles(connectionId)
+    }
+
     fun evictConnection(connectionId: String) {
         bundles.keys
             .filter { it.connectionId == connectionId }
@@ -162,10 +183,22 @@ class HermesClientFactory(
         bundle(snapshot ?: ConnectionSnapshot.anonymous(false)).webSocket
 
     private fun bundle(snapshot: ConnectionSnapshot): ClientBundle {
-        // A refreshed token, edited URL, or profile switch creates a new key. Do
-        // not retain the old credential-bearing bundle for the same connection.
+        // B12: eviction is scoped to the snapshot's *revision identity* —
+        // connection + base URL + credentials + logging + pin — not to the
+        // connection alone. Two concurrent management profiles on one
+        // connection (ProfileRegistry fan-out, multi-tab chat) must be able to
+        // hold clients at the same time; keying eviction by connectionId made
+        // acquiring profile B cancel profile A's in-flight calls.
+        //
+        // A genuinely newer revision (rotated token, edited URL) DOES retire
+        // the older bundles: credential snapshots of the same connection never
+        // coexist as valid.
         bundles.keys
-            .filter { it.connectionId == snapshot.connectionId && it != snapshot }
+            .filter { other ->
+                other != snapshot &&
+                    other.connectionId == snapshot.connectionId &&
+                    other.revisionKey() == snapshot.revisionKey()
+            }
             .forEach { old ->
                 bundles.remove(old)?.let { close(it) }
             }
@@ -243,7 +276,7 @@ class HermesClientFactory(
         // returning a typed value. This wrapper rejects an oversized declared
         // body and aborts chunked/unknown-length reads at the endpoint budget
         // before a converter or feature-level parser can retain more data.
-        restBuilder.addInterceptor(ResponseBodyLimitInterceptor())
+        restBuilder.addInterceptor(ResponseBodyLimitInterceptor(basePath = RoutePath.basePath(snapshot.baseUrl)))
         if (snapshot.httpLoggingEnabled) {
             restBuilder.addInterceptor(buildHttpLogger())
         }

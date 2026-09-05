@@ -39,9 +39,12 @@ class AuthInterceptor(
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
+        // B16: the deployment may live under a path prefix; auth routes are
+        // evaluated relative to the snapshot's base path, not the URL root.
+        val route = RoutePath.routePath(request.url, snapshot.baseUrl)
         ensureSnapshotStillStored()
         SnapshotAuthGuard.requireSameOrigin(snapshot, request.url)
-        if (SnapshotAuthGuard.suppressCredentials(request.url.encodedPath)) {
+        if (SnapshotAuthGuard.suppressCredentials(route)) {
             ensureSnapshotStillStored()
             return chain.proceed(request)
         }
@@ -61,7 +64,7 @@ class AuthInterceptor(
                     req.header(SESSION_HEADER, token)
                 }
             AuthMode.BASIC -> {
-                if (!isPasswordBootstrapPath(request.url.encodedPath)) {
+                if (!isPasswordBootstrapPath(route)) {
                     passwordSessionManager(snapshot, request.url)
                 }
                 snapshot.sessionToken

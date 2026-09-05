@@ -33,12 +33,17 @@ class ProfileQueryInterceptor(
     constructor(snapshot: ConnectionSnapshot) : this({ snapshot })
 
     override fun intercept(chain: Interceptor.Chain): Response {
-        val profile = snapshotProvider()?.managementProfile.orEmpty()
+        val snapshot = snapshotProvider()
+        val profile = snapshot?.managementProfile.orEmpty()
         val request = chain.request()
         if (profile.isEmpty() || request.url.queryParameter("profile") != null) {
             return chain.proceed(request)
         }
-        val path = "/" + request.url.pathSegments.joinToString("/")
+        // B16: policy routes are relative to the deployment base path, not the
+        // URL root — a path-prefixed base URL used to fall out of every check.
+        val path = snapshot
+            ?.let { RoutePath.routePath(request.url, it.baseUrl) }
+            ?: ("/" + request.url.pathSegments.joinToString("/"))
         if (!path.startsWith("/api/") || PROFILE_UNSCOPED.any { path.startsWith(it) }) {
             return chain.proceed(request)
         }

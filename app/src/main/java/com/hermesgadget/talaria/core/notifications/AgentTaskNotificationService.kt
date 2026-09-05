@@ -216,9 +216,21 @@ class AgentTaskNotificationService : Service() {
         val paused = runtimes.values
             .filter { runtime ->
                 val id = runtime.watch.connectionId
+                // B23: compare the snapshot the runtime's client is actually
+                // bound to (fixedSnapshot), not a freshly resolved saved
+                // snapshot — a same-ID URL/secret edit changes the stored
+                // record without ever touching the installed runtime, so the
+                // old comparison saw two DIFFERENT stale snapshots agree.
                 id.isNullOrBlank() ||
                     container.clientFactory.snapshotFor(id, runtime.watch.managementProfile)
-                        ?.let(::isForegroundBound) != true
+                        ?.let { saved ->
+                            val bound = runtime.client.fixedSnapshot
+                            bound != null &&
+                                saved.connectionId == bound.connectionId &&
+                                saved.managementProfile == bound.managementProfile &&
+                                saved.revisionKey() == bound.revisionKey() &&
+                                isForegroundBound(saved)
+                        } != true
             }
         if (paused.isEmpty()) return
         paused.forEach { runtime ->

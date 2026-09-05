@@ -63,6 +63,8 @@ class ResponseTooLargeException(
 class ResponseBodyLimitInterceptor(
     private val defaultLimitBytes: Long = DEFAULT_MAX_RESPONSE_BYTES,
     private val endpointLimits: List<EndpointResponseLimit> = DEFAULT_ENDPOINT_LIMITS,
+    /** B16: base path of the deployment; endpoint keys are app-relative. */
+    private val basePath: String = "/",
 ) : Interceptor {
     init {
         require(defaultLimitBytes > 0L) { "defaultLimitBytes must be positive" }
@@ -73,7 +75,9 @@ class ResponseBodyLimitInterceptor(
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val response = chain.proceed(chain.request())
-        val path = chain.request().url.encodedPath
+        // B16: strip the deployment prefix so endpoint budgets match even when
+        // the app is served under https://host/prefix/.
+        val path = RoutePath.routePath(chain.request().url.encodedPath, basePath)
         val limit = limitFor(path)
         val body = response.body ?: return response
         val declared = body.contentLength()

@@ -99,6 +99,28 @@ data class ConnectionSnapshot(
             cleartextConsentRecorded == other.cleartextConsentRecorded &&
             cleartextConsentOrigin == other.cleartextConsentOrigin
 
+    /**
+     * B12: identity of the transport/credential revision this snapshot
+     * represents — everything whose change makes existing client bundles
+     * unsafe to keep. Deliberately EXCLUDES [managementProfile]: two profiles
+     * on one connection are concurrent, not successive, revisions (their
+     * clients differ only in the injected profile query, and both remain
+     * valid), so profile-based eviction was cancelling sibling work.
+     */
+    fun revisionKey(): String = listOf(
+        connectionId,
+        baseUrl,
+        secrets.sessionToken,
+        secrets.password,
+        secrets.bearerToken,
+        secrets.oidcRefreshToken,
+        authMode,
+        username,
+        authProvider,
+        pinSha256,
+        httpLoggingEnabled,
+    ).joinToString("\u0000")
+
     fun withHttpLogging(enabled: Boolean): ConnectionSnapshot = copy(httpLoggingEnabled = enabled)
 
     override fun toString(): String =

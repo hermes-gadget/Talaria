@@ -105,6 +105,42 @@ class WsAuthHelperLoopbackTokenSyncTest {
     }
 
     @Test
+    fun `B20 rotation returns the refreshed snapshot with the auth query`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"auth_required": false}"""))
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """<html><script>window.__HERMES_SESSION_TOKEN__="fresh-token";</script></html>""",
+            ),
+        )
+        val snapshot = snapshot(storedToken = "stale-token")
+        // The store hands back a NEW snapshot after the token write — exactly
+        // what a real SecureConnectionStore does (the CAS bumped its revision).
+        var written = false
+        val refreshed = snapshot(storedToken = "fresh-token")
+        // Pre-write calls all observe the original snapshot: (1) requireCurrent,
+        // (2) REST auth interceptor on getStatus, (3)+(4) SnapshotOriginInterceptor
+        // request+response hop checks. Everything after the token write (the
+        // B20 re-read) observes the refreshed snapshot.
+        // Every read BEFORE the token write observes the original snapshot;
+        // every read AFTER it observes the refreshed one. Rather than pin the
+        // exact call count (interceptor internals may add hop checks), key the
+        // switch on the token write completing.
+        every { store.updateSessionToken("test-conn", "fresh-token") } answers {
+            written = true
+        }
+        every { store.snapshotFor("test-conn") } answers {
+            if (written) refreshed else snapshot
+        }
+
+        val result = helper.authQueryWithSnapshot(snapshot)
+
+        assertEquals("token=fresh-token", result.query)
+        // The handshake must bind to the refreshed snapshot, not the stale one.
+        assertEquals("fresh-token", result.snapshot.secrets.sessionToken)
+        verify { store.updateSessionToken("test-conn", "fresh-token") }
+    }
+
+    @Test
     fun `matching stored token is not rewritten`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"auth_required": false}"""))
         server.enqueue(

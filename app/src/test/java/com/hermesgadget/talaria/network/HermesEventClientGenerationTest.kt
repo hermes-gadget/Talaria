@@ -81,8 +81,8 @@ class HermesEventClientGenerationTest {
     @Test
     fun gatedInitialSocketsMintIndependentTicketsImmediatelyBeforeOpening() = runBlocking {
         val issued = mutableListOf<String>()
-        coEvery { wsAuth.authQueryParam(snapshot) } coAnswers {
-            "ticket=ticket-${issued.size + 1}".also(issued::add)
+        coEvery { wsAuth.authQueryWithSnapshot(snapshot) } coAnswers {
+            WsAuthHelper.FreshAuth(snapshot, "ticket=ticket-${issued.size + 1}".also(issued::add))
         }
         val eventsSocket = enqueueSocket()
         val rpcSocket = enqueueSocket()
@@ -109,10 +109,10 @@ class HermesEventClientGenerationTest {
     @Test
     fun initialTicketFailuresRetryForBothEventsAndRpcWithoutOpeningUnauthenticatedSockets() = runBlocking {
         val attempts = AtomicInteger(0)
-        coEvery { wsAuth.authQueryParam(snapshot) } coAnswers {
+        coEvery { wsAuth.authQueryWithSnapshot(snapshot) } coAnswers {
             val attempt = attempts.incrementAndGet()
             if (attempt <= 2) throw IOException("temporary ticket outage")
-            "ticket=ticket-retry-$attempt"
+            WsAuthHelper.FreshAuth(snapshot, "ticket=ticket-retry-$attempt")
         }
         val eventsSocket = enqueueSocket()
         val rpcSocket = enqueueSocket()
@@ -134,8 +134,8 @@ class HermesEventClientGenerationTest {
     @Test
     fun reconnectReplacesSocketAndMintsAFreshTicket() = runBlocking {
         val issued = AtomicInteger(0)
-        coEvery { wsAuth.authQueryParam(snapshot) } coAnswers {
-            "ticket=ticket-${issued.incrementAndGet()}"
+        coEvery { wsAuth.authQueryWithSnapshot(snapshot) } coAnswers {
+            WsAuthHelper.FreshAuth(snapshot, "ticket=ticket-${issued.incrementAndGet()}")
         }
         val first = enqueueSocket(closeOnOpen = true)
         val second = enqueueSocket()
@@ -159,7 +159,9 @@ class HermesEventClientGenerationTest {
         // Loopback auth deliberately returns the same reusable process token for
         // A and B. Generation ownership, rather than token uniqueness, must stop
         // an old socket/replay item from entering the new scope.
-        coEvery { wsAuth.authQueryParam(snapshot) } returns "token=local"
+        coEvery { wsAuth.authQueryWithSnapshot(snapshot) } answers {
+            WsAuthHelper.FreshAuth(snapshot, "token=local")
+        }
         val oldSocket = enqueueSocket()
         val newSocket = enqueueSocket()
         val eventClient = newClient(reconnectBackoff = longArrayOf(25L))

@@ -73,7 +73,9 @@ class PtyDeliveryBehaviorTest {
             ),
             secrets = ConnectionSecrets(),
         )
-        coEvery { wsAuth.authQueryParam(snapshot) } returns ""
+        coEvery { wsAuth.authQueryWithSnapshot(snapshot) } answers {
+            WsAuthHelper.FreshAuth(snapshot, "")
+        }
     }
 
     @After
@@ -161,11 +163,11 @@ class PtyDeliveryBehaviorTest {
     @Test
     fun `PTY retries a failed ticket mint without opening an unauthenticated socket`() = runBlocking {
         val attempts = AtomicInteger(0)
-        coEvery { wsAuth.authQueryParam(snapshot) } coAnswers {
+        coEvery { wsAuth.authQueryWithSnapshot(snapshot) } coAnswers {
             if (attempts.incrementAndGet() == 1) {
                 throw IOException("temporary ticket outage")
             }
-            "ticket=pty-retry"
+            WsAuthHelper.FreshAuth(snapshot, "ticket=pty-retry")
         }
         val serverOpened = CompletableDeferred<Unit>()
         server.enqueue(
