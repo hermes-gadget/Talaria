@@ -435,15 +435,15 @@ private fun buildCodeAnnotatedString(
 internal fun markdownHighlightRanges(text: String, query: String): List<IntRange> {
     val needle = query.trim()
     if (needle.isEmpty() || text.isEmpty()) return emptyList()
-    val haystack = text.lowercase()
-    val lowerNeedle = needle.lowercase()
     val ranges = mutableListOf<IntRange>()
     var offset = 0
-    while (offset <= haystack.length - lowerNeedle.length) {
-        val found = haystack.indexOf(lowerNeedle, offset)
-        if (found < 0) break
-        ranges += found..(found + lowerNeedle.length - 1)
-        offset = found + lowerNeedle.length
+    while (offset <= text.length - needle.length) {
+        if (text.regionMatches(offset, needle, 0, needle.length, ignoreCase = true)) {
+            ranges += offset..(offset + needle.length - 1)
+            offset += needle.length
+        } else {
+            offset++
+        }
     }
     return ranges
 }

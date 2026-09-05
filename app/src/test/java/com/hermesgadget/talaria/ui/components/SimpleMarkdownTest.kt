@@ -66,6 +66,14 @@ class SimpleMarkdownTest {
     }
 
     @Test
+    fun searchHighlightRangesKeepOriginalOffsetsWhenUnicodeCaseFoldingExpands() {
+        assertEquals(
+            listOf(0..1),
+            markdownHighlightRanges("İx", "İX"),
+        )
+    }
+
+    @Test
     fun parsesGfmTableWithRows() {
         val document = parseMarkdown(
             """
