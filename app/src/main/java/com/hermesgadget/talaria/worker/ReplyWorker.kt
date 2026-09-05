@@ -22,6 +22,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.hermesgadget.talaria.TalariaApp
+import com.hermesgadget.talaria.core.network.ConnectionOrigin
 import com.hermesgadget.talaria.core.network.HermesEventClient
 import com.hermesgadget.talaria.core.network.HermesEventScope
 import com.hermesgadget.talaria.core.network.PtyPromptDelivery
@@ -52,10 +53,18 @@ class ReplyWorker(
         val container = TalariaApp.instance.container
         val expectedConnectionId = inputData.getString(KEY_CONNECTION_ID) ?: return Result.failure()
         val expectedProfile = inputData.getString(KEY_MANAGEMENT_PROFILE).orEmpty()
+        // S09: the action was queued against the endpoint the notification
+        // came from. If that endpoint was edited before the job ran, the
+        // re-read snapshot points somewhere else — the reply must not follow
+        // the new endpoint silently.
+        val expectedBaseUrl = inputData.getString(KEY_BASE_URL).orEmpty()
         // Capture the complete connection snapshot once. The foreground profile can
         // change while WorkManager is running; every socket below is bound to this
         // same profile instead of consulting the mutable global client again.
+        val expectedOrigin = expectedBaseUrl.takeIf { it.isNotBlank() }
+            ?.let(ConnectionOrigin::normalize)
         val snapshot = container.clientFactory.snapshotFor(expectedConnectionId, expectedProfile)
+            ?.takeIf { expectedOrigin == null || ConnectionOrigin.normalize(it.baseUrl) == expectedOrigin }
             ?: return Result.failure(workDataOf(KEY_ERROR to SnapshotAuthGuard.CHANGED_MESSAGE))
         var eventClient: HermesEventClient? = null
         var session: PtyWebSocketSession? = null
@@ -137,6 +146,7 @@ class ReplyWorker(
         const val KEY_DEEP_LINK = "deep_link"
         const val KEY_CONNECTION_ID = "connection_id"
         const val KEY_MANAGEMENT_PROFILE = "management_profile"
+        const val KEY_BASE_URL = "base_url"
         const val KEY_MESSAGE_ID = "message_id"
         const val KEY_ERROR = "error"
         private const val MAX_ATTEMPTS = 3

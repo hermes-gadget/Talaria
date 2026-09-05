@@ -311,6 +311,7 @@ class AgentTaskNotificationService : Service() {
             event = event,
             connectionId = watch.connectionId,
             managementProfile = watch.managementProfile,
+            baseUrl = currentRuntime.client.fixedSnapshot?.baseUrl,
         )
         when {
             event is HermesSideEvent.MessageComplete -> stopWatch(watcherId, generation)

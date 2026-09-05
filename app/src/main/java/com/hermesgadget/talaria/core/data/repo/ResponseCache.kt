@@ -92,6 +92,20 @@ class ResponseCache(
 
     /** Store a value with its own expiry. Nulls are intentionally not cached. */
     fun put(key: String, value: Any?, ttlMs: Long = DEFAULT_ENTRY_TTL_MS) {
+        put(key, value, ttlMs, observedEpoch = null)
+    }
+
+    /**
+     * B77: epoch-checked store. An in-flight fetch that began before
+     * [clear] (or an epoch invalidation) must not repopulate the cache
+     * with pre-clear data. Pass [observedEpoch] captured when the fetch
+     * started; a stale epoch is dropped silently (the fetch's caller will
+     * simply miss the cache and refetch next time).
+     */
+    fun put(key: String, value: Any?, ttlMs: Long = DEFAULT_ENTRY_TTL_MS, observedEpoch: Long?) {
+        if (observedEpoch != null && observedEpoch != epoch.get()) {
+            return
+        }
         if (value == null || ttlMs < 0L) {
             invalidate(key)
             return
@@ -152,6 +166,10 @@ class ResponseCache(
         epoch.incrementAndGet()
         keyGenerations.clear()
     }
+
+    /** B77: current clear/invalidation epoch, for stale-write rejection. */
+    val currentEpoch: Long
+        get() = epoch.get()
 
     /** Exposed for deterministic boundary tests and diagnostics. */
     internal val entryCount: Int

@@ -304,6 +304,12 @@ private class SessionRuntime(
     var eventsHealthy: Boolean = true,
     var transcriptDirty: Boolean = false,
     var transcriptDirtySessionId: String? = null,
+    // B33: session ids observed on THIS tab's own event stream (sidecar or
+    // PTY). A tab that has sent a prompt sees its session's ids here; the
+    // discovery reconciler binds to that observed id instead of guessing
+    // "newest id absent from the baseline", which mis-claims under
+    // concurrency (two new tabs, or an unrelated Discord/CLI session).
+    var observedSessionIds: Set<String> = emptySet(),
     var lastTranscriptContentKey: String? = null,
     var localTranscriptRevision: Long = 0L,
     var recoveryPending: Boolean = false,
@@ -1182,6 +1188,22 @@ class ChatViewModel(
                 // chats (it uses a 5-minute activity window).
                 val ended = s.end_reason != null || s.ended_at != null
                 if (ended) continue
+                // P05: auto-open only GENUINELY live sessions. A session
+                // with no end marker but idle since long before this app run
+                // is history, not a running chat — eagerly opening a PTY and
+                // two sidecar sockets for every such row exhausts the
+                // connection pool and battery. Recency window: activity
+                // within AUTO_OPEN_RECENCY_MS (or unknown recency AND
+                // created this run — never known-stale rows).
+                // Parse last_active/started_at epoch (string or ISO) —
+                // same rules as sessionRecency().
+                fun parseEpoch(value: String?): Long? {
+                    val raw = value?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+                    return raw.toDoubleOrNull()?.toLong()
+                        ?: runCatching { java.time.Instant.parse(raw).toEpochMilli() }.getOrNull()
+                }
+                val lastActive = parseEpoch(s.last_active) ?: parseEpoch(s.started_at)
+                if (lastActive != null && System.currentTimeMillis() - lastActive > AUTO_OPEN_RECENCY_MS) continue
 
                 val id = UUID.randomUUID().toString()
                 val channel = UUID.randomUUID().toString()
@@ -1362,11 +1384,30 @@ class ChatViewModel(
                 return@forEach
             }
             if (tab.hasSent && runtime.baselineReady) {
+                // B33: the tab's OWN event stream is the authoritative signal
+                // — a session id seen on this tab's sidecar that also appears
+                // in the profile registry is ours. Only when nothing was
+                // observed do we fall back to the legacy "newest id absent
+                // from baseline" heuristic (which can mis-claim when two new
+                // tabs race or an unrelated session lands mid-window).
+                val observed = runtime.observedSessionIds
+                    .firstOrNull { it !in runtime.baselineSessions && it !in claimedSessions }
+                    ?.let { observedId ->
+                        registry.sessionsByProfile[creation.profileName]
+                            .orEmpty()
+                            .firstOrNull { it.id == observedId }
+                    }
+                if (observed != null && claimSession(creation.tabId, observed.id)) {
+                    bindSession(creation.tabId, observed.id)
+                    return@forEach
+                }
+                // Never claim a session another path has observed as its own.
                 val candidate = registry.sessionsByProfile[creation.profileName]
                     .orEmpty()
                     .asSequence()
                     .filter { it.id !in runtime.baselineSessions }
                     .filter { it.id !in claimedSessions }
+                    .filter { it.id !in runtime.observedSessionIds }
                     .maxByOrNull { MultiProfileSession(creation.profileName, it).recency }
                 if (candidate != null && claimSession(creation.tabId, candidate.id)) {
                     bindSession(creation.tabId, candidate.id)
@@ -2744,11 +2785,18 @@ class ChatViewModel(
                         audio.file.delete()
                     }
                 }
-                // H4: transcribe through the snapshot the dictating tab is
-                // bound to, never the mutable active profile.
+                // H4 + S03: transcribe ONLY through the snapshot the
+                // dictating tab is bound to. The old fallback chain could
+                // upload recorded audio through the active (possibly
+                // different-profile) connection or an anonymous client when
+                // the tab vanished during encoding — private audio must
+                // never leave through an unintended endpoint, so the tab
+                // disappearing now discards the recording instead.
                 val snapshot = tabSnapshot(tabId)
-                    ?: container.clientFactory.snapshot()
-                    ?: ConnectionSnapshot.anonymous()
+                    ?: run {
+                        audio.file.delete()
+                        return@launch
+                    }
                 val response = container.clientFactory.api(snapshot).transcribeAudio(
                     VoiceTranscriptionRequest(dataUrl = dataUrl, mimeType = audio.mimeType),
                     profile = profileNameForTab(tabId),
@@ -3102,6 +3150,7 @@ class ChatViewModel(
         val runtime = runtimes[tabId] ?: return
         runtime.transcriptDirty = true
         runtime.transcriptDirtySessionId = sessionId ?: runtime.transcriptDirtySessionId
+        sessionId?.let { id -> runtime.observedSessionIds = runtime.observedSessionIds + id }
         eventsHealthy?.let { runtime.eventsHealthy = it }
         if (TranscriptSyncPolicy.shouldEmitRefreshSignal(
                 lifecycleStarted = chatLifecycleStarted,
@@ -3163,6 +3212,7 @@ class ChatViewModel(
         if (!chatLifecycleStarted || _ui.value.activeTabId != tabId) {
             rt.transcriptDirty = true
             rt.transcriptDirtySessionId = sessionId
+            sessionId?.let { id -> rt.observedSessionIds = rt.observedSessionIds + id }
             return
         }
         rt.readingRequestJob?.cancel()
@@ -3204,6 +3254,7 @@ class ChatViewModel(
                     ) {
                         rt.transcriptDirty = true
                         rt.transcriptDirtySessionId = sessionId
+            sessionId?.let { id -> rt.observedSessionIds = rt.observedSessionIds + id }
                     }
                     return@onSuccess
                 }
@@ -3235,15 +3286,25 @@ class ChatViewModel(
                     if (!TranscriptReadPolicy.isCurrent(localRevision, rt.localTranscriptRevision)) {
                         return@updateTab tab
                     }
-                    // Never let a transient/empty server read wipe optimistic messages;
-                    // only replace when the server transcript is a superset of what we show.
-                    // Equality guard: a dirty event can race a local sidecar
-                    // update; do not publish an equal UI transcript.
-                    if (lines.isNotEmpty() && lines != tab.readingMessages) {
+                    // B36: a genuine superset check, not "any nonempty
+                    // unequal transcript". An eventually-consistent read can
+                    // return OLD history while a new turn is streaming; the
+                    // old code accepted it and treated a trailing assistant
+                    // line as the new reply — finishing the turn early and
+                    // dropping the streaming content. Requirements now:
+                    // 1) the server lines must CONTAIN everything currently
+                    //    shown (optimistic user messages included);
+                    // 2) and be strictly longer — a pure reorder/less is
+                    //    ignored (stays dirty for a later read).
+                    val shown = tab.readingMessages
+                    val superset = shown.isEmpty() ||
+                        (lines.size > shown.size && lines.take(shown.size) == shown)
+                    if (superset && lines != shown) {
                         rt.readingSessionId = sessionId
-                        // The turn is done once the server transcript ends in an
-                        // assistant message — drop the working indicator + tool.
-                        val replyArrived = lines.lastOrNull()?.role == "assistant"
+                        // The turn is done only when the transcript grew past
+                        // the pre-turn length AND ends in an assistant message.
+                        val replyArrived = lines.size > shown.size &&
+                            lines.lastOrNull()?.role == "assistant"
                         shouldDrainQueue = replyArrived && tab.working && !rt.sidecarEventsSeen
                         tab.copy(
                             readingMessages = lines,
@@ -3264,6 +3325,7 @@ class ChatViewModel(
                 // failures that are unrelated to transport health.
                 rt.transcriptDirty = true
                 rt.transcriptDirtySessionId = sessionId
+            sessionId?.let { id -> rt.observedSessionIds = rt.observedSessionIds + id }
                 setReconciliationDelayed(tabId)
             }
         }
@@ -3588,6 +3650,7 @@ class ChatViewModel(
             event = event,
             connectionId = profile?.id,
             managementProfile = tab.profileName,
+            baseUrl = tabSnapshot(tabId)?.baseUrl,
         )
     }
 
@@ -3640,6 +3703,13 @@ class ChatViewModel(
         private const val LIVE_UPDATES_DELAYED_STATUS = "Live updates delayed; reconciling…"
         private const val SESSION_POLL_INTERVAL_MS = 30_000L
         private const val LOCAL_SESSION_DISCOVERY_TIMEOUT_MS = 60_000L
+
+        /**
+         * P05: auto-open only sessions active within this window. Older
+         * "open" sessions are history rows — visible in the rail, opened on
+         * demand, never granted sockets eagerly.
+         */
+        private const val AUTO_OPEN_RECENCY_MS = 10 * 60_000L
         private const val SERVER_STT_CAPABILITY_TTL_MS = 5 * 60 * 1000L
         private val ARGUMENT_HINT = Regex("""\[[^]]+]|<[^>]+>""")
 

@@ -40,12 +40,16 @@ data class AgentNotificationTarget(
     val sessionId: String?,
     val connectionId: String?,
     val managementProfile: String?,
+    /** S09: endpoint fingerprint bound when the notification was posted. */
+    val baseUrl: String? = null,
 )
 
 /** Immutable connection scope captured by the operation that created a notification. */
 data class NotificationScope(
     val connectionId: String?,
     val managementProfile: String?,
+    /** S09: endpoint fingerprint bound at capture time. */
+    val baseUrl: String? = null,
 )
 
 enum class TestNotificationResult {
@@ -283,7 +287,7 @@ class TalariaNotifier(
     ): Boolean {
         if (!hasPermission()) return false
         val capturedScope = scope ?: target?.let {
-            NotificationScope(it.connectionId, it.managementProfile)
+            NotificationScope(it.connectionId, it.managementProfile, it.baseUrl)
         }
         val quietHoursActive = QuietHoursPolicy.isActive(settings.quietHoursSettings())
         val openIntent = Intent(context, MainActivity::class.java).apply {
@@ -334,6 +338,7 @@ class TalariaNotifier(
                         NotificationActionReceiver.EXTRA_MANAGEMENT_PROFILE,
                         capturedScope?.managementProfile,
                     )
+                    putExtra(NotificationActionReceiver.EXTRA_BASE_URL, capturedScope?.baseUrl)
                 },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
             )
@@ -358,6 +363,7 @@ class TalariaNotifier(
                         NotificationActionReceiver.EXTRA_MANAGEMENT_PROFILE,
                         capturedScope?.managementProfile,
                     )
+                    putExtra(NotificationActionReceiver.EXTRA_BASE_URL, capturedScope?.baseUrl)
                 },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )

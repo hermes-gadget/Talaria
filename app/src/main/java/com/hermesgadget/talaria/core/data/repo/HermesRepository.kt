@@ -803,9 +803,12 @@ class HermesRepository(
     suspend fun getProfiles(force: Boolean = false): Result<List<ProfileInfo>> {
         if (!force) return cached("profiles") { api -> api.getProfiles().profiles }
         val operation = captureOperation()
+        // B77: capture the cache epoch before the fetch; a clear() during
+        // the request must not be undone by this stale write.
+        val observedEpoch = cache.currentEpoch
         return withContext(Dispatchers.IO) {
             suspendResult { operation.api.getProfiles().profiles }.onSuccess {
-                cache.put(cacheKey(operation.snapshot, "profiles"), it)
+                cache.put(cacheKey(operation.snapshot, "profiles"), it, observedEpoch = observedEpoch)
             }
         }
     }

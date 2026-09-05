@@ -495,6 +495,12 @@ class ArtifactsViewModel(
                 val text = (readTextSnapshot?.invoke(requestSnapshot, artifact.path)
                     ?: readText(artifact.path)).getOrThrow()
                 ensureCurrentScope(expectedScope)
+                // B45: the list-endpoint text preview is truncated at the
+                // preview budget; exporting it would silently write a
+                // partial file. Refuse rather than share incomplete data.
+                require(!text.truncated) {
+                    "${artifact.label} is too large to share from the preview — download the full file instead"
+                }
                 val bytes = text.text.toByteArray(Charsets.UTF_8)
                 require(bytes.size.toLong() <= MAX_SHARE_FILE_BYTES) {
                     "Artifact is too large to share"
