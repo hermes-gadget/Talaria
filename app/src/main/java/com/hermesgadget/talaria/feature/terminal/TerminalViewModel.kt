@@ -27,6 +27,8 @@ import com.hermesgadget.talaria.core.network.HermesEventClient
 import com.hermesgadget.talaria.core.network.HermesEventScope
 import com.hermesgadget.talaria.core.network.HermesSideEvent
 import com.hermesgadget.talaria.core.network.PtyEvent
+import com.hermesgadget.talaria.core.network.PtySendException
+import com.hermesgadget.talaria.core.network.PtySendReceipt
 import com.hermesgadget.talaria.core.network.PtyWebSocketSession
 import com.hermesgadget.talaria.domain.model.TerminalBackendsResponse
 import com.hermesgadget.talaria.core.util.suspendResult
@@ -274,9 +276,31 @@ class TerminalViewModel(
         val session = pty ?: return
         if (_ui.value.connection !is TerminalConnectionState.Connected) return
         val line = _ui.value.input
-        if (line.isNotBlank()) history.record(line)
-        session.sendText(line)
-        _ui.update { it.copy(input = "", sidecarError = null) }
+        handleInputSendResult(line, session.sendTextChecked(line))
+    }
+
+    internal fun handleInputSendResult(line: String, result: Result<PtySendReceipt>) {
+        val receipt = result.getOrNull()
+        val failure = result.exceptionOrNull()
+        val accepted = receipt?.accepted == true ||
+            (failure as? PtySendException)?.receipt?.accepted == true
+        if (result.isSuccess && accepted) {
+            if (line.isNotBlank()) history.record(line)
+            _ui.update { it.copy(input = "", sidecarError = null) }
+            return
+        }
+
+        val message = buildString {
+            append(failure?.message ?: "PTY did not confirm command delivery")
+            append(
+                if (accepted) {
+                    " Delivery may be partial; input was kept."
+                } else {
+                    " Input was kept for retry."
+                },
+            )
+        }
+        _ui.update { it.copy(sidecarError = message) }
     }
 
     private fun connect() {

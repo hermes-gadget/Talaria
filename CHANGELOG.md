@@ -2,6 +2,12 @@
 
 All notable Talaria changes are documented here. Versions below correspond to repository tags; there has never been a `1.0.0` release.
 
+## [Unreleased]
+
+### Fixed
+
+- Terminal input is preserved when the PTY cannot confirm command delivery.
+
 ## [0.9.2] — 2026-08-14
 
 2026-08-13 audit remediation (Waves 0–9): transport/persistence hardening,
