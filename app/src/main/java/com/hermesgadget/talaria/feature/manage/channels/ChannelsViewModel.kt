@@ -361,14 +361,29 @@ class ChannelsViewModel(
     private fun startTelegramPolling(pairingId: String) {
         cancelPolling(OnboardingPlatform.Telegram)
         pollJobs[OnboardingPlatform.Telegram] = viewModelScope.launch {
+            // B52: a single transient poll failure must not kill pairing — keep
+            // retrying up to a bounded streak and surface the error only after
+            // consecutive failures; a later success clears the error.
+            var consecutiveFailures = 0
             while (isActive) {
                 delay(pollIntervalMs.coerceAtLeast(250L))
                 val shouldContinue = suspendResult {
                     updateTelegramFromPoll(api.getTelegramOnboarding(pairingId), pairingId)
-                }.getOrElse { error ->
-                    setTelegramError(error, pairingId)
-                    false
-                }
+                }.fold(
+                    onSuccess = {
+                        consecutiveFailures = 0
+                        true
+                    },
+                    onFailure = { error ->
+                        consecutiveFailures += 1
+                        if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+                            setTelegramError(error, pairingId)
+                            false
+                        } else {
+                            true
+                        }
+                    },
+                )
                 if (!shouldContinue) break
             }
         }
@@ -377,14 +392,26 @@ class ChannelsViewModel(
     private fun startWhatsAppPolling(pairingId: String) {
         cancelPolling(OnboardingPlatform.WhatsApp)
         pollJobs[OnboardingPlatform.WhatsApp] = viewModelScope.launch {
+            var consecutiveFailures = 0
             while (isActive) {
                 delay(pollIntervalMs.coerceAtLeast(250L))
                 val shouldContinue = suspendResult {
                     updateWhatsAppFromPoll(api.getWhatsAppOnboarding(pairingId), pairingId)
-                }.getOrElse { error ->
-                    setWhatsAppError(error, pairingId)
-                    false
-                }
+                }.fold(
+                    onSuccess = {
+                        consecutiveFailures = 0
+                        true
+                    },
+                    onFailure = { error ->
+                        consecutiveFailures += 1
+                        if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+                            setWhatsAppError(error, pairingId)
+                            false
+                        } else {
+                            true
+                        }
+                    },
+                )
                 if (!shouldContinue) break
             }
         }
@@ -597,9 +624,12 @@ class ChannelsViewModel(
     override fun onCleared() {
         pollJobs.values.forEach { it.cancel() }
         pollJobs.clear()
-            }
+    }
 
     companion object {
+        /** B52: transient poll blips retry; the streak error surfaces after this many. */
+        private const val MAX_CONSECUTIVE_POLL_FAILURES = 3
+
         fun factory() = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = ChannelsViewModel() as T

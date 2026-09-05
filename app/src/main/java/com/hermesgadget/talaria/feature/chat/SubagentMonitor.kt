@@ -56,6 +56,9 @@ import com.hermesgadget.talaria.core.network.HermesSideEvent
 import com.hermesgadget.talaria.domain.model.ToolCallUi
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
 
 private enum class MonitorEntryKind { TOOL, PROMPT, DELEGATE, WORK }
@@ -364,15 +367,17 @@ private fun HermesSideEvent.toMonitorEntry(now: Long): MonitorEntry? = when (thi
             type.contains("subagent", ignoreCase = true) ||
             type.contains("agent", ignoreCase = true)
     ) {
-        val id = payload["subagent_id"]?.jsonPrimitive?.contentOrNull
-            ?: payload["delegate_id"]?.jsonPrimitive?.contentOrNull
-            ?: payload["id"]?.jsonPrimitive?.contentOrNull
+        // B43: jsonPrimitive throws on object/array values — server payloads are
+        // untrusted, so every raw field goes through the safe scalar helper.
+        val id = payload.str("subagent_id")
+            ?: payload.str("delegate_id")
+            ?: payload.str("id")
             ?: type
-        val name = payload["goal"]?.jsonPrimitive?.contentOrNull
-            ?: payload["task"]?.jsonPrimitive?.contentOrNull
-            ?: payload["name"]?.jsonPrimitive?.contentOrNull
+        val name = payload.str("goal")
+            ?: payload.str("task")
+            ?: payload.str("name")
             ?: type
-        val status = payload["status"]?.jsonPrimitive?.contentOrNull?.uppercase()
+        val status = payload.str("status")?.uppercase()
             ?: if (type.contains("complete", ignoreCase = true) || type.contains("done", ignoreCase = true)) {
                 "DONE"
             } else {
@@ -383,10 +388,10 @@ private fun HermesSideEvent.toMonitorEntry(now: Long): MonitorEntry? = when (thi
             kind = MonitorEntryKind.DELEGATE,
             name = name,
             status = status,
-            args = payload["tool_preview"]?.jsonPrimitive?.contentOrNull
+            args = payload.str("tool_preview")
                 ?: payload["args"]?.toString(),
-            message = payload["summary"]?.jsonPrimitive?.contentOrNull
-                ?: payload["text"]?.jsonPrimitive?.contentOrNull,
+            message = payload.str("summary")
+                ?: payload.str("text"),
             startedAt = now,
             updatedAt = now,
         )
@@ -394,6 +399,13 @@ private fun HermesSideEvent.toMonitorEntry(now: Long): MonitorEntry? = when (thi
 
     else -> null
 }
+
+/**
+ * B43: reads a scalar string field from an untrusted payload without throwing —
+ * jsonPrimitive would throw IllegalArgumentException on object/array values.
+ */
+private fun JsonObject.str(key: String): String? =
+    (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.contentOrNull
 
 private fun upsertMonitorEntry(entries: List<MonitorEntry>, entry: MonitorEntry): List<MonitorEntry> {
     val index = entries.indexOfFirst { it.id == entry.id }

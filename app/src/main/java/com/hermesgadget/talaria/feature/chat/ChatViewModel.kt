@@ -837,6 +837,15 @@ class ChatViewModel(
         runtime.transport.start()
     }
 
+    /**
+     * B43: the subagent monitor must observe the ACTIVE tab's event client,
+     * not the container's shared stream — the shared client aggregates every
+     * profile/session and shows foreign rows. Falls back to the container
+     * client only when the tab has no runtime yet.
+     */
+    fun activeTabEventClient(tabId: String?): HermesEventClient? =
+        tabId?.let { id -> runtimes[id]?.eventClient }
+
     fun reconnectTab(tabId: String) {
         val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return
         val existing = runtimes[tabId]
@@ -1281,14 +1290,19 @@ class ChatViewModel(
         // Close auto-opened tabs whose sessions have ended or been reset
         // (e.g. /new on Discord). Idle-but-running sessions stay open —
         // the server's is_active flag uses a 5-minute activity window.
-        val stillActive = registry.sessionsByProfile[activeProfile].orEmpty()
-            .filter { it.end_reason == null && it.ended_at == null }
-            .map { it.id }
-            .toSet()
+        // B35: build the still-active set across EVERY profile in the
+        // registry — the active profile's list alone would close tabs
+        // belonging to other profiles. Also only prune against a registry
+        // that actually reported this tab's profile (an incomplete poll
+        // must not close anything).
+        val stillActiveByProfile = registry.sessionsByProfile.mapValues { (_, sessions) ->
+            sessions.filter { it.end_reason == null && it.ended_at == null }.map { it.id }.toSet()
+        }
         autoOpenedTabs.toList().forEach { tabId ->
             val tab = _ui.value.tabs.firstOrNull { it.id == tabId } ?: return@forEach
             val sessionId = tab.resumeSessionId ?: tab.liveSessionId ?: return@forEach
-            if (sessionId !in stillActive) {
+            val activeForProfile = stillActiveByProfile[tab.profileName] ?: return@forEach
+            if (sessionId !in activeForProfile) {
                 closeAutoTab(tabId)
             }
         }

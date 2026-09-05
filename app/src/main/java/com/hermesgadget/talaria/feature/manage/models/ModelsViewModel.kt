@@ -238,6 +238,13 @@ class ModelsViewModel(
                 recommendedDefaults = emptyMap(),
                 recommendedLoading = emptySet(),
                 recommendedErrors = emptyMap(),
+                // B60: cancelWork() kills an in-flight setModel; without
+                // resetting these the spinner never clears and the models
+                // screen is stuck "setting" until process death.
+                setting = null,
+                pendingProvider = null,
+                pendingModel = null,
+                confirmMessage = null,
             )
         }
         launchWork {
@@ -297,9 +304,16 @@ class ModelsViewModel(
             suspendResult { requestApi.putMoaConfig(config.toJson(), profile) }.fold(
                 onSuccess = { response ->
                     if (isCurrentScope(expectedScope)) {
+                        // B61: an ack payload ({"ok":true}) has no presets — parsing
+                        // it would fabricate a "default" preset from the ack and
+                        // replace the configuration the user just saved. Only adopt
+                        // responses that genuinely carry a preset set.
+                        val hasPresets = (response as? JsonObject)?.containsKey("presets") == true
+                        val parsed = parseMoaConfig(response)?.takeIf { hasPresets && it.presets.isNotEmpty() }
+                        val adopted = parsed
                         _ui.update {
                             it.copy(
-                                moa = parseMoaConfig(response) ?: config,
+                                moa = adopted ?: config,
                                 moaSaving = false,
                                 moaSaved = true,
                                 moaError = null,

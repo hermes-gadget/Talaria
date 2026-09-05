@@ -359,6 +359,8 @@ internal class KanbanViewModel(
 
     fun patchKanbanTask(taskId: String, body: JsonObject) = mutate(
         block = { api.patchKanbanTask(taskId, body) },
+        // B57: a patched task's open detail must not show pre-patch data.
+        onSuccess = { refreshOpenTaskIfCurrent(taskId) },
     )
 
     fun deleteKanbanTask(taskId: String) {
@@ -400,6 +402,15 @@ internal class KanbanViewModel(
                 if (generation == taskGeneration) _task.value = KanbanTaskState.Failure(error.message)
             }
         }
+    }
+
+    /**
+     * B57: after mutating a task, its open detail sheet must reflect the new
+     * state — re-fetch only when this task is still the one on screen.
+     */
+    private fun refreshOpenTaskIfCurrent(taskId: String) {
+        val current = _task.value as? KanbanTaskState.Content ?: return
+        if (current.value.task.id == taskId) openTask(taskId)
     }
 
     fun closeTask() {

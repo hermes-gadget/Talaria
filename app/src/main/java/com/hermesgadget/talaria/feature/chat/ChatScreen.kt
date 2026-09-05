@@ -1308,7 +1308,11 @@ fun ChatScreen(
             if (monitorOpen) {
                 SubagentMonitor(
                     active = active,
-                    eventClient = TalariaApp.instance.container.eventClient,
+                    // B43: use the active tab's own event client — the container's
+                    // shared stream mixes events from all tabs/profiles and would
+                    // populate the monitor with foreign tool rows.
+                    eventClient = vm.activeTabEventClient(active?.id)
+                        ?: TalariaApp.instance.container.eventClient,
                     onDismiss = { monitorOpen = false },
                 )
             }

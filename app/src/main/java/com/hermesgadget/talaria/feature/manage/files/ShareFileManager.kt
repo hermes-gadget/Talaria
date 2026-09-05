@@ -450,6 +450,7 @@ class ShareFileManager(
      * every file owned by another process (or a legacy unmarked partial).
      */
     private fun sweepTransferFilesLocked() {
+        val now = nowMillis()
         TRANSFER_DIRECTORIES
             .map { File(cacheDirectory, it) }
             .filter(File::isDirectory)
@@ -458,10 +459,14 @@ class ShareFileManager(
                 if (!file.name.contains(ownerToken)) file.delete()
             }
 
-        // Partial share files are never safe to expose to a chooser.
+        // B56: partial share files in the chooser-visible legacy directories are
+        // never safe to expose — but a FRESH partial may belong to a live write
+        // started just before process recreation, so age-gate the deletion.
         allShareFiles()
             .filter { it.name.endsWith(PARTIAL_SUFFIX) && !it.name.contains(ownerToken) }
-            .forEach { it.delete() }
+            .forEach { file ->
+                if (safeExpiry(file.lastModified()) <= now) file.delete()
+            }
     }
 
     private fun enforceCacheLimitLocked(now: Long) {

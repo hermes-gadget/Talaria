@@ -66,6 +66,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -435,18 +436,18 @@ private fun parseDailyBars(daily: kotlinx.serialization.json.JsonElement?): List
                     DailyBar("", v)
                 }
                 is JsonObject -> {
-                    val v = el["tokens"]?.jsonPrimitive?.doubleOrNull
-                        ?: el["total"]?.jsonPrimitive?.doubleOrNull
-                        ?: el["count"]?.jsonPrimitive?.doubleOrNull
-                        ?: el["value"]?.jsonPrimitive?.doubleOrNull
+                    val v = el["tokens"]?.scalar()?.doubleOrNull
+                        ?: el["total"]?.scalar()?.doubleOrNull
+                        ?: el["count"]?.scalar()?.doubleOrNull
+                        ?: el["value"]?.scalar()?.doubleOrNull
                         ?: run {
-                            val input = el["input_tokens"]?.jsonPrimitive?.longOrNull
-                            val output = el["output_tokens"]?.jsonPrimitive?.longOrNull
+                            val input = el["input_tokens"]?.scalar()?.longOrNull
+                            val output = el["output_tokens"]?.scalar()?.longOrNull
                             if (input != null || output != null) (input ?: 0L).toDouble() + (output ?: 0L) else null
                         }
                         ?: return@mapNotNull null
-                    val label = el["date"]?.jsonPrimitive?.contentOrNull
-                        ?: el["day"]?.jsonPrimitive?.contentOrNull
+                    val label = el["date"]?.scalar()?.contentOrNull
+                        ?: el["day"]?.scalar()?.contentOrNull
                         ?: ""
                     DailyBar(label, v)
                 }
@@ -456,8 +457,8 @@ private fun parseDailyBars(daily: kotlinx.serialization.json.JsonElement?): List
         is JsonObject -> daily.entries.mapNotNull { (k, v) ->
             val num = when (v) {
                 is JsonPrimitive -> v.doubleOrNull ?: v.longOrNull?.toDouble()
-                is JsonObject -> v["tokens"]?.jsonPrimitive?.doubleOrNull
-                    ?: v["total"]?.jsonPrimitive?.doubleOrNull
+                is JsonObject -> v["tokens"]?.scalar()?.doubleOrNull
+                    ?: v["total"]?.scalar()?.doubleOrNull
                 else -> null
             } ?: return@mapNotNull null
             DailyBar(k, num)
@@ -465,3 +466,9 @@ private fun parseDailyBars(daily: kotlinx.serialization.json.JsonElement?): List
         else -> emptyList()
     }
 }
+
+/**
+ * B46: safe scalar view of an untrusted JSON element — `jsonPrimitive` throws
+ * IllegalArgumentException on object/array values during composition.
+ */
+private fun JsonElement?.scalar(): JsonPrimitive? = (this as? JsonPrimitive)?.takeIf { it !is JsonNull }

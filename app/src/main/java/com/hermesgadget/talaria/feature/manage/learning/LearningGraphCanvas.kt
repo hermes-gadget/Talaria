@@ -193,8 +193,14 @@ private fun LearningGraphCanvas(
         val byId = layout.byId
 
         withTransform({
-            translate(center.x + pan.x, center.y + pan.y)
-            scale(zoom, zoom)
+            // B58: the matrix must invert the hit-test transform
+            // world = (screen - center - pan) / zoom + center
+            // i.e. screen = pan + center + (world - center) * zoom.
+            // translate(pan) then scale around `center` yields exactly that;
+            // the old translate(center + pan) double-counted the center and
+            // drifted taps away from the drawn nodes as pan/zoom grew.
+            translate(pan.x, pan.y)
+            scale(zoom, zoom, pivot = center)
         }) {
             val ringStep = minOf(size.width, size.height) * 0.13f
             for (ring in 1..3) {
