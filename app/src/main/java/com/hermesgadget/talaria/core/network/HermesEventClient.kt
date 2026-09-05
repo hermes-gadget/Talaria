@@ -314,7 +314,7 @@ class HermesEventClient(
             authRegistration
         }
         publish(
-            HermesSideEvent.TransportError("auth", "No active connection profile"),
+            HermesSideEvent.TransportError("auth", "No active connection profile", terminal = true),
             registration,
         )
     }
@@ -543,7 +543,7 @@ class HermesEventClient(
             query = listOf("channel" to channel, "profile" to snapshot.managementProfile),
         ) ?: run {
             publish(
-                HermesSideEvent.TransportError("events", "Invalid dashboard URL"),
+                HermesSideEvent.TransportError("events", "Invalid dashboard URL", terminal = true),
                 registration,
             )
             return
@@ -598,7 +598,7 @@ class HermesEventClient(
                     if (!isCurrentSocket(registration, webSocket)) return
                     if (isTerminalCloseCode(code)) {
                         publish(
-                            HermesSideEvent.TransportError("events", closeMessage(code, reason)),
+                            HermesSideEvent.TransportError("events", closeMessage(code, reason), terminal = true),
                             registration,
                         )
                         markSocketClosed(registration)
@@ -693,7 +693,7 @@ class HermesEventClient(
                     if (!isCurrentSocket(registration, webSocket)) return
                     if (isTerminalCloseCode(code)) {
                         publish(
-                            HermesSideEvent.TransportError("ws", closeMessage(code, reason)),
+                            HermesSideEvent.TransportError("ws", closeMessage(code, reason), terminal = true),
                             registration,
                         )
                         markSocketClosed(registration)
@@ -1404,6 +1404,15 @@ sealed class HermesSideEvent {
         val costUsd: Double?,
     ) : HermesSideEvent()
 
-    data class TransportError(val socket: String, val message: String) : HermesSideEvent()
+    /**
+     * B22: [terminal] marks errors that must end a foreground monitor (auth
+     * rejection, invalid URL, permanent close). Notification watchers key on
+     * this flag instead of fragile string matching.
+     */
+    data class TransportError(
+        val socket: String,
+        val message: String,
+        val terminal: Boolean = false,
+    ) : HermesSideEvent()
     data class Raw(val type: String, val payload: JsonObject) : HermesSideEvent()
 }

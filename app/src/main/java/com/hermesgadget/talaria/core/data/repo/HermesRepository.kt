@@ -875,12 +875,21 @@ class HermesRepository(
             .also { invalidate(operation.snapshot, "profiles") }
     }
 
-    suspend fun renameSession(id: String, title: String) = withBoundOperation { operation ->
+    /** B34: [snapshot] targets a specific tab's profile; null uses the active scope. */
+    suspend fun renameSession(
+        id: String,
+        title: String,
+        snapshot: ConnectionSnapshot? = null,
+    ) = withBoundOperation(snapshot) { operation ->
         operation.api.patchSession(id, buildJsonObject { put("title", title) })
         Unit
     }
 
-    suspend fun deleteSession(id: String) = withBoundOperation { operation ->
+    /** B34: [snapshot] targets a specific tab's profile; null uses the active scope. */
+    suspend fun deleteSession(
+        id: String,
+        snapshot: ConnectionSnapshot? = null,
+    ) = withBoundOperation(snapshot) { operation ->
         operation.api.deleteSession(id, profile = operation.snapshot.managementProfile)
         db.deleteSessionCache(operation.snapshot.scopeId, id)
         pruneTranscriptSession(operation.snapshot, id)
@@ -888,7 +897,10 @@ class HermesRepository(
         Unit
     }
 
-    suspend fun searchSessions(query: String): Result<List<SessionSummary>> = withBoundOperation { operation ->
+    suspend fun searchSessions(
+        query: String,
+        snapshot: ConnectionSnapshot? = null,
+    ): Result<List<SessionSummary>> = withBoundOperation(snapshot) { operation ->
         parseSessions(operation.api.searchSessions(query))
     }
 

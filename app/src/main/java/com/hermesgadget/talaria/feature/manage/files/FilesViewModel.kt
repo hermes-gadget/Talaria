@@ -540,8 +540,12 @@ class FilesViewModel(
         if (scopeFlow != null && boundScope == null) return
         val displayName = contentDisplayName(resolver, uri)
             .ifBlank { appString(R.string.files_upload_default_name) }
+        // S06: a document provider can supply an absolute path or "../name"
+        // as the display name; the old getOrDefault(displayName) fallback
+        // failed OPEN and let the upload target leave the managed root.
+        // Rejection now sanitizes to a leaf name instead of trusting input.
         val targetPath = runCatching { joinManagedPath(_ui.value.path, displayName) }
-            .getOrDefault(displayName)
+            .getOrElse { joinManagedPath(_ui.value.path, sanitizeManagedFileName(displayName)) }
         uploadResolver = resolver
         _ui.update {
             it.copy(
@@ -556,6 +560,13 @@ class FilesViewModel(
             )
         }
     }
+
+    private fun sanitizeManagedFileName(name: String): String =
+        name.trim()
+            .replace(Regex("[/\\\\]"), "_")
+            .filterNot(Char::isISOControl)
+            .takeIf { it.isNotBlank() && it != "." && it != ".." }
+            ?: appString(R.string.files_upload_default_name)
 
     fun cancelUploadSelection() {
         uploadResolver = null

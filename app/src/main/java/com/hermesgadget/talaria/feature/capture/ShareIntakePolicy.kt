@@ -35,6 +35,26 @@ internal object ShareIntakePolicy {
     fun normalizeUri(uri: String): String {
         val normalized = uri.trim()
         require(normalized.length <= MAX_URI_CHARS) { "Shared URI is too long" }
+        // RFC 3986 scheme prefix without touching android.net.Uri (tests run
+        // on the JVM): "<scheme>:" up to the first of ?:/#. Scheme-less text
+        // is treated as a plain URL by the server and is not a local-read
+        // risk, so it passes.
+        val colon = normalized.indexOf(':')
+        val scheme = if (colon <= 0) "" else {
+            val candidate = normalized.substring(0, colon)
+            val valid = candidate.isNotEmpty() &&
+                candidate[0].isLetter() &&
+                candidate.all { it.isLetterOrDigit() || it in "+-." }
+            if (!valid) throw IllegalArgumentException("Unsupported shared URI scheme")
+            candidate.lowercase()
+        }
+        when (scheme) {
+            // http(s) URLs are inert (fetched by the server); content:// URIs
+            // are re-validated against the granting app at open time (see
+            // ShareCaptureViewModel's grant probe).
+            "", "http", "https", "content" -> Unit
+            else -> throw IllegalArgumentException("Unsupported shared URI scheme")
+        }
         return normalized
     }
 

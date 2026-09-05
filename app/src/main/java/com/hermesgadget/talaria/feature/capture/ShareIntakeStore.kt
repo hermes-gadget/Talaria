@@ -100,17 +100,25 @@ class ShareIntakeStore(
         }
     }
 
+    /**
+     * B32: the commit Boolean was discarded, so a failed SENDING journal
+     * write silently produced "persisted" state and the delivery proceeded
+     * on an unrecoverable path. Commit failures now throw so the caller can
+     * stop before consuming the share.
+     */
     @Synchronized
     fun save(draft: ShareIntakeDraft) {
         if (draft.scopeId.isBlank()) return
-        prefs.edit(commit = true) {
-            putString(key(draft.scopeId), JsonConfig.json.encodeToString(draft))
-        }
+        val committed = prefs.edit()
+            .putString(key(draft.scopeId), JsonConfig.json.encodeToString(draft))
+            .commit()
+        check(committed) { "Could not persist share journal state" }
     }
 
     @Synchronized
     fun remove(draft: ShareIntakeDraft) {
-        prefs.edit(commit = true) { remove(key(draft.scopeId)) }
+        val committed = prefs.edit().remove(key(draft.scopeId)).commit()
+        check(committed) { "Could not persist share journal removal" }
     }
 
     /** Clean stale metadata and its owned files across all profile scopes. */

@@ -378,7 +378,12 @@ class AgentTaskNotificationService : Service() {
     }
 
     private fun HermesSideEvent.TransportError.isTerminalMonitorError(): Boolean =
-        socket == "auth" || message == "Invalid dashboard URL" || message.startsWith("reconnect failed")
+        // B22: key on the typed flag; keep the legacy string checks as a
+        // fallback for messages emitted before the flag existed.
+        terminal ||
+            socket == "auth" ||
+            message == "Invalid dashboard URL" ||
+            message.startsWith("reconnect failed")
 
     private fun Intent.readWatch(): PersistedAgentWatch? {
         val watcherId = getStringExtra(EXTRA_WATCHER_ID)?.takeIf(String::isNotBlank) ?: return null
