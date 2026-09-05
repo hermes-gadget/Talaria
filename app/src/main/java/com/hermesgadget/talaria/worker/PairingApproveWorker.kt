@@ -21,6 +21,7 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.hermesgadget.talaria.TalariaApp
+import com.hermesgadget.talaria.core.network.ConnectionOrigin
 import kotlinx.coroutines.CancellationException
 import retrofit2.HttpException
 
@@ -35,7 +36,13 @@ class PairingApproveWorker(
         val container = TalariaApp.instance.container
         val expectedConnectionId = inputData.getString(KEY_CONNECTION_ID) ?: return Result.failure()
         val expectedProfile = inputData.getString(KEY_MANAGEMENT_PROFILE).orEmpty()
+        // S09: an approval must go to the endpoint the pairing prompt came
+        // from; an edited endpoint after queueing invalidates the action.
+        val expectedBaseUrl = inputData.getString(KEY_BASE_URL).orEmpty()
+        val expectedOrigin = expectedBaseUrl.takeIf { it.isNotBlank() }
+            ?.let(ConnectionOrigin::normalize)
         val snapshot = container.clientFactory.snapshotFor(expectedConnectionId, expectedProfile)
+            ?.takeIf { expectedOrigin == null || ConnectionOrigin.normalize(it.baseUrl) == expectedOrigin }
             ?: return Result.failure()
         // The request and its auth/profile query are now bound to this snapshot;
         // a foreground connection switch cannot redirect the approval.
@@ -63,6 +70,7 @@ class PairingApproveWorker(
         const val KEY_CODE = "code"
         const val KEY_CONNECTION_ID = "connection_id"
         const val KEY_MANAGEMENT_PROFILE = "management_profile"
+        const val KEY_BASE_URL = "base_url"
         private const val MAX_RETRIES = 3
     }
 }

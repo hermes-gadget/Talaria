@@ -654,11 +654,24 @@ class ConnectViewModel(
                         error = "No token found — is this the dashboard's web UI, and is it reachable?",
                     )
                 } else {
-                    _ui.value = _ui.value.copy(
-                        tokenFetching = false,
-                        sessionToken = AuthInterceptor.sanitizeToken(token),
-                        statusLine = "Token fetched from dashboard",
-                    )
+                    // S05: the fetch was for THIS draft (URL captured above).
+                    // After suspension the user may have edited the URL or
+                    // switched drafts; writing the token into whatever is
+                    // current now would bind a credential to the wrong host.
+                    val live = _ui.value
+                    val liveBaseUrl = live.baseUrl.trim().trimEnd('/')
+                    if (liveBaseUrl != base) {
+                        _ui.value = live.copy(
+                            tokenFetching = false,
+                            error = "URL changed while fetching — fetch again for the new address",
+                        )
+                    } else {
+                        _ui.value = live.copy(
+                            tokenFetching = false,
+                            sessionToken = AuthInterceptor.sanitizeToken(token),
+                            statusLine = "Token fetched from dashboard",
+                        )
+                    }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled

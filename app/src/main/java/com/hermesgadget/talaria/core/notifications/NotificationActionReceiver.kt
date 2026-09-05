@@ -48,6 +48,8 @@ class NotificationActionReceiver : BroadcastReceiver() {
                                     intent.getStringExtra(EXTRA_CONNECTION_ID),
                                 PairingApproveWorker.KEY_MANAGEMENT_PROFILE to
                                     intent.getStringExtra(EXTRA_MANAGEMENT_PROFILE).orEmpty(),
+                                PairingApproveWorker.KEY_BASE_URL to
+                                    intent.getStringExtra(EXTRA_BASE_URL).orEmpty(),
                             ),
                         )
                         .build()
@@ -85,6 +87,8 @@ class NotificationActionReceiver : BroadcastReceiver() {
                                     ReplyWorker.KEY_CONNECTION_ID to intent.getStringExtra(EXTRA_CONNECTION_ID),
                                     ReplyWorker.KEY_MANAGEMENT_PROFILE to
                                         intent.getStringExtra(EXTRA_MANAGEMENT_PROFILE).orEmpty(),
+                                    ReplyWorker.KEY_BASE_URL to
+                                        intent.getStringExtra(EXTRA_BASE_URL).orEmpty(),
                                 ),
                             )
                             .build()
@@ -120,6 +124,8 @@ class NotificationActionReceiver : BroadcastReceiver() {
         const val EXTRA_PAIR_CODE = "pair_code"
         const val EXTRA_CONNECTION_ID = "connection_id"
         const val EXTRA_MANAGEMENT_PROFILE = "management_profile"
+        /** S09: endpoint fingerprint bound when the notification was posted. */
+        const val EXTRA_BASE_URL = "base_url"
         const val KEY_REPLY = "talaria_reply"
     }
 }

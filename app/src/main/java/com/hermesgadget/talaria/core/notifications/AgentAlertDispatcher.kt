@@ -24,6 +24,7 @@ class AgentAlertDispatcher(private val notifier: TalariaNotifier) {
         event: HermesSideEvent,
         connectionId: String?,
         managementProfile: String?,
+        baseUrl: String? = null,
     ): AgentAlert? {
         val alert = AgentNotificationPolicy.alert(identity, event) ?: return null
         val target = AgentNotificationTarget(
@@ -32,6 +33,7 @@ class AgentAlertDispatcher(private val notifier: TalariaNotifier) {
             sessionId = alert.sessionId,
             connectionId = connectionId,
             managementProfile = managementProfile,
+            baseUrl = baseUrl,
         )
         when (alert) {
             is AgentAlert.PermissionRequired -> notifier.notifyAgentPermission(

@@ -208,6 +208,102 @@ class ShareFileManager(
     suspend fun deleteOwnedFileOnIo(file: File?): Boolean =
         withContext(Dispatchers.IO) { deleteOwnedFile(file) }
 
+    private fun writeOwnedFileUncontended(
+        directoryName: String,
+        prefix: String,
+        suffix: String,
+        source: InputStream,
+        declaredBytes: Long,
+        maxBytes: Long,
+        onProgress: (copied: Long, total: Long) -> Unit,
+        beforeRead: () -> Unit,
+        enforceShareQuota: Boolean,
+        retentionMillis: Long? = null,
+        retentionPrefix: String = prefix,
+        maxRetainedBytes: Long = Long.MAX_VALUE,
+        maxRetainedFiles: Int = Int.MAX_VALUE,
+    ): File {
+        // P08: identical semantics to writeOwnedFile, but the stream copy
+        // runs WITHOUT this instance's monitor. The lock is taken only for
+        // the reservation/cleanup preamble and the finalize/sweep epilogue.
+        // The copy loop itself is safe to run concurrently: each transfer
+        // writes to its own unique partial file.
+        // Reservation phase: serialized. Copy phase: unlocked. Finalize
+        // phase: serialized again.
+        val now = nowMillis()
+        synchronized(this) {
+            cleanupStaleFilesLocked(now)
+            if (retentionMillis != null) {
+                cleanupManagedDownloadsLocked(now, retentionPrefix, retentionMillis)
+                if (!hasManagedCapacityLocked(
+                        prefix = retentionPrefix,
+                        incomingBytes = declaredBytes.takeIf { it >= 0L } ?: 0L,
+                        maxBytes = maxRetainedBytes,
+                        maxFiles = maxRetainedFiles,
+                    )
+                ) {
+                    error("Managed share cache is full")
+                }
+            }
+            if (enforceShareQuota && !hasShareCapacityLocked(declaredBytes.takeIf { it >= 0L } ?: 0L)) {
+                error("Share cache is full")
+            }
+        }
+        val partial = createOwnedPartial(directoryName, prefix, suffix)
+        var completed = false
+        try {
+            source.use { input ->
+                partial.outputStream().use { output ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var copied = 0L
+                    while (true) {
+                        beforeRead()
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        require(copied <= maxBytes - count) {
+                            "Payload exceeds the ${maxBytes / (1024 * 1024)} MiB limit"
+                        }
+                        output.write(buffer, 0, count)
+                        copied += count
+                        onProgress(copied, declaredBytes)
+                    }
+                    onProgress(copied, declaredBytes)
+                }
+            }
+            val completedFile = File(partial.parentFile, partial.name.removeSuffix(PARTIAL_SUFFIX))
+            completedFile.setLastModified(now)
+            synchronized(this) {
+                check(partial.renameTo(completedFile)) { "Could not finalize owned file" }
+                if (enforceShareQuota) {
+                    expirations[completedFile.absolutePath] = safeExpiry(now)
+                    enforceCacheLimitLocked(now)
+                    if (!hasShareCapacityLocked(0L, includesCandidate = true)) {
+                        deleteTrackedFileLocked(completedFile)
+                        error("Share cache is full")
+                    }
+                }
+                if (retentionMillis != null && !hasManagedCapacityLocked(
+                        prefix = retentionPrefix,
+                        incomingBytes = 0L,
+                        maxBytes = maxRetainedBytes,
+                        maxFiles = maxRetainedFiles,
+                        includesCandidate = true,
+                    )
+                ) {
+                    deleteTrackedFileLocked(completedFile)
+                    error("Managed share cache is full")
+                }
+            }
+            completed = true
+            return completedFile
+        } finally {
+            if (!completed) {
+                // Best-effort cleanup of the orphaned partial.
+                runCatching { partial.delete() }
+            }
+        }
+    }
+
     private fun writeOwnedFile(
         directoryName: String,
         prefix: String,
@@ -222,6 +318,7 @@ class ShareFileManager(
         retentionPrefix: String = prefix,
         maxRetainedBytes: Long = Long.MAX_VALUE,
         maxRetainedFiles: Int = Int.MAX_VALUE,
+        holdLockDuringCopy: Boolean = true,
     ): File {
         require(declaredBytes < 0L || declaredBytes <= maxBytes) {
             "Payload exceeds the ${maxBytes / (1024 * 1024)} MiB limit"

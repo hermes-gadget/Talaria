@@ -60,6 +60,20 @@ class SpeechCoordinator(
 
     fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(context)
 
+    /**
+     * S01: on-device recognition capability. If it cannot be proven, treat
+     * on-device as unavailable — fail closed rather than risk an implicit
+     * cloud upload.
+     */
+    private fun onDeviceSttAvailable(): Boolean = try {
+        context.packageManager
+            .getSystemAvailableFeatures()
+            .any { it.name == PackageManager.FEATURE_MICROPHONE } &&
+            SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+    } catch (_: Throwable) {
+        false
+    }
+
     fun hasMicPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
@@ -75,7 +89,6 @@ class SpeechCoordinator(
             close()
             return@callbackFlow
         }
-
         val closed = AtomicBoolean(false)
         val terminal = AtomicBoolean(false)
         val cleanupScheduled = AtomicBoolean(false)
@@ -93,10 +106,35 @@ class SpeechCoordinator(
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-            // Prefer on-device when available; cloud only with explicit opt-in.
-            if (!settings.cloudSttOptIn) {
+            // S01: EXTRA_PREFER_OFFLINE is advisory — an implementation may
+            // ignore it and ship audio to cloud STT anyway. When the user has
+            // NOT opted into cloud dictation, dictation is disabled outright
+            // unless the device advertises on-device capability; the
+            // coordinator's caller already surfaces a clear "unavailable"
+            // state instead of a silent cloud upload.
+            if (!settings.cloudSttOptIn && !onDeviceSttAvailable()) {
                 putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             }
+        }
+
+        /**
+         * S01: with cloud STT opted out, recognition may only start when the
+         * device actually supports on-device recognition. Capability gate,
+         * not a preference.
+         */
+        fun cloudUploadForbidden(): Boolean =
+            !settings.cloudSttOptIn && !onDeviceSttAvailable()
+
+        // S01: never start a recognizer that could upload audio to cloud STT
+        // when the user has opted out and on-device capability is unproven.
+        if (cloudUploadForbidden()) {
+            trySend(
+                SttEvent.Error(
+                    "Dictation unavailable: no on-device speech engine and cloud STT is disabled",
+                ),
+            )
+            close()
+            return@callbackFlow
         }
 
         fun scheduleListen(delayMs: Long = 0L) {
