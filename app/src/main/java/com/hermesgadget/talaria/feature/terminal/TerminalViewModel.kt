@@ -83,7 +83,8 @@ class TerminalViewModel(
     private var eventClient: HermesEventClient? = null
     private var ptyJob: Job? = null
     private var sidecarJob: Job? = null
-    private var backendJob: Job? = null
+    private var backendLoadJob: Job? = null
+    private var backendSelectJob: Job? = null
     private var connectionGeneration = 0L
     private var explicitlyDisconnected = false
     private var boundScope: ConnectionScope? = scopeFlow?.value
@@ -102,7 +103,8 @@ class TerminalViewModel(
     private fun rebind(next: ConnectionScope?) {
         boundScope = next
         connectionGeneration += 1
-        backendJob?.cancel()
+        backendLoadJob?.cancel()
+        backendSelectJob?.cancel()
         closeTransport()
         explicitlyDisconnected = false
         history = TerminalInputHistory()
@@ -150,8 +152,8 @@ class TerminalViewModel(
         val snapshot = expectedScope?.snapshot ?: container.clientFactory.snapshot() ?: return
         val requestApi = container.clientFactory.api(snapshot)
         val profile = snapshot.managementProfile
-        backendJob?.cancel()
-        backendJob = viewModelScope.launch {
+        backendLoadJob?.cancel()
+        backendLoadJob = viewModelScope.launch {
             _ui.update { it.copy(backendsLoading = true, backendError = null) }
             suspendResult {
                 requestApi.getTerminalBackends(profile)
@@ -190,8 +192,8 @@ class TerminalViewModel(
         val requestApi = container.clientFactory.api(snapshot)
         val profile = snapshot.managementProfile
         if (requested.isEmpty() || _ui.value.backendSelecting != null) return
-        backendJob?.cancel()
-        backendJob = viewModelScope.launch {
+        backendSelectJob?.cancel()
+        backendSelectJob = viewModelScope.launch {
             _ui.update { it.copy(backendSelecting = requested, backendError = null) }
             suspendResult {
                 requestApi.selectTerminalBackend(
@@ -396,7 +398,8 @@ class TerminalViewModel(
     override fun onCleared() {
         explicitlyDisconnected = true
         connectionGeneration += 1
-        backendJob?.cancel()
+        backendLoadJob?.cancel()
+        backendSelectJob?.cancel()
         closeTransport()
             }
 
