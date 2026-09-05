@@ -122,10 +122,15 @@ fun ApiKeysScreen() {
             modifier = Modifier.padding(vertical = 4.dp),
         ) {
             Button(onClick = {
+                // B47: capture what is being saved — if the user edits the fields
+                // while the request is in flight, a stale completion must not
+                // wipe the newer input.
+                val savedKey = key
+                val savedValue = value
                 scope.launch {
-                    repo.setEnv(key, value).onSuccess {
-                        key = ""
-                        value = ""
+                    repo.setEnv(savedKey, savedValue).onSuccess {
+                        if (key == savedKey) key = ""
+                        if (value == savedValue) value = ""
                         tip = "Saved. Send /reload in Chat (or start a new session) for some keys."
                         reload()
                     }.onFailure { error = it.message }

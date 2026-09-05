@@ -91,10 +91,17 @@ class HermesCronGateway(
 
     override suspend fun load(): CronSnapshot {
         val profile = profile()
+        // B53: delivery targets and blueprints are optional endpoints — older
+        // servers may 404 them, and one missing endpoint must not fail the
+        // whole scheduler screen. Jobs stay load-bearing.
+        val targets = suspendResult { parseDeliveryTargets(api.getCronDeliveryTargetsRaw(profile)) }
+            .getOrElse { emptyList() }
+        val blueprints = suspendResult { parseBlueprints(api.getCronBlueprintsRaw(profile)) }
+            .getOrElse { emptyList() }
         return CronSnapshot(
             jobs = parseCronJobs(api.getCronJobsRaw(profile)),
-            deliveryTargets = parseDeliveryTargets(api.getCronDeliveryTargetsRaw(profile)),
-            blueprints = parseBlueprints(api.getCronBlueprintsRaw(profile)),
+            deliveryTargets = targets,
+            blueprints = blueprints,
         )
     }
 
@@ -298,7 +305,16 @@ class CronViewModel(
                             )
                         }
                         .onFailure { error ->
-                            _ui.value = CronUiState.Failure(error.message ?: "Could not refresh cron")
+                            // B54: the mutation itself SUCCEEDED — a failed refresh
+                            // must not read as a failed action. Keep content and
+                            // surface the refresh hiccup as a soft message.
+                            _ui.update { current ->
+                                val content = current as? CronUiState.Content ?: return@update current
+                                content.copy(
+                                    busy = false,
+                                    message = "Saved, but refresh failed: ${error.message ?: "retry to see changes"}",
+                                )
+                            }
                         }
                 }
                 .onFailure { error ->

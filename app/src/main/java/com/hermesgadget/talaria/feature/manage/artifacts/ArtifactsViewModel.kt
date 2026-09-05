@@ -393,19 +393,26 @@ class ArtifactsViewModel(
         val revision = artifactRevision(page)
         if (revision == cachedArtifactRevision) return@coroutineScope cachedArtifacts
         val permits = Semaphore(ARTIFACT_MESSAGE_CONCURRENCY)
+        // B44: distinguish "loaded, zero artifacts" from "load failed" — a failed
+        // transcript fetch must not be cached as a successful empty scan.
+        var hadLoadFailure = false
         sessions.map { session ->
             async {
                 permits.withPermit {
                     ensureCurrentScope(expectedScope)
-                    (loadMessagesSnapshot?.invoke(requestSnapshot, session.id)
-                        ?: loadMessages(session.id)).getOrNull()?.let { messages ->
-                        ensureCurrentScope(expectedScope)
-                        // The transcript is owned only by this short-lived task;
-                        // extraction returns bounded records before the task ends.
-                        withContext(defaultDispatcher) {
-                            extractArtifacts(session, messages)
-                        }
-                    }.orEmpty()
+                    val result = (loadMessagesSnapshot?.invoke(requestSnapshot, session.id)
+                        ?: loadMessages(session.id))
+                    val messages = result.getOrNull()
+                    if (messages == null) {
+                        hadLoadFailure = true
+                        return@withPermit emptyList()
+                    }
+                    ensureCurrentScope(expectedScope)
+                    // The transcript is owned only by this short-lived task;
+                    // extraction returns bounded records before the task ends.
+                    withContext(defaultDispatcher) {
+                        extractArtifacts(session, messages)
+                    }
                 }
             }
         }.let { requests ->
@@ -416,8 +423,10 @@ class ArtifactsViewModel(
             }
             val sorted = withContext(defaultDispatcher) { accumulator.sorted() }
             ensureCurrentScope(expectedScope)
-            cachedArtifactRevision = revision
-            cachedArtifacts = sorted
+            if (!hadLoadFailure) {
+                cachedArtifactRevision = revision
+                cachedArtifacts = sorted
+            }
             sorted
         }
     }

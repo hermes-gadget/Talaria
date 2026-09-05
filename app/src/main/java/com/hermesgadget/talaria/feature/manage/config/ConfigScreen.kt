@@ -39,6 +39,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.core.content.FileProvider
+
+import java.io.File
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -195,6 +198,8 @@ fun ConfigScreen() {
     }
 
     fun load() {
+        // B50: invalidate any in-flight save/import when fresh state loads.
+        importGeneration += 1
         scope.launch {
             val configResult = repo.getConfig()
             val config = configResult.getOrNull()
@@ -422,13 +427,19 @@ fun ConfigScreen() {
                             text = editorState.text,
                             draftGeneration = editorState.draftGeneration,
                         )
+                        // B50: a Reload or import that lands mid-save resets the
+                        // editor; the stale save must not re-apply over it. Track
+                        // the save against the current config generation.
+                        val saveGeneration = ++importGeneration
                         pendingSaves += 1
                         scope.launch {
                             try {
                                 val result = withContext(Dispatchers.Default) {
                                     saveCoordinator.save(request)
                                 }
-                                editorState = editorState.applySaveResult(result)
+                                if (saveGeneration == importGeneration) {
+                                    editorState = editorState.applySaveResult(result)
+                                }
                             } catch (error: CancellationException) {
                                 throw error
                             } finally {
@@ -454,12 +465,31 @@ fun ConfigScreen() {
                         } ?: run { editorState = editorState.withMessage("Defaults unavailable") }
                     }) { Text("Reset") }
                     OutlinedButton(onClick = {
-                        val send = Intent(Intent.ACTION_SEND).apply {
-                            type = "application/json"
-                            putExtra(Intent.EXTRA_TEXT, text)
-                            putExtra(Intent.EXTRA_TITLE, "hermes-config.json")
+                        // B51: config JSON can exceed the 1 MB Binder limit — a
+                        // streamable FileProvider URI also avoids pasting the
+                        // whole config into arbitrary share targets as text.
+                        val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+                        val exportFile = File(exportDir, "hermes-config.json")
+                        runCatching {
+                            exportFile.writeText(text)
+                        }.onSuccess {
+                            val uri = FileProvider.getUriForFile(
+                                context,
+                                context.packageName + ".files",
+                                exportFile,
+                            )
+                            val send = Intent(Intent.ACTION_SEND).apply {
+                                type = "application/json"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                putExtra(Intent.EXTRA_TITLE, "hermes-config.json")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(send, "Export config"))
+                        }.onFailure { error ->
+                            editorState = editorState.withMessage(
+                                "Export failed: ${error.message ?: error.javaClass.simpleName}",
+                            )
                         }
-                        context.startActivity(Intent.createChooser(send, "Export config"))
                     }) { Text("Export") }
                     OutlinedButton(onClick = {
                         importText = text

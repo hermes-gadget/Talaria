@@ -41,6 +41,8 @@ class LearningViewModel(
 
     /** Monotonic generation for identity-safe async loads (N0.8). */
     private var loadGeneration = 0L
+    /** B59: independent generation for graph refreshes — see refresh(). */
+private var graphGeneration = 0L
     private var boundScope: ConnectionScope? = scopeFlow?.value
     private var scopeObserver: ConnectionScopeObserver? = null
     private var graphJob: Job? = null
@@ -57,6 +59,7 @@ class LearningViewModel(
     private fun rebind(next: ConnectionScope?) {
         boundScope = next
         loadGeneration += 1
+        graphGeneration += 1 // B59: a scope switch invalidates the graph track too
         graphJob?.cancel()
         detailJob?.cancel()
         mutationJob?.cancel()
@@ -71,7 +74,10 @@ class LearningViewModel(
         val expectedScope = boundScope
         if (scopeFlow != null && expectedScope == null) return
         val snapshot = expectedScope?.snapshot
-        val generation = ++loadGeneration
+        // B59: the graph load and the node detail are independent requests —
+        // they get SEPARATE generations. Sharing loadGeneration made open()
+        // invalidate an in-flight refresh, whose `loading` then never cleared.
+        val generation = ++graphGeneration
         graphJob?.cancel()
         _ui.update { it.copy(loading = true, error = null) }
         graphJob = viewModelScope.launch {
@@ -81,12 +87,12 @@ class LearningViewModel(
                     // a newer refresh or scope switch must never overwrite the
                     // current scope's graph, even if the source ignores
                     // cancellation (e.g. a blocked or external load).
-                    if (generation == loadGeneration && isCurrentScope(expectedScope)) {
+                    if (generation == graphGeneration && isCurrentScope(expectedScope)) {
                         _ui.update { it.copy(graph = graph, loading = false) }
                     }
                 },
                 onFailure = { error ->
-                    if (generation == loadGeneration && isCurrentScope(expectedScope)) {
+                    if (generation == graphGeneration && isCurrentScope(expectedScope)) {
                         _ui.update { it.copy(loading = false, error = error.message) }
                     }
                 },
@@ -129,6 +135,7 @@ class LearningViewModel(
     fun updateDraft(value: String) = _ui.update { it.copy(draft = value) }
     fun close() {
         loadGeneration += 1
+        graphGeneration += 1
         detailJob?.cancel()
         _ui.update { it.copy(selected = null, detail = null, confirmDelete = false, error = null) }
     }

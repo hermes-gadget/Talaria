@@ -762,6 +762,9 @@ class FilesViewModel(
                             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                             var copied = 0L
                             while (true) {
+                                // B55: SAF save cancellation must stop the write —
+                                // check between blocking IO iterations.
+                                currentCoroutineContext().ensureActive()
                                 val count = source.read(buffer)
                                 if (count < 0) break
                                 destination.write(buffer, 0, count)

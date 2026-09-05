@@ -16,6 +16,7 @@
 
 package com.hermesgadget.talaria.feature.manage.memory
 
+import retrofit2.HttpException
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -371,13 +372,19 @@ class MemoryViewModel(
                             )
                         }
                     },
-                    onFailure = {
-                        // A 404 is the server's capability signal for providers
-                        // without an OAuth flow. Hide that affordance entirely.
+                    onFailure = { error ->
+                        // B62: only an explicit 404 is the server's capability
+                        // signal for providers without an OAuth flow. Network
+                        // failures / 5xx are TRANSIENT — the provider may well
+                        // support OAuth, so keep the affordance visible and
+                        // surface the failure instead of silently hiding it.
+                        val notFound = error is HttpException && error.code() == 404
                         _ui.update { current ->
                             current.copy(
                                 oauth = current.oauth + (provider to MemoryProviderOAuthUiState(
-                                    supported = false,
+                                    supported = !notFound,
+                                    error = if (notFound) null
+                                    else error.message ?: "Capability check failed",
                                 )),
                             )
                         }
