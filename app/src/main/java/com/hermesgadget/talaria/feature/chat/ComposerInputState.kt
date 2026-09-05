@@ -31,6 +31,12 @@ internal object ComposerQueue {
 
     fun dequeue(queue: List<String>): Pair<String?, List<String>> =
         queue.firstOrNull()?.let { it to queue.drop(1) } ?: (null to queue)
+
+    /** B38: put a message that failed to launch back at the FRONT. */
+    fun requeueFront(queue: List<String>, prompt: String): List<String> {
+        val trimmed = prompt.trim()
+        return if (trimmed.isEmpty()) queue else listOf(trimmed) + queue
+    }
 }
 
 /**

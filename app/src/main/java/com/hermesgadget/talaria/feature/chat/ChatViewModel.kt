@@ -62,6 +62,7 @@ import com.hermesgadget.talaria.domain.model.HERMES_DEFAULT_PROFILE
 import com.hermesgadget.talaria.domain.model.ModelOption
 import com.hermesgadget.talaria.domain.model.MultiProfileSession
 import com.hermesgadget.talaria.domain.model.MultiProfileSessionMerger
+import com.hermesgadget.talaria.domain.model.normalizeTimestampMillis
 import com.hermesgadget.talaria.domain.model.ProfileRegistryState
 import com.hermesgadget.talaria.domain.model.ProfileStreamingState
 import com.hermesgadget.talaria.domain.model.SessionSummary
@@ -2196,7 +2197,9 @@ class ChatViewModel(
     }
 
     private fun applyDraft(tabId: String, text: String) {
-        val draftScope = currentDraftPersistenceScope()
+        // B39: draft persistence is keyed by the ACTIVE connection scope;
+        // only persist edits made to the active tab itself.
+        val draftScope = if (_ui.value.activeTabId == tabId) currentDraftPersistenceScope() else null
         val slash = text.startsWith('/')
         val suggestions = SlashCommands.suggest(text, slashCatalog)
         val composer = ComposerRefs.analyze(text, knownComposerAgents())
@@ -2328,7 +2331,12 @@ class ChatViewModel(
         val attachment = tab.imageAttachments.firstOrNull { it.id == id } ?: return
         val pending = pendingImages[tab.id]?.get(id)
         val sessionId = tab.liveSessionId ?: tab.resumeSessionId
-        if (attachment.status == ChatImageAttachmentStatus.UPLOADING || pending?.attachedSessionId == sessionId) {
+        // B40: a freshly attached image has no assigned session yet — both
+        // sides null compared equal and made the image unremovable. Only a
+        // REAL staged attachment (assigned session id matching the tab's
+        // session) blocks removal.
+        val stagedForThisSession = sessionId != null && pending?.attachedSessionId == sessionId
+        if (attachment.status == ChatImageAttachmentStatus.UPLOADING || stagedForThisSession) {
             updateTab(tab.id) {
                 it.copy(error = "This image is already staged for the current turn")
             }
@@ -2387,7 +2395,12 @@ class ChatViewModel(
             )
         }
         _ui.update { it.copy(showSlashPalette = false) }
-        scheduleDraftSave(currentDraftPersistenceScope(), "", delayMs = 0L)
+        // B39: only the ACTIVE tab's draft lives in the active connection
+        // scope. A background tab enqueueing a prompt must not wipe the
+        // active tab's persisted draft.
+        if (_ui.value.activeTabId == tab.id) {
+            scheduleDraftSave(currentDraftPersistenceScope(), "", delayMs = 0L)
+        }
     }
 
     private fun drainQueuedPrompt(tabId: String) {
@@ -2396,8 +2409,16 @@ class ChatViewModel(
         if (!tab.connected || tab.queuedPrompts.isEmpty() || tab.working) return
         val (next, remaining) = ComposerQueue.dequeue(tab.queuedPrompts)
         if (next == null) return
-        updateTab(tabId) { it.copy(queuedPrompts = remaining) }
-        commitSend(tabId, next, emptyList(), runtime)
+        // B38: dequeue AFTER transport acceptance, not before. A rejected
+        // send must leave the message in the queue so the user can retry.
+        // Remove it optimistically for the attempt, but restore on failure
+        // inside commitSend's error path (queuedPromptFailedToLaunch).
+        commitSend(tabId, next, emptyList(), runtime, requeueOnFailure = true)
+    }
+
+    /** B38: return a message that failed to launch to the front of the queue. */
+    private fun requeuePrompt(tabId: String, payload: String) {
+        updateTab(tabId) { it.copy(queuedPrompts = ComposerQueue.requeueFront(it.queuedPrompts, payload)) }
     }
 
     private fun sendWithImages(
@@ -2497,6 +2518,7 @@ class ChatViewModel(
         payload: String,
         imageNames: List<String>,
         runtime: SessionRuntime,
+        requeueOnFailure: Boolean = false,
     ) {
         val prompt = payload.ifEmpty {
             if (imageNames.size == 1) "What do you see in this image?" else "What do you see in these images?"
@@ -2506,12 +2528,18 @@ class ChatViewModel(
             if (payload.isNotEmpty()) add(payload)
         }.joinToString("\n\n").ifEmpty { prompt }
         val deliveryId = UUID.randomUUID().toString()
-        if (runtime.promptDelivery.begin(deliveryId) != PtyPromptDeliveryStart.SEND) return
+        if (runtime.promptDelivery.begin(deliveryId) != PtyPromptDeliveryStart.SEND) {
+            if (requeueOnFailure) requeuePrompt(tabId, payload)
+            return
+        }
         val sendResult = runtime.transport.sendTextChecked(prompt)
         val frameAccepted = runtime.promptDelivery.complete(deliveryId, sendResult)
         if (sendResult.isFailure && !frameAccepted) {
             val message = sendResult.exceptionOrNull()?.message ?: "PTY rejected the prompt"
             updateTab(tabId) { it.copy(error = message, working = false) }
+            // B38: a queued message that never reached the transport goes
+            // back to the FRONT of the queue instead of being lost.
+            if (requeueOnFailure) requeuePrompt(tabId, payload)
             return
         }
         runtime.localTranscriptRevision += 1
@@ -2600,7 +2628,15 @@ class ChatViewModel(
                         requestId = prompt.requestId,
                     ),
                 )
-                updateTab(tabId) { it.copy(prompt = null, error = null) }
+                // B37: only clear the prompt THIS response answered. A newer
+                // prompt arriving during the round trip must survive.
+                updateTab(tabId) { t ->
+                    if (t.prompt?.requestId == prompt.requestId) {
+                        t.copy(prompt = null, error = null)
+                    } else {
+                        t
+                    }
+                }
             } else {
                 updateTab(tabId) { it.copy(error = "Hermes did not accept the prompt response") }
             }

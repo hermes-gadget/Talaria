@@ -48,6 +48,44 @@ object FlexiblePrimitiveStringSerializer : KSerializer<String?> {
 }
 
 /**
+ * B27: CronJob.schedule is historically a cron string, but dashboard
+ * v0.19.1 emits an object ({method, expression, ...}). Render the object
+ * shape as a compact readable string (primary expression first) instead of
+ * letting the whole CronJob decode fail or the field silently become null.
+ */
+object FlexibleScheduleSerializer : KSerializer<String?> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("FlexibleSchedule", PrimitiveKind.STRING)
+
+    override fun deserialize(decoder: Decoder): String? {
+        val element = (decoder as? JsonDecoder)?.decodeJsonElement()
+            ?: return decoder.decodeString()
+        return when (element) {
+            is JsonPrimitive -> element.contentOrNull
+            is JsonObject -> {
+                val expr = element["expression"]?.jsonPrimitive?.contentOrNull
+                    ?: element["cron"]?.jsonPrimitive?.contentOrNull
+                    ?: element["value"]?.jsonPrimitive?.contentOrNull
+                val method = element["method"]?.jsonPrimitive?.contentOrNull
+                when {
+                    expr != null && method != null -> "$method: $expr"
+                    expr != null -> expr
+                    method != null -> method
+                    else -> element.entries.joinToString(prefix = "{", postfix = "}") { (k, v) ->
+                        "$k=${(v as? JsonPrimitive)?.contentOrNull ?: "…"}"
+                    }
+                }
+            }
+            else -> null
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: String?) {
+        FlexiblePrimitiveStringSerializer.serialize(encoder, value)
+    }
+}
+
+/**
  * Hermes transcripts historically used strings, but current multimodal messages can contain
  * OpenAI-style content blocks. Preserve readable text without rejecting the entire transcript.
  */

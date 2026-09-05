@@ -48,6 +48,7 @@ class HermesForegroundObserver(
 ) : DefaultLifecycleObserver {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var collectJob: Job? = null
+    private var eventsJob: Job? = null
 
     // Suppresses duplicate rows when the same signal repeats in quick succession.
     private var lastKey: String? = null
@@ -55,13 +56,26 @@ class HermesForegroundObserver(
 
     fun install() {
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
+        // B11: the first connection is saved while the process is already
+        // foreground, so waiting for onStart would never arm collection.
+        // Re-arm (or disarm) whenever the active profile changes.
+        collectJob = scope.launch(Dispatchers.IO) {
+            connectionStore.scope.collect {
+                armCollector()
+            }
+        }
     }
 
-    override fun onStart(owner: LifecycleOwner) {
-        if (connectionStore.activeProfile() == null) return
+    private fun armCollector() {
+        if (connectionStore.activeProfile() == null) {
+            collectJob?.cancel()
+            collectJob = null
+            eventClient.stop()
+            return
+        }
         eventClient.start()
-        collectJob?.cancel()
-        collectJob = scope.launch(Dispatchers.IO) {
+        eventsJob?.cancel()
+        eventsJob = scope.launch(Dispatchers.IO) {
             eventClient.events.collect { record(it) }
         }
     }
@@ -74,6 +88,10 @@ class HermesForegroundObserver(
     }
 
     private suspend fun record(event: HermesSideEvent) {
+        // B11: attribute to the snapshot read synchronously at arrival —
+        // before any suspend point. (M1 refinement below keeps the Room
+        // write in the same scope identity.)
+        val arrivalSnapshot = connectionStore.activeSnapshot()
         val (type, title, body) = when (event) {
             is HermesSideEvent.Prompt ->
                 Triple("chat", "Approval requested", event.message.take(160))
@@ -97,11 +115,7 @@ class HermesForegroundObserver(
         if (key == lastKey && now - lastAt < 4_000) return
         lastKey = key
         lastAt = now
-        // M1: attribute the activity row to the connection that was active
-        // when the event arrived — never the live profile read after a
-        // suspend point (a foreground switch mid-handling would otherwise
-        // write into the wrong Room scope).
-        val snapshot = connectionStore.activeSnapshot() ?: return
-        hermesRepository.recordActivity(type, title, body, snapshot)
+        // M1/B11: attribute the row to the snapshot captured at arrival.
+        hermesRepository.recordActivity(type, title, body, arrivalSnapshot ?: return)
     }
 }

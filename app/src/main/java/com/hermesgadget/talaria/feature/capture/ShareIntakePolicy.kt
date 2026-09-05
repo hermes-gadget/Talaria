@@ -180,7 +180,32 @@ internal object ShareIntakePolicy {
             val decoder = StandardCharsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT)
-            decoder.decode(ByteBuffer.wrap(bytes))
+            // B31: this is a PREFIX of a larger file — a multi-byte
+            // character split at the read boundary is legal UTF-8 in the
+            // complete file. Validate up to the last COMPLETE character;
+            // an incomplete trailing sequence is not evidence of corruption.
+            var validated = bytes.size
+            var i = bytes.size - 1
+            while (i >= maxOf(0, bytes.size - 4)) {
+                val b = bytes[i].toInt() and 0xFF
+                val expected = when {
+                    b and 0x80 == 0 -> 1          // ASCII
+                    b and 0xE0 == 0xC0 -> 2       // 2-byte lead
+                    b and 0xF0 == 0xE0 -> 3       // 3-byte lead
+                    b and 0xF8 == 0xF0 -> 4       // 4-byte lead
+                    else -> null                  // continuation byte
+                }
+                if (expected != null) {
+                    // Continuation bytes AFTER a lead within the window
+                    // mean the sequence started here; keep the lead only
+                    // when the whole sequence fits in the prefix.
+                    val continuationCount = bytes.size - 1 - i
+                    validated = if (continuationCount + 1 < expected) i else bytes.size
+                    break
+                }
+                i--
+            }
+            decoder.decode(ByteBuffer.wrap(bytes, 0, validated))
             true
         } catch (_: CharacterCodingException) {
             false

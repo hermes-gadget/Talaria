@@ -30,7 +30,7 @@ data class MultiProfileSession(
     val key: String get() = "$profileName\u0000${session.id}"
 
     /** Numeric recency used by [MultiProfileSessionMerger]. */
-    val recency: Double get() = sessionRecency(session)
+    val recency: Long get() = sessionRecency(session)
 }
 
 /** Pure session-list projection shared by the ViewModel and unit tests. */
@@ -94,10 +94,30 @@ data class ProfileRegistryState(
         get() = MultiProfileSessionMerger.merge(sessionsByProfile)
 }
 
-private fun sessionRecency(session: SessionSummary): Double {
-    fun parse(value: String?): Double? {
-        val raw = value?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-        return raw.toDoubleOrNull() ?: runCatching { Instant.parse(raw).toEpochMilli().toDouble() }.getOrNull()
+/**
+ * B26: legacy rows carry epoch SECONDS; current rows carry epoch MILLIS or
+ * ISO strings. Comparing them raw misorders an old ISO session ahead of a
+ * newer numeric one. Normalize everything to epoch milliseconds and reject
+ * absurd/non-finite values.
+ */
+internal fun normalizeTimestampMillis(value: String?): Long? {
+    val raw = value?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val numeric = raw.toDoubleOrNull()?.takeIf { it.isFinite() } ?: run {
+        // ISO path — invalid strings fall through as null.
+        return runCatching { Instant.parse(raw).toEpochMilli() }.getOrNull()
     }
-    return parse(session.last_active) ?: parse(session.started_at) ?: Double.NEGATIVE_INFINITY
+    // Heuristic: values below 1e12 cannot be epoch millis (that is
+    // 335-01-24 in millis). Treat sub-second epoch values as seconds and
+    // scale up. Non-finite already rejected above.
+    val ms = if (numeric < 1e12) numeric * 1000.0 else numeric
+    // Sanity window: timestamps after 1970 and before 2286 keep; anything
+    // else (negative, or > 1e13) is garbage and treated as unknown.
+    if (ms < 0.0 || ms > 1e13) return null
+    return ms.toLong()
+}
+
+private fun sessionRecency(session: SessionSummary): Long {
+    return normalizeTimestampMillis(session.last_active)
+        ?: normalizeTimestampMillis(session.started_at)
+        ?: Long.MIN_VALUE
 }
