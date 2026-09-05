@@ -93,6 +93,22 @@ internal class ConfigSaveCoordinator(
             )
         }
 
+        // B49: any successful GET used to count as Committed. A
+        // semantically-rejected PUT (server kept the old value) or a stale
+        // readback then silently replaced the user's draft. The readback
+        // must now contain every requested top-level change — differing
+        // values mean the write did not stick.
+        val uncommitted = config.entries.filter { (key, requested) ->
+            authoritative[key] != requested
+        }.map { it.key }
+        if (uncommitted.isNotEmpty()) {
+            return@withLock ConfigSaveResult.Failed(
+                generation = generation,
+                request = request,
+                message = "Server did not persist: ${uncommitted.take(5).joinToString()}",
+            )
+        }
+
         ConfigSaveResult.Committed(
             generation = generation,
             request = request,

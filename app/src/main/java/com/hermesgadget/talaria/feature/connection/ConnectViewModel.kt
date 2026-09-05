@@ -44,7 +44,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 data class CleartextConsentRequest(
@@ -790,14 +793,29 @@ class ConnectViewModel(
     private suspend fun saveCredentialNow(provider: String, replacing: CredentialPoolEntry?) {
         val draft = _ui.value.providerDraft
         _ui.value = _ui.value.copy(providerBusy = ProviderBusyAction.SAVE_CREDENTIAL)
-        providerApi().addCredentialPoolEntry(buildJsonObject {
+        // B41: every provider call in this operation must hit the SAME
+        // connection. providerApi() re-resolves the mutable active
+        // connection per call; a mid-flow switch would add the credential
+        // to one connection and delete the old entry from another.
+        val api = providerApi()
+        // B42: inspect the add response before deleting anything. HTTP 200
+        // with an application-level error body used to still fall through
+        // and delete the working credential — leaving the connection with
+        // nothing. A rejected add now aborts with the old entry intact.
+        val added = api.addCredentialPoolEntry(buildJsonObject {
             put("provider", provider)
             put("api_key", draft.credentialApiKey.trim())
             draft.credentialLabel.trim().takeIf { it.isNotBlank() }?.let { put("label", it) }
         })
+        // A JSON-object response whose `ok` flag is explicitly false is an
+        // application-level rejection even though the HTTP status was 200.
+        val echoed = added as? JsonObject
+        require(echoed?.get("ok")?.jsonPrimitive?.booleanOrNull != false) {
+            "Provider rejected the new credential — the existing entry is untouched"
+        }
         // The live API has no edit verb. Add first so a failed replacement leaves
         // the old credential usable, then remove the confirmed old row.
-        replacing?.let { providerApi().deleteCredentialPoolEntry(provider, it.index) }
+        replacing?.let { api.deleteCredentialPoolEntry(provider, it.index) }
         refreshProviderContent(if (replacing == null) "Credential added" else "Credential replaced")
         clearCredentialDraft()
     }

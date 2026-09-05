@@ -131,6 +131,13 @@ data class SkillContentFields(
     val name: String,
     val description: String,
     val body: String,
+    /**
+     * B66: verbatim front matter (everything between the --- fences,
+     * inclusive). Rebuilding the file patches name/description INSIDE this
+     * block instead of regenerating a two-key header, so unknown or
+     * multiline/nested metadata keys survive an ordinary edit.
+     */
+    val originalFrontMatter: String? = null,
 )
 
 internal fun clearSubmittedToolsetDrafts(
@@ -536,15 +543,23 @@ internal fun parseSkillContent(content: String, fallbackName: String): SkillCont
     }
     val end = lines.drop(1).indexOfFirst { it.trim() == "---" }.takeIf { it >= 0 }?.plus(1)
         ?: return SkillContentFields(fallbackName, "", content.trim())
+    // B66: keep the verbatim block (lines 0..end inclusive) so unknown
+    // metadata survives edits. Simple `key: value` rows are still parsed
+    // for the editor; nested/multiline structures are simply preserved.
+    val frontMatter = lines.take(end + 1).joinToString("\n")
     val metadata = lines.subList(1, end).mapNotNull { line ->
         val separator = line.indexOf(':')
-        if (separator <= 0) null else line.substring(0, separator).trim() to unquoteYaml(line.substring(separator + 1).trim())
+        val candidate = if (separator <= 0) null else line.substring(0, separator).trim()
+        // Skip nested keys (indented) and block scalars.
+        if (candidate.isNullOrEmpty() || line.startsWith(" ") || line.startsWith("\t")) null
+        else candidate to unquoteYaml(line.substring(separator + 1).trim())
     }.toMap()
     val body = lines.drop(end + 1).joinToString("\n").trimStart('\n')
     return SkillContentFields(
         name = metadata["name"].orEmpty().ifBlank { fallbackName },
         description = metadata["description"].orEmpty(),
         body = body.trimEnd(),
+        originalFrontMatter = frontMatter,
     )
 }
 
@@ -556,12 +571,36 @@ internal fun validateSkillContent(fields: SkillContentFields): String? = when {
     else -> null
 }
 
-internal fun buildSkillContent(fields: SkillContentFields): String =
-    "---\n" +
-        "name: ${yamlScalar(fields.name.trim())}\n" +
-        "description: ${yamlScalar(fields.description.trim())}\n" +
-        "---\n\n" +
-        fields.body.trimEnd() + "\n"
+internal fun buildSkillContent(fields: SkillContentFields): String {
+    // B66: when the file had front matter, patch name/description INSIDE
+    // the original block (first occurrence of each top-level key) instead
+    // of regenerating a bare two-key header — unknown metadata survives.
+    val original = fields.originalFrontMatter
+    if (original.isNullOrBlank() || original.split('\n').firstOrNull()?.trim() != "---") {
+        return "---\n" +
+            "name: ${yamlScalar(fields.name.trim())}\n" +
+            "description: ${yamlScalar(fields.description.trim())}\n" +
+            "---\n\n" +
+            fields.body.trimEnd() + "\n"
+    }
+    val lines = original.split('\n').toMutableList()
+    val closingIdx = lines.drop(1).indexOfFirst { it.trim() == "---" }.takeIf { it >= 0 }?.plus(1)
+        ?: lines.size - 1
+    // Replace or insert top-level name/description within (1 until closingIdx).
+    for ((key, value) in mapOf("name" to fields.name.trim(), "description" to fields.description.trim())) {
+        val escaped = yamlScalar(value)
+        val existing = lines.indices.firstOrNull { i ->
+            i in 1 until closingIdx && !lines[i].startsWith(" ") && !lines[i].startsWith("\t") &&
+                lines[i].substringBefore(':').trim() == key
+        }
+        if (existing != null) {
+            lines[existing] = "$key: $escaped"
+        } else {
+            lines.add(closingIdx, "$key: $escaped")
+        }
+    }
+    return lines.joinToString("\n") + "\n\n" + fields.body.trimEnd() + "\n"
+}
 
 private fun yamlScalar(value: String): String =
     "\"${value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")}\""

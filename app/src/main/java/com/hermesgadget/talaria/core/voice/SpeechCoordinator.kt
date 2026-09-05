@@ -21,6 +21,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -69,6 +70,9 @@ class SpeechCoordinator(
         context.packageManager
             .getSystemAvailableFeatures()
             .any { it.name == PackageManager.FEATURE_MICROPHONE } &&
+            // isOnDeviceRecognitionAvailable is API 31+; below that the
+            // recognizer may silently upload — the gate stays closed.
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
             SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
     } catch (_: Throwable) {
         false

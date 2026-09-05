@@ -400,11 +400,16 @@ fun McpScreen() {
                     }
                     testResult = mcpUpdateSuccessTpl.format(submittedName)
                 }
+                // B48: only clear the draft when the server accepted it.
+                // A failed save must keep the (possibly secret) values on
+                // screen so they can be corrected and retried.
                 clearForm()
                 reload()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
+                // Keep the draft intact; clear only a rejected bearer token.
+                bearerToken = ""
                 error = failure.message ?: if (target == null) addFallback else updateFallback
             } finally {
                 formBusy = false
