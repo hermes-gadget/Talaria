@@ -23,6 +23,10 @@ import com.hermesgadget.talaria.di.AppContainer
 import com.hermesgadget.talaria.feature.manage.files.ShareFileManager
 import com.hermesgadget.talaria.worker.SyncScheduler
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class TalariaApp : Application() {
     lateinit var container: AppContainer

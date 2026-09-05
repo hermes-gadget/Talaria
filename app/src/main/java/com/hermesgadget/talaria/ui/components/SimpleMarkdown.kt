@@ -36,7 +36,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -753,8 +756,26 @@ private fun parseInline(source: String, budget: MarkdownBudget): List<MarkdownIn
             continue
         }
 
+        // P13: linear scan instead of per-'[' indexOf("]("). The old
+        // quadratic probe lets a long run of opening brackets search the
+        // whole suffix repeatedly. Here we walk forward once, remembering
+        // the first unescaped ']' followed by '(' after each bracket.
         val linkEnd = if (frame.source[index] == '[') {
-            frame.source.indexOf("](", index + 1).takeIf { it in (index + 1) until frame.endExclusive }
+            var probe = index + 1
+            var found: Int? = null
+            while (probe < frame.endExclusive) {
+                val ch = frame.source[probe]
+                if (ch == '\\') {
+                    probe += 2
+                    continue
+                }
+                if (ch == ']' && probe + 1 < frame.endExclusive && frame.source[probe + 1] == '(') {
+                    found = probe // position of ']' — same as the old indexOf("](")
+                    break
+                }
+                probe++
+            }
+            found
         } else {
             null
         }

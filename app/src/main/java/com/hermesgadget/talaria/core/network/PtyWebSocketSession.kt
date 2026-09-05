@@ -135,7 +135,11 @@ class PtyWebSocketSession(
             close()
             return@callbackFlow
         }
-        val key = UUID.randomUUID().toString()
+        // B30: sessionKey was a client-fabricated UUID — image.attach_bytes
+        // sent against it target a session the server doesn't know. The
+        // only server-meaningful identity at connect time is the resumed
+        // session id; new sessions learn their id from server events.
+        val key = resumeSessionId ?: UUID.randomUUID().toString()
         val ansi = AnsiStripper.Stream()
         val oversizedFailurePending = AtomicBoolean(false)
         val request = Request.Builder().url(url).build()

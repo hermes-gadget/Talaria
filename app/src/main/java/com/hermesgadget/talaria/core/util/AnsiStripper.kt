@@ -33,6 +33,14 @@ object AnsiStripper {
 
         fun append(input: String): String {
             if (input.isEmpty()) return ""
+            // P04: the overwhelming majority of terminal frames are pure
+            // GROUND-state text with no escape bytes. Detect that first and
+            // return the input as-is — zero per-frame allocation beyond the
+            // emit value the caller already holds.
+            if (state == State.GROUND && !input.contains(ESC) && !input.contains('\r')) {
+                // CR is still stripped below — keep the slow path for it.
+                return input
+            }
             val output = StringBuilder(input.length)
             input.forEach { character -> consume(character, output) }
             return output.toString()

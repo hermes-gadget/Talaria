@@ -162,6 +162,7 @@ data class CronJob(
     val id: String,
     val name: String? = null,
     val prompt: String? = null,
+    @Serializable(with = FlexibleScheduleSerializer::class)
     val schedule: String? = null,
     val state: String? = null,
     val deliver: String? = null,
