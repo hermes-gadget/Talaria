@@ -19,8 +19,10 @@ package com.hermesgadget.talaria.core.data.repo
 import java.util.LinkedHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ensureActive
 
 /**
  * A small, thread-safe weighted LRU read-through cache.
@@ -44,15 +46,29 @@ class ResponseCache(
         val weight: Long,
     )
 
+    // Identity of an in-flight fetch: which cache epoch (clears) and which
+    // per-key invalidation generation it started in. Callers may only join an
+    // in-flight fetch whose stamp matches their own view; a reader that
+    // arrives after an invalidation always runs its own fetch (B08).
+    private data class InFlightStamp(
+        val epoch: Long,
+        val generation: Long,
+    )
+
+    private class InFlight(
+        val stamp: InFlightStamp,
+        val gate: CompletableDeferred<Result<Any?>>,
+    )
+
     private val lock = Any()
     private val entries = LinkedHashMap<String, Entry>(16, 0.75f, true)
     private var totalWeight = 0L
 
-    // M18: single-flight + invalidation stamping. readThrough callers with the
-    // same key share one fetch; a fetch that started before invalidate() must
-    // not put its stale result back after the invalidation.
-    private val inFlight = ConcurrentHashMap<String, CompletableDeferred<Result<Any?>>>()
-    private val keyGenerations = ConcurrentHashMap<String, Long>()
+    // M18/B08: single-flight + invalidation stamping. readThrough callers with
+    // the same key share one fetch; a fetch that started before invalidate()
+    // must not put its stale result back after the invalidation.
+    private val inFlight = HashMap<String, InFlight>()
+    private val keyGenerations = HashMap<String, Long>()
     private val epoch = AtomicLong(0L)
 
     init {
@@ -99,24 +115,29 @@ class ResponseCache(
 
     /** Drop a single key (call after a mutation to its data). */
     fun invalidate(key: String) = synchronized(lock) {
-        keyGenerations.merge(key, 1L, Long::plus)
+        bumpGenerationLocked(key)
         removeLocked(key)
     }
 
     /** Drop keys whose names begin with [prefix]. */
     fun invalidatePrefix(prefix: String) = synchronized(lock) {
         entries.keys.filter { it.startsWith(prefix) }.forEach(::removeLocked)
-        keyGenerations.keys.filter { it.startsWith(prefix) }.forEach { key ->
-            keyGenerations.merge(key, 1L, Long::plus)
-        }
+        // B08: bump every matching key we know about AND every matching key
+        // that currently has a fetch in flight — a first-time fetch has no
+        // generation entry yet, so keyGenerations alone would miss it.
+        (keyGenerations.keys.asSequence() + inFlight.keys.asSequence())
+            .filter { it.startsWith(prefix) }
+            .toSet()
+            .forEach(::bumpGenerationLocked)
     }
 
     /** Drop keys matching an arbitrary predicate, useful for deleted scopes. */
     fun invalidateWhere(predicate: (String) -> Boolean) = synchronized(lock) {
         entries.keys.filter(predicate).forEach(::removeLocked)
-        keyGenerations.keys.filter(predicate).forEach { key ->
-            keyGenerations.merge(key, 1L, Long::plus)
-        }
+        (keyGenerations.keys.asSequence() + inFlight.keys.asSequence())
+            .filter(predicate)
+            .toSet()
+            .forEach(::bumpGenerationLocked)
     }
 
     /** Drop expired values even when no caller happens to read their key. */
@@ -145,8 +166,13 @@ class ResponseCache(
      * success, and return it. Failures are never cached.
      *
      * Concurrent callers for the same key share one in-flight fetch
-     * (single-flight). A fetch that started before [invalidate] on its key
-     * does not put its stale result back afterwards (M18).
+     * (single-flight), but only when the in-flight fetch started in the same
+     * invalidation generation: a reader that arrives after [invalidate] (or
+     * any prefix/predicate invalidation, or a [clear]) runs its own fetch
+     * instead of joining pre-invalidation work (B08).
+     *
+     * If the fetch leader is cancelled, its gate is completed exceptionally so
+     * joined callers fail (and can retry) instead of waiting forever (B07).
      */
     @Suppress("UNCHECKED_CAST")
     suspend fun <T> readThrough(
@@ -155,51 +181,98 @@ class ResponseCache(
         fetch: suspend () -> T,
     ): Result<T> {
         peek(key, ttlMs)?.let { return Result.success(it as T) }
-        val capturedEpoch = epoch.get()
-        val capturedGeneration = keyGenerations[key] ?: 0L
 
-        // Join an in-flight fetch for the same key instead of duplicating it.
-        inFlight[key]?.let { join ->
-            return join.await().let { result ->
-                if (result.isSuccess) {
-                    Result.success(result.getOrNull() as T)
-                } else {
-                    Result.failure(result.exceptionOrNull() ?: IllegalStateException("fetch failed"))
-                }
+        val stamp: InFlightStamp
+        val gate: CompletableDeferred<Result<Any?>>
+        val isLeader: Boolean
+        synchronized(lock) {
+            stamp = InFlightStamp(epoch.get(), keyGenerations[key] ?: 0L)
+            val existing = inFlight[key]
+            if (existing != null && existing.stamp == stamp) {
+                gate = existing.gate
+                isLeader = false
+            } else {
+                gate = CompletableDeferred()
+                inFlight[key] = InFlight(stamp, gate)
+                isLeader = true
             }
         }
-        val gate = CompletableDeferred<Result<Any?>>()
-        val winner = inFlight.putIfAbsent(key, gate) ?: gate
-        if (winner !== gate) {
-            return winner.await().let { result ->
-                if (result.isSuccess) {
-                    Result.success(result.getOrNull() as T)
-                } else {
-                    Result.failure(result.exceptionOrNull() ?: IllegalStateException("fetch failed"))
-                }
-            }
+
+        if (!isLeader) {
+            return awaitJoinedResult<T>(gate)
         }
+
         try {
             val result = try {
                 Result.success(fetch())
             } catch (cancelled: CancellationException) {
+                // B07: every leader exit — success, failure, or cancellation —
+                // must release joined callers. Complete the gate
+                // exceptionally, then rethrow our own cancellation.
+                gate.completeExceptionally(cancelled)
                 throw cancelled
             } catch (failure: Throwable) {
                 Result.failure(failure)
             }
             // Skip the put when the key was invalidated (or the whole cache
             // cleared) while the fetch was in flight: the caller asked for
-            // fresh data, not a restored stale value.
-            if (capturedEpoch == epoch.get() &&
-                capturedGeneration == (keyGenerations[key] ?: 0L)
-            ) {
+            // fresh data, not a restored stale value. The stamp comparison and
+            // the store happen under the same lock so an invalidation cannot
+            // slip between them (B08).
+            val mayStore = synchronized(lock) {
+                stamp.epoch == epoch.get() && stamp.generation == (keyGenerations[key] ?: 0L)
+            }
+            if (mayStore) {
                 put(key, result.getOrNull(), ttlMs)
             }
             gate.complete(result)
             return result
         } finally {
-            inFlight.remove(key, gate)
+            synchronized(lock) {
+                // Remove only if we are still the registered fetch; a newer
+                // generation's leader may have replaced us.
+                val registered = inFlight[key]
+                if (registered != null && registered.gate === gate) {
+                    inFlight.remove(key)
+                }
+            }
         }
+    }
+
+    /**
+     * Await a joined fetch result. A leader cancellation is surfaced as a
+     * failed result (joiners are free to retry); a cancellation of the joiner
+     * itself still propagates.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private suspend fun <T> awaitJoinedResult(
+        gate: CompletableDeferred<Result<Any?>>,
+    ): Result<T> = try {
+        val result = gate.await()
+        if (result.isSuccess) {
+            Result.success(result.getOrNull() as T)
+        } else {
+            Result.failure(result.exceptionOrNull() ?: IllegalStateException("fetch failed"))
+        }
+    } catch (cancelled: CancellationException) {
+        // Rethrow only when this caller itself was cancelled; a cancelled
+        // leader must not strand us in a cancelled state.
+        coroutineContext.ensureActive()
+        Result.failure(cancelled)
+    }
+
+    /**
+     * Record an invalidation for [key]. The generation map is bounded: when it
+     * would exceed [MAX_GENERATION_KEYS] distinct keys it is cleared and the
+     * cache epoch is bumped, which safely invalidates every in-flight stamp
+     * (they can no longer match) instead of unbounded growth (P02).
+     */
+    private fun bumpGenerationLocked(key: String) {
+        if (keyGenerations.size >= MAX_GENERATION_KEYS && !keyGenerations.containsKey(key)) {
+            keyGenerations.clear()
+            epoch.incrementAndGet()
+        }
+        keyGenerations.merge(key, 1L, Long::plus)
     }
 
     private fun pruneExpiredLocked(currentTime: Long) {
@@ -234,16 +307,25 @@ class ResponseCache(
         const val DEFAULT_MAX_ENTRIES = 64
         const val DEFAULT_MAX_WEIGHT = 8L * 1024L * 1024L
         const val DEFAULT_ENTRY_TTL_MS = 20_000L
+        const val MAX_GENERATION_KEYS = 512
 
+        /**
+         * Payload-aware weight: byte arrays, strings and collections count
+         * their real size; unknown objects (small DTOs) cost a fixed 256.
+         * Aggregates are measured honestly — no clamping — so an entry whose
+         * real payload exceeds the cache budget is rejected by the normal
+         * `weight > maxWeight` check instead of clamping itself into
+         * eligibility (P02).
+         */
         fun defaultWeight(value: Any?): Long = when (value) {
             null -> 0L
             is ByteArray -> value.size.toLong()
             is String -> value.length.toLong() * 2L
             is CharSequence -> value.length.toLong() * 2L
-            is Collection<*> -> value.sumOf { defaultWeight(it) }.coerceAtMost(DEFAULT_MAX_WEIGHT)
+            is Collection<*> -> value.sumOf { defaultWeight(it) }
             is Map<*, *> -> value.entries.sumOf {
                 defaultWeight(it.key) + defaultWeight(it.value)
-            }.coerceAtMost(DEFAULT_MAX_WEIGHT)
+            }
             else -> 256L
         }
     }

@@ -275,6 +275,32 @@ class SecureConnectionStore internal constructor(
         upsert(profile.copy(hasSessionToken = true), prev.copy(sessionToken = trimmed))
     }
 
+    /**
+     * Compare-and-set consent recording (B06): the whole read–decide–write
+     * consent operation runs against the exact stored snapshot. If the
+     * connection was edited or deleted after [expected] was read, this fails
+     * instead of overwriting the newer state or resurrecting a deleted
+     * profile with stale secrets.
+     */
+    fun recordCleartextConsentIfSnapshot(expected: ConnectionSnapshot, origin: String): Boolean =
+        synchronized(mutationLock) {
+            val profile = _profiles.value.find { it.id == expected.connectionId } ?: return false
+            val secrets = readSecretsSafely(expected.connectionId, profile) ?: return false
+            val current = ConnectionSnapshot.from(profile, secrets)
+            if (current.profile != expected.profile || current.secrets != expected.secrets) {
+                return false
+            }
+            upsert(
+                profile.copy(
+                    allowCleartext = true,
+                    cleartextConsentRecorded = true,
+                    cleartextConsentOrigin = origin,
+                ),
+                secrets,
+            )
+            true
+        }
+
     fun completeConnectionTestIfSnapshot(
         snapshot: ConnectionSnapshot,
         discoveredSessionToken: String?,
@@ -463,6 +489,13 @@ class SecureConnectionStore internal constructor(
         } else {
             SecureConnectionStoreState.RecoverableCorruption(diagnostics)
         }
+        // B04: the failure cleared profiles/activeId but left the previous
+        // credential-bearing ConnectionScope published; scope consumers
+        // (monitors, sockets) would keep the stale snapshot until some later
+        // mutation. Publish an invalidated null scope (with a generation bump
+        // so observers re-run) atomically with the failure state.
+        scopeGeneration += 1
+        _scope.value = null
         null
     }
 

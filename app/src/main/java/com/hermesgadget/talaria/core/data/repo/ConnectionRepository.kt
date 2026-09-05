@@ -209,6 +209,11 @@ class ConnectionRepository(
      * http:// LAN/Tailscale destination without re-entering every field.
      */
     suspend fun recordCleartextConsent(id: String): Boolean = withContext(Dispatchers.IO) {
+        // B06: the entire read–decide–write runs as one store-level
+        // compare-and-set against the exact snapshot read here. A concurrent
+        // edit/deletion between the read and the write now fails the CAS
+        // instead of overwriting the newer state or resurrecting the deleted
+        // profile with stale secrets.
         val snapshot = store.snapshotFor(id) ?: return@withContext false
         val profile = snapshot.profile
         val baseUrl = profile.baseUrl.trim().trimEnd('/').toHttpUrlOrNull() ?: return@withContext false
@@ -222,14 +227,14 @@ class ConnectionRepository(
             previous = profile,
         )
         if (!consent.recorded) return@withContext false
-        store.upsert(
-            profile.copy(
-                allowCleartext = true,
-                cleartextConsentRecorded = true,
-                cleartextConsentOrigin = consent.origin,
-            ),
-            snapshot.secrets,
+        // B06: origin is nullable on the decision type; a recorded consent with
+        // no origin would be unbindable, so refuse rather than pass null down.
+        val origin = consent.origin ?: return@withContext false
+        val applied = store.recordCleartextConsentIfSnapshot(
+            expected = snapshot,
+            origin = origin,
         )
+        if (!applied) return@withContext false
         wsAuthHelper.invalidate()
         clientFactory.invalidate()
         true

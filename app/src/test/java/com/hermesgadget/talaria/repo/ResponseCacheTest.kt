@@ -22,6 +22,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ResponseCacheTest {
@@ -207,5 +208,111 @@ class ResponseCacheTest {
         gate.complete(Unit)
         assertEquals("stale", read.await().getOrThrow())
         assertNull("stale value must not be cached after clear", cache.peek("k", 10_000))
+    }
+
+    @Test
+    fun `leader cancellation fails joined followers instead of hanging (B07)`() = runTest {
+        val cache = ResponseCache()
+        val gate = CompletableDeferred<Unit>()
+        val leader = async {
+            cache.readThrough("k", 10_000) {
+                gate.await()
+                "value"
+            }
+        }
+        yield()
+        val follower = async {
+            cache.readThrough("k", 10_000) { "never-fetched" }
+        }
+        yield()
+        // Leader's screen leaves: its coroutine is cancelled mid-fetch.
+        leader.cancel()
+        gate.complete(Unit)
+        val result = follower.await()
+        assertTrue(
+            "follower must fail fast instead of hanging forever",
+            result.isFailure,
+        )
+        // And the cache is left usable: a fresh read fetches normally.
+        val retry = cache.readThrough("k", 10_000) { "fresh" }
+        assertEquals("fresh", retry.getOrNull())
+    }
+
+    @Test
+    fun `reader arriving after invalidation does not join pre-invalidation fetch (B08)`() = runTest {
+        val cache = ResponseCache()
+        val gate = CompletableDeferred<Unit>()
+        var fetches = 0
+        val first = async {
+            cache.readThrough("k", 10_000) {
+                fetches += 1
+                gate.await()
+                "old"
+            }
+        }
+        yield()
+        // Mutation invalidates the key while the first fetch is in flight.
+        cache.invalidate("k")
+        val second = async {
+            cache.readThrough("k", 10_000) {
+                fetches += 1
+                "new"
+            }
+        }
+        yield()
+        gate.complete(Unit)
+        assertEquals("old", first.await().getOrNull())
+        assertEquals("new", second.await().getOrNull())
+        assertEquals("post-invalidation reader must run its own fetch", 2, fetches)
+        assertEquals("the pre-invalidation result must never be cached", "new", cache.peek("k", 10_000))
+    }
+
+    @Test
+    fun `prefix invalidation covers a first-time in-flight fetch (B08)`() = runTest {
+        val cache = ResponseCache()
+        val gate = CompletableDeferred<Unit>()
+        val first = async {
+            cache.readThrough("fresh:key", 10_000) {
+                gate.await()
+                "old"
+            }
+        }
+        yield()
+        // No generation entry exists yet for a first-time key: the prefix
+        // invalidation must still invalidate the in-flight fetch.
+        cache.invalidatePrefix("fresh:")
+        gate.complete(Unit)
+        assertEquals("old", first.await().getOrNull())
+        assertNull("first fetch result must not be cached after prefix invalidation", cache.peek("fresh:key", 10_000))
+        val fresh = cache.readThrough("fresh:key", 10_000) { "new" }
+        assertEquals("new", fresh.getOrNull())
+    }
+
+    @Test
+    fun `mass invalidation stays bounded and keeps working (P02)`() = runTest {
+        val cache = ResponseCache()
+        // Far more distinct keys than the generation bookkeeping bound.
+        repeat(2000) { i -> cache.invalidate("key-$i") }
+        var fetches = 0
+        val value = cache.readThrough("key-1999", 10_000) { fetches++; "ok" }
+        assertEquals("ok", value.getOrNull())
+        assertEquals(1, fetches)
+    }
+
+    @Test
+    fun `aggregate collection weight is clamped to the instance budget (P02)`() {
+        val budget = 1000L
+        val cache = ResponseCache(
+            now = { 0L },
+            maxEntries = 8,
+            maxWeight = budget,
+        )
+        // A huge list of small unknown objects: pre-fix this weighed as if
+        // every element were 256 bytes but clamped to a global constant,
+        // letting it fit "by definition". It must not be retained.
+        val huge = List(50_000) { Any() }
+        cache.put("huge", huge)
+        assertNull(cache.peek("huge", 10_000))
+        assertEquals(0, cache.entryCount)
     }
 }

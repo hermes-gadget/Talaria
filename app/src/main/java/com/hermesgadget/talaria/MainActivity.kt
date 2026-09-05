@@ -184,7 +184,12 @@ class MainActivity : ComponentActivity() {
         // via explicit intents and would bypass the intake pipeline.
         when (intent?.action) {
             Intent.ACTION_VIEW -> {
-                if (intent.data?.getQueryParameter("focus") == "composer") {
+                // B01: the URI comes from outside the app. An explicit
+                // ACTION_VIEW with an opaque URI (e.g. `talaria:opaque`) has no
+                // hierarchical parts, and getQueryParameter would throw before
+                // the navigation parser ever sees it.
+                val parsed = parseViewIntentData(intent.data)
+                if (parsed.focusComposer) {
                     // The widget cannot host text input. Ask the full chat surface
                     // to bring up its composer when its deep link is opened.
                     window.setSoftInputMode(
@@ -192,10 +197,28 @@ class MainActivity : ComponentActivity() {
                             android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE,
                     )
                 }
-                deepLink = intent.data?.toString()
+                deepLink = parsed.deepLink
             }
         }
     }
+}
+
+/** Result of inspecting an inbound ACTION_VIEW deep link (B01). */
+internal data class ViewIntentResult(
+    val deepLink: String?,
+    val focusComposer: Boolean,
+)
+
+/**
+ * Safely inspect an externally supplied ACTION_VIEW URI. Opaque URIs have no
+ * hierarchical parts and cannot carry query parameters; asking for them would
+ * throw. Non-hierarchical data is still forwarded as the deep link untouched
+ * so the navigation layer can apply its own validation.
+ */
+internal fun parseViewIntentData(data: Uri?): ViewIntentResult {
+    if (data == null) return ViewIntentResult(deepLink = null, focusComposer = false)
+    val focusComposer = data.isHierarchical && data.getQueryParameter("focus") == "composer"
+    return ViewIntentResult(deepLink = data.toString(), focusComposer = focusComposer)
 }
 
 @Composable

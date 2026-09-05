@@ -36,7 +36,11 @@ object ApprovalChoicePolicy {
 
         return when {
             choice in offered -> choice
-            offered.isEmpty() && choice in SAFE_ONESHOT_CHOICES -> choice
+            // S04: the safe one-shot fallback applies ONLY when the server
+            // offered no choices at all. A nonempty list with no supported
+            // affirmative option (e.g. deny-only) must fail closed rather
+            // than invent an approval the server did not offer.
+            serverChoices.none { it.isNotBlank() } && choice in SAFE_ONESHOT_CHOICES -> choice
             else -> null
         }
     }

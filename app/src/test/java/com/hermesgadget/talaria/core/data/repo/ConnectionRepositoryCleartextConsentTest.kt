@@ -60,20 +60,17 @@ class ConnectionRepositoryCleartextConsentTest {
         val profile = migratedProfile(url)
         val store = mockk<SecureConnectionStore>()
         every { store.snapshotFor("migrated") } returns ConnectionSnapshot(profile, ConnectionSecrets(sessionToken = "s"))
-        every { store.upsert(any(), any()) } just runs
+        // B06: consent is written through the store-level CAS, not upsert().
+        every { store.recordCleartextConsentIfSnapshot(any(), any()) } returns true
         val repository = repo(store)
 
         val recorded = repository.recordCleartextConsent("migrated")
 
         assertTrue(recorded)
         coVerify(exactly = 1) {
-            store.upsert(
-                match {
-                    it.allowCleartext &&
-                        it.cleartextConsentRecorded == true &&
-                        it.cleartextConsentOrigin == ConnectionOrigin.normalize(url)
-                },
-                any(),
+            store.recordCleartextConsentIfSnapshot(
+                match { it.profile == profile },
+                match { origin -> origin == ConnectionOrigin.normalize(url) },
             )
         }
     }
@@ -121,7 +118,8 @@ class ConnectionRepositoryCleartextConsentTest {
         val profile = migratedProfile(url)
         val store = mockk<SecureConnectionStore>()
         every { store.snapshotFor("migrated") } returns ConnectionSnapshot(profile, ConnectionSecrets())
-        every { store.upsert(any(), any()) } just runs
+        // B06: consent is written through the store-level CAS, not upsert().
+        every { store.recordCleartextConsentIfSnapshot(any(), any()) } returns true
         val clientFactory = mockk<HermesClientFactory>(relaxed = true)
         val wsAuth = mockk<WsAuthHelper>(relaxed = true)
         every { store.profiles } returns kotlinx.coroutines.flow.MutableStateFlow(emptyList())

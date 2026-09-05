@@ -81,4 +81,40 @@ class AuthInterceptorSanitizeTokenTest {
             .header(AuthInterceptor.SESSION_HEADER, sanitized)
             .build()
     }
+
+    @Test
+    fun `non-ascii credential is detected as unsendable (B15)`() {
+        // OkHttp 4.12 rejects non-ASCII header values — sanitizeToken alone
+        // does not make such a token sendable.
+        val token = "tökén"
+        val sanitized = AuthInterceptor.sanitizeToken(token)
+        assertTrue(sanitized.isNotEmpty())
+        assertFalse(AuthInterceptor.isHeaderSafeCredential(sanitized))
+
+        // Real OkHttp confirms the rejection (upstream JVM probe contract).
+        val rejected = runCatching {
+            okhttp3.Request.Builder()
+                .url("https://example.invalid/")
+                .header(AuthInterceptor.SESSION_HEADER, sanitized)
+                .build()
+        }.isFailure
+        assertTrue(rejected)
+    }
+
+    @Test
+    fun `ascii credential is detected as sendable (B15)`() {
+        assertTrue(AuthInterceptor.isHeaderSafeCredential("abcDEF123+xyz/ghi=jkl"))
+        assertFalse(AuthInterceptor.isHeaderSafeCredential(""))
+    }
+
+    @Test
+    fun `unsendable credential produces a contained response (B15)`() {
+        val request = okhttp3.Request.Builder()
+            .url("https://example.invalid/api/status")
+            .build()
+        val response = AuthInterceptor.unsendableCredentialResponse(request, "session token")
+        assertEquals(581, response.code)
+        assertTrue(response.message.contains("session token"))
+        response.close()
+    }
 }
