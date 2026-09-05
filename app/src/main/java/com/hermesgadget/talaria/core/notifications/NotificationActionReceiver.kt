@@ -59,12 +59,22 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 val reply = RemoteInput.getResultsFromIntent(intent)
                     ?.getCharSequence(KEY_REPLY)?.toString()
                 if (!reply.isNullOrBlank()) {
-                    // WorkManager Data is capped at 10 KiB; spill oversized
-                    // pastes to a cache file instead of throwing on the main
-                    // thread (M5).
-                    val payload = ReplyPayloadBuilder(
-                        File(context.cacheDir, "notification-replies"),
-                    ).build(reply)
+                    // B21: staging the reply (mkdir + file write for oversized
+                    // pastes) can throw on a full disk and previously escaped
+                    // BroadcastReceiver.onReceive before any error handling.
+                    // Everything from staging onward now sits inside the
+                    // error boundary; a staging failure degrades to an inline
+                    // truncated payload instead of crashing.
+                    val payload = try {
+                        ReplyPayloadBuilder(
+                            File(context.cacheDir, "notification-replies"),
+                        ).build(reply)
+                    } catch (_: Exception) {
+                        // Disk-full or permission failure: fall back to a
+                        // bounded inline payload rather than crashing or
+                        // silently dropping the user's reply.
+                        ReplyPayload.Inline(reply.take(MAX_INLINE_REPLY_CHARS))
+                    }
                     try {
                         val work = OneTimeWorkRequestBuilder<ReplyWorker>()
                             .setInputData(
@@ -79,9 +89,14 @@ class NotificationActionReceiver : BroadcastReceiver() {
                             )
                             .build()
                         WorkManager.getInstance(context).enqueue(work)
-                    } catch (failure: IllegalStateException) {
+                    } catch (enqueueFailure: Exception) {
                         // A pathological oversize payload must never crash the
                         // receiver; tell the user to open the app instead.
+                        // B21: drop any staged spill file so a full disk is
+                        // not left holding unreadable reply debris.
+                        (payload as? ReplyPayload.File)?.let { staged ->
+                            java.io.File(staged.path).delete()
+                        }
                         TalariaApp.instance.container.notifier.notifyError(
                             "Reply too long",
                             "Open the app to send this reply",
@@ -94,6 +109,8 @@ class NotificationActionReceiver : BroadcastReceiver() {
     }
 
     companion object {
+        /** B21: bounded inline fallback when spill staging fails. */
+        private const val MAX_INLINE_REPLY_CHARS = 8_192
         const val ACTION_DISMISS = "com.hermesgadget.talaria.NOTIF_DISMISS"
         const val ACTION_REPLY = "com.hermesgadget.talaria.NOTIF_REPLY"
         const val ACTION_APPROVE_PAIRING = "com.hermesgadget.talaria.NOTIF_APPROVE_PAIRING"

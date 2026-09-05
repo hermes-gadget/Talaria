@@ -214,32 +214,30 @@ object PtyPromptDelivery {
     private open class PromptAcceptedSignal : RuntimeException()
 }
 
+/**
+ * B17: terminal output was previously accepted as prompt acknowledgement when
+ * it contained generic markers ("agent", "running", ...) or echoed the prompt.
+ * Both are satisfiable from buffered startup output or an EARLIER turn that is
+ * still streaming, turning uncertainty into a false "delivered".
+ *
+ * The correlated server acceptance receipt does not exist yet, so this
+ * heuristic now only recognises an echo of the exact prompt that arrived in
+ * output PRODUCED AFTER the send. Generic markers no longer count: the caller
+ * sees a timeout/uncertain outcome instead of a fabricated acknowledgement.
+ */
 private object PtyPromptAcknowledgement {
-    private val agentMarkers = listOf(
-        "agent",
-        "assistant",
-        "thinking",
-        "working",
-        "running",
-        "processing",
-        "queued",
-    )
-
     fun isAccepted(
         event: PtyEvent.Output,
         prompt: String,
-        previousTranscript: String,
+        postSendTranscript: String,
     ): Pair<Boolean, String> {
         val visible = event.text.ifBlank { event.raw }
-        val transcript = (previousTranscript + visible).takeLast(MAX_TRANSCRIPT_LENGTH)
+        val transcript = (postSendTranscript + visible).takeLast(MAX_TRANSCRIPT_LENGTH)
         if (visible.isBlank()) return false to transcript
-        val normalized = transcript.lowercase()
-        val promptText = prompt.trim()
-        val normalizedPrompt = promptText.lowercase()
-        return (
-            (promptText.isNotEmpty() && normalized.contains(normalizedPrompt)) ||
-                agentMarkers.any(normalized::contains)
-            ) to transcript
+        val promptText = prompt.trim().lowercase()
+        // Echo-of-prompt only, on post-send output. Never generic markers.
+        val echoed = promptText.isNotEmpty() && transcript.lowercase().contains(promptText)
+        return echoed to transcript
     }
 
     private const val MAX_TRANSCRIPT_LENGTH = 8_192
@@ -253,3 +251,10 @@ private fun HermesSideEvent.isPromptAccepted(): Boolean = when (this) {
     -> true
     else -> false
 }
+
+/** Test seam for the B17 acknowledgement heuristic (production path is unchanged). */
+internal fun heuristicAcceptanceForTest(
+    event: PtyEvent.Output,
+    prompt: String,
+    transcript: String,
+): Pair<Boolean, String> = PtyPromptAcknowledgement.isAccepted(event, prompt, transcript)

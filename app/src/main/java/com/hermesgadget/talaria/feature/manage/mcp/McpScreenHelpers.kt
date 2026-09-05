@@ -160,12 +160,27 @@ internal fun normalizeBearerToken(token: String): String {
     }
 }
 
-internal fun mcpBearerEnvKey(name: String): String {
+internal fun mcpBearerEnvKey(name: String): String = mcpBearerEnvKey(name, occupiedKeys = emptySet())
+
+/**
+ * S07: punctuation-normalizing two distinct server names ("a-b" vs "a_b",
+ * "ML Kit" vs "ml.kit") used to fold them onto one environment key, and the
+ * second server silently overwrote the first's credential. Callers pass the
+ * keys already in use; a collision is disambiguated with a numeric suffix.
+ */
+internal fun mcpBearerEnvKey(name: String, occupiedKeys: Set<String>): String {
     val suffix = name
         .uppercase(Locale.ROOT)
         .replace(Regex("[^A-Za-z0-9_]"), "_")
         .trim('_')
-    return "MCP_${suffix}_API_KEY"
+    val base = "MCP_${suffix}_API_KEY"
+    if (occupiedKeys.isEmpty() || base !in occupiedKeys) return base
+    var counter = 2
+    while (true) {
+        val candidate = "MCP_${suffix}_${counter}_API_KEY"
+        if (candidate !in occupiedKeys) return candidate
+        counter += 1
+    }
 }
 
 internal fun buildEditedMcpServerConfig(

@@ -21,6 +21,7 @@ import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.JsonConfig
+import com.hermesgadget.talaria.core.network.PtyPromptDeliveryException
 import com.hermesgadget.talaria.core.network.SnapshotAuthGuard
 import com.hermesgadget.talaria.di.AppContainer
 import com.hermesgadget.talaria.domain.model.SessionSummary
@@ -394,8 +395,18 @@ class ShareCaptureViewModel(
             } else {
                 val failure = result.exceptionOrNull() ?: IllegalStateException("Share delivery failed")
                 val message = failure.message ?: "Share delivery failed"
+                // B28: a retry that re-sends an already-queued frame would
+                // duplicate the prompt. When the delivery exception says the
+                // frame reached the socket queue, park the item in
+                // DELIVERY_UNKNOWN instead of DRAFT — the UI blocks re-send
+                // for that state until the session view confirms the outcome.
+                val acceptedInFlight = (failure as? PtyPromptDeliveryException)?.frameAccepted == true
                 val retained = sending.copy(
-                    deliveryState = ShareDraftDeliveryState.DRAFT,
+                    deliveryState = if (acceptedInFlight) {
+                        ShareDraftDeliveryState.DELIVERY_UNKNOWN
+                    } else {
+                        ShareDraftDeliveryState.DRAFT
+                    },
                     deliveryMessage = message,
                     updatedAt = nowMillis(),
                 )
@@ -445,8 +456,20 @@ class ShareCaptureViewModel(
                     if (current.items.any { it.sourceUri == rawUri }) return@forEach
                     try {
                         val item = copyAndValidate(fixedSnapshot, rawUri, fallbackMimeType)
-                        draft = current.copy(
-                            items = current.items + item,
+                        // B29: `current` was captured before the suspending
+                        // copy; applying it now would discard instructions,
+                        // target changes, or a cleared draft that happened
+                        // meanwhile. Re-read the LIVE draft and re-validate
+                        // the delivery state before extending it.
+                        val live = draft
+                        if (live == null || live.deliveryState != ShareDraftDeliveryState.DRAFT) {
+                            // Import cancelled while we copied — drop the
+                            // freshly staged file instead of resurrecting.
+                            runCatching { fileManager.deleteOwnedFile(java.io.File(item.localPath)) }
+                            return@forEach
+                        }
+                        draft = live.copy(
+                            items = live.items + item,
                             updatedAt = nowMillis(),
                             deliveryMessage = null,
                         )
@@ -501,7 +524,20 @@ class ShareCaptureViewModel(
             remaining,
             declaredBytes.takeIf { it >= 0L } ?: Long.MAX_VALUE,
         )
-        val source = resolver.openInputStream(uri) ?: error("Could not open ${displayName}")
+        // S02: the exported share receiver can be handed arbitrary content
+        // URIs. A 1-byte grant probe fails closed for URIs this process
+        // cannot read (another app's private files, our own internal
+        // provider); real system share flows always hold a grant.
+        val source = if (uri.scheme == "content") {
+            // Probe + real open: SecurityException/.FileNotFoundException from
+            // the probe means no grant — surface a rejection, not a copy.
+            resolver.openInputStream(uri)?.use { stream ->
+                check(stream.read() >= 0) { "Not permitted to read ${displayName}" }
+            } ?: error("Not permitted to read ${displayName}")
+            resolver.openInputStream(uri)
+        } else {
+            null
+        } ?: error("Could not open ${displayName}")
         val owned = try {
             fileManager.createShareFile(
                 prefix = "capture-",

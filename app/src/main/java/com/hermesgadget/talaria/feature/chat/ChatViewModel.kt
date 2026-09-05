@@ -950,8 +950,17 @@ class ChatViewModel(
     }
 
     /** Open a brand-new concurrent agent in its own tab and focus it. */
-    fun newSession(resume: String? = null, titleOverride: String? = null, draft: String = "") {
-        val snapshot = container.clientFactory.snapshot()
+    fun newSession(
+        resume: String? = null,
+        titleOverride: String? = null,
+        draft: String = "",
+        originTabId: String? = null,
+    ) {
+        // B34: a child spawned from a tab (branch/edit-branch) must inherit the
+        // ORIGIN TAB's bound snapshot — the active connection can be a
+        // different profile and would silently cross-wire the child.
+        val snapshot = originTabId?.let { tabSnapshot(it) }
+            ?: container.clientFactory.snapshot()
         if (snapshot == null) {
             return
         }
@@ -1702,7 +1711,11 @@ class ChatViewModel(
             )
         }
         viewModelScope.launch {
-            hermesRepository.renameSession(dialog.sessionId, trimmed)
+            // B34: the tab may belong to a different management profile than
+            // the currently active one; rename must execute against the tab's
+            // own bound snapshot, not the mutable active selection.
+            val tabSnapshot = dialog.tabId?.let { runtimes[it]?.eventClient?.fixedSnapshot }
+            hermesRepository.renameSession(dialog.sessionId, trimmed, tabSnapshot)
                 .onSuccess {
                     dialog.tabId?.let { tabId -> updateTab(tabId) { it.copy(title = trimmed) } }
                     _ui.update {
@@ -1755,7 +1768,11 @@ class ChatViewModel(
                 // Branching creates a live child but leaves the parent tab intact.
                 // The stored id is the resumable chat route; the RPC session_id is
                 // only the gateway's in-memory runtime id.
-                newSession(resume = storedSessionId, titleOverride = title)
+                newSession(
+                    resume = storedSessionId,
+                    titleOverride = title,
+                    originTabId = request.tabId,
+                )
                 _ui.update {
                     it.copy(
                         sessionControls = ChatSessionControlsReducer.succeed(
@@ -1813,6 +1830,7 @@ class ChatViewModel(
                     resume = storedSessionId,
                     titleOverride = title,
                     draft = editedText,
+                    originTabId = target.tabId,
                 )
                 _ui.update {
                     it.copy(

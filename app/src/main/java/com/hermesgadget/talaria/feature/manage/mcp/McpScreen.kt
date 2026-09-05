@@ -79,6 +79,9 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import java.util.Locale
 import androidx.core.net.toUri
@@ -362,9 +365,28 @@ fun McpScreen() {
                         }
                         val normalizedBearer = normalizeBearerToken(submittedBearerToken)
                         if (submittedAuth == "header" && normalizedBearer.isNotBlank()) {
+                            // S07: the occupied set comes from the OTHER
+                            // servers' header-auth values in the pre-edit
+                            // snapshot; this server's own previous key is
+                            // excluded so re-saving keeps a stable key while
+                            // two distinct servers can no longer fold onto
+                            // one credential.
+                            val occupied = rawServers
+                                .filterKeys { it != target.name }
+                                .values
+                                .mapNotNull { cfg ->
+                                    val headers = (cfg as? JsonObject)?.get("headers") as? JsonArray
+                                    headers?.firstOrNull()
+                                        ?.jsonObject
+                                        ?.get("value")
+                                        ?.jsonPrimitive
+                                        ?.contentOrNull
+                                }
+                                .toSet()
+                            val envKey = mcpBearerEnvKey(submittedName, occupied)
                             api.putEnv(
                                 buildJsonObject {
-                                    put("key", mcpBearerEnvKey(submittedName))
+                                    put("key", envKey)
                                     put("value", normalizedBearer)
                                 },
                             )
