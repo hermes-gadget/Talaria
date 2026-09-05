@@ -27,3 +27,6 @@ app/release/
 .cursor/
 .java-home
 .fw-context/
+
+# audit working data (never published)
+.audit/

@@ -1,673 +1,321 @@
-# Talaria roadmap
+# Talaria Roadmap
 
-Current released version: **`0.9.2`** (2026-08-14). Current compatibility baseline: Hermes Agent `v0.19.1` unless a feature performs explicit capability discovery. Talaria remains an Android-first Kotlin + Compose client for remote-capable Hermes chat and management workflows; Electron-only local-window, tray, local-shell, and novelty-overlay behavior is not a parity target.
+## Executive Summary
 
-This roadmap is based on the public reviews under `review-reports/` plus the verified repository release history. It supersedes the completed v0.6 backlog as the forward implementation plan.
+Audit of commit `8772fbfa5893776aa4edeac4f312ae1591de0df7`, completed 5 September 2026. Findings come from source and executable checks; previous project documentation and prior audit conclusions were excluded as evidence.
 
-## How to read and change this roadmap
+**Every Kotlin source line was read:** 204 production files (61,701 lines), 121 unit-test files (12,374 lines), and one instrumentation file (120 lines): **326 files, 74,195 lines total**. Root and app build.gradle.kts, settings.gradle.kts and AndroidManifest.xml were also read in full, with the version catalog, Gradle wrapper and relevant manifest resources checked. [ROADMAP-DRAFT.md](/home/ben/Talaria/ROADMAP-DRAFT.md) preserves the incremental batches and a per-file coverage ledger.
 
-Priority means implementation order, not marketing importance:
+The first work should address navigation/resource lifetime, cache cancellation and invalidation, wrong-scope operations, prompt delivery certainty, private share intake, and the disconnected file-save control. The app already has useful protections: immutable snapshots in many operations, origin and cleartext-consent guards, bounded buffers, transactional Room reconciliation, scoped storage, credential log redaction and a foreground-service timeout handler. Several defects occur where those protections are not carried through an entire workflow.
 
-- **P0 — now:** security boundaries, correctness bugs, primary-chat reliability, and small changes with outsized value.
-- **P1 — next:** high-value cross-layer work once the P0 foundations are safe.
-- **P2 — later:** structural programs, backend-assisted optimization, and additive product surfaces.
-- **Not planned:** superseded, unsupported, unsafe, or poor-return work.
+Validation completed with `JAVA_HOME=/home/ben/.local/jdk17` and `ANDROID_HOME=/home/ben/android-sdk`: `./gradlew testDebugUnitTest lintDebug`, followed by an explicit fresh `./gradlew :app:testDebugUnitTest --rerun`. **445 tests passed; zero failures, errors or skips; debug lint reported zero issues.** The optional loopback-dashboard probe ran. A probe of the pinned OkHttp version confirmed rejection of non-ASCII header values. Separate JVM probes reproduced cache leader-cancellation hangs, stale post-invalidation reads and an invented one-shot grant for deny-only choices. Application source hashes remained unchanged throughout.
 
-Value and effort are normalized across the reports:
+These are source-audit findings unless a reproduction is explicitly stated. No full device/UI, Android Auto or backend integration matrix was run. Platform-dependent behavior and backend failure envelopes need the targeted verification described below. High means potential data exposure/loss, wrong-target side effects or failure of a core workflow; Medium means a localized functional/reliability defect; Low means limited-impact maintainability or polish. No Critical-severity issue was established. Finding IDs are retained from the incremental draft for traceability.
 
-- **Value:** Critical = release authorization/credential/data-loss or broken advertised path; High = primary workflow or major battery/memory win; Medium = meaningful product/maintainability gain; Low = niche/speculative.
-- **Effort:** **S** = up to about three engineer-days; **M** = roughly four to ten engineer-days including tests; **L** = three or more engineer-weeks or coordinated backend/module work. `M/L` means an M client mitigation exists while the ideal protocol solution is L.
+The consolidated list contains **141 findings**: 38 High, 93 Medium and 10 Low.
 
-Every item has an ID and explicit dependencies. Re-prioritize freely within a tier when dependencies remain satisfied. Do not move an item ahead of its prerequisite in the graph; do not demote P0 authorization, credential-scope, or data-integrity work based only on low observed frequency. Server-assisted P2 items may move earlier when the API is already available and versioned. Every implementation should carry its acceptance test in the same change rather than creating a detached testing phase.
+## Critical Bugs
 
-Public review abbreviations used below: **CQ** = `improvements.md`, **IDEAS** = `ideas.md`, **COMPAT** = `compatibility.md`, **SEC** = `security.md`, **PERF** = `performance.md`, **TEST** = `testing.md`.
+- **B04 — High — Stale security scope.** [app/src/main/java/com/hermesgadget/talaria/core/data/prefs/SecureConnectionStore.kt:446–466](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/data/prefs/SecureConnectionStore.kt:446) clears profiles/active ID after a runtime credential read failure but never clears `_scope` or advances scope generation. Consumers of the scope flow can retain the previous credential-bearing snapshot until another mutation occurs. Fix: publish an invalidated null scope atomically with the failure state; verify cancellation of scope consumers.
 
-## Released
+- **B07 — High — Hung loads.** [app/src/main/java/com/hermesgadget/talaria/core/data/repo/ResponseCache.kt:171–202](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/data/repo/ResponseCache.kt:171) creates a parentless CompletableDeferred for followers, but leader cancellation rethrows at 185–186 without completing/cancelling that deferred. Joined callers wait indefinitely after the leader screen leaves. Fix: complete the gate exceptionally on every exit; test leader cancellation with a still-live follower. Reproduced in a standalone JVM probe using this production class.
 
-The forward plan must not erase shipped work. These are the repository’s current release claims.
+- **B08 — High — Cache invalidation races.** [app/src/main/java/com/hermesgadget/talaria/core/data/repo/ResponseCache.kt:158–180,193–196](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/data/repo/ResponseCache.kt:158) allows post-invalidation callers to join pre-invalidation work; generation comparison and put are separate critical sections, allowing invalidation between them and stale repopulation. Prefix/predicate invalidation (107–119) misses a first fetch whose key has no generation entry. Fix: version in-flight identities and perform stamp-check/store under the same lock; do not join old generations. A standalone probe reproduced a post-invalidation reader receiving the old result without running its fetch.
 
-### v0.6.0 — API and UX breadth
+- **B09 — High — Destructive reconciliation from incomplete payloads.** [app/src/main/java/com/hermesgadget/talaria/core/data/repo/HermesRepository.kt:345–361](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/data/repo/HermesRepository.kt:345) silently drops undecodable object rows, treats unknown shapes as empty, and treats a bare array page length as the total. `fetchSessionsForReconciliation` (270–312) can then mark that partial result complete and delete cached sessions, messages, favorites, and links (247–261). Fix: track decode completeness separately; never prune on malformed/ambiguous payloads; require trustworthy pagination completion.
 
-- Managed file upload/download/mkdir/delete/media preview; plugins and Kanban; Telegram/WhatsApp onboarding; MCP editing; memory provider setup/OAuth; computer-use and terminal backends; deep toolset/model controls; update/drain and operations depth.
-- Composer references, find-in-session, message edit/branch, syntax-highlighted Markdown, session pins/compaction, and progressive disclosure across Manage.
-- Release trust narrowed to system CAs, with user-installed CAs debug-only; dead pre-Android-O guards removed; ViewModel and feature tests expanded.
+- **B12 — High — Concurrent profiles cancel one another’s clients.** [app/src/main/java/com/hermesgadget/talaria/core/network/HermesClientFactory.kt:164–181](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/HermesClientFactory.kt:164) closes every other snapshot bundle for the same connection ID, even when only managementProfile differs. [app/src/main/java/com/hermesgadget/talaria/core/network/ProfileRegistry.kt:108–189](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/ProfileRegistry.kt:108) and [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:508–517,1157–1227](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:508) acquire clients for multiple profiles, so legitimate simultaneous reads/streams can cancel each other. Fix: separate transport/credential revision from management-profile selection, allow concurrent valid profile bundles, and synchronize eviction with construction. Test concurrent profile reads and sockets through the real factory.
 
-### v0.7.0 — session continuity
+- **B14 — High — Incremental message chunks are discarded by coalescing.** [app/src/main/java/com/hermesgadget/talaria/core/network/HermesEventClient.kt:974–983](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/HermesEventClient.kt:974) treats MessageDelta as replaceable with one coalescing key per session. [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:3354–3362](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:3354) appends these chunks and uses the buffer when a completion contains no final text (3493–3494). When two chunks queue before consumption, replacement loses earlier text. Fix: retain ordered deltas, combine them within a byte budget, or explicitly request authoritative reconciliation when loss occurs; never present a dropped stream as complete.
 
-- Auto-open active sessions created outside the current phone flow, source-aware session tabs, end-reason tracking, and transcript filtering for tool/system-only messages.
+- **B16 — High — Path-prefixed deployments lose profile/auth policy.** [app/src/main/java/com/hermesgadget/talaria/core/network/ProfileQueryInterceptor.kt:41–46](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/ProfileQueryInterceptor.kt:41) only recognizes paths beginning `/api/`, while accepted base URLs and Retrofit preserve a path prefix ([app/src/main/java/com/hermesgadget/talaria/core/network/HermesClientFactory.kt:262](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/HermesClientFactory.kt:262)). With `https://host/hermes`, many calls omit profile injection and can act on the server default profile. Auth suppression/bootstrap checks ([app/src/main/java/com/hermesgadget/talaria/core/network/ConnectionSnapshot.kt:196](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/ConnectionSnapshot.kt:196), [app/src/main/java/com/hermesgadget/talaria/core/network/AuthInterceptor.kt:120–124](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/AuthInterceptor.kt:120)) and endpoint response budgets ([app/src/main/java/com/hermesgadget/talaria/core/network/ResponseBodyLimitInterceptor.kt:167–177](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/ResponseBodyLimitInterceptor.kt:167)) also assume root paths. Fix: derive the route relative to the captured base path consistently and test prefixed REST/WS/OIDC/mutation paths.
 
-### v0.8.0 — car, foldable, voice, performance, and audit remediation
+- **B17 — High — False prompt-delivery success.** [app/src/main/java/com/hermesgadget/talaria/core/network/PtyPromptDelivery.kt:133–162,218–242,248–253](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/PtyPromptDelivery.kt:133) accepts any sidecar message boundary without session/delivery correlation, or terminal output containing generic words such as “agent” or “running.” Buffered startup output or an earlier turn can satisfy this immediately after queuing input. Fix: explicit correlated server acceptance receipt; until supported preserve uncertain delivery rather than claiming acknowledgement from generic terminal text.
 
-- Android Auto/templated car surface and AAOS experimentation, driving-safe agent creation, PTY prompt delivery fixes, Car API metadata fixes, and foldable/large-screen dual-pane chat.
-- Server STT as the primary dictation path with Android fallback, bounded voice payload/lifecycle handling, and broader localization/transport tests.
-- Audit remediation across multi-profile transport safety, chat/session ownership, PiP/deep links, artifacts/files, System/Config/Manage, car lifecycle, release lint, and default versioning.
-- Performance fixes already retained: in-flight assistant state separated from immutable lines, Markdown parsing memoized, identical REST transcript state suppressed at the Compose boundary, stable lazy-list keys, and instant keyed auto-follow.
+- **B19 — High — Token refresh cancels its own request.** [app/src/main/java/com/hermesgadget/talaria/core/network/SnapshotCredentialHelpers.kt:251–262](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/SnapshotCredentialHelpers.kt:251) invokes onTokensRotated from the AuthInterceptor refresh path; [app/src/main/java/com/hermesgadget/talaria/core/network/HermesClientFactory.kt:44–46,154–158,177–181](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/HermesClientFactory.kt:44) cancels all calls for that connection, including the original request currently trying to use the new token. Fix: retire bundles for future acquisition without cancelling the successful refreshing call, and coordinate consumers with the new snapshot.
 
-### v0.8.1 — artifact recursion hotfix
+- **B23 — High — Monitor snapshot validation compares the wrong snapshot.** [app/src/main/java/com/hermesgadget/talaria/core/notifications/AgentTaskNotificationService.kt:215–221](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/notifications/AgentTaskNotificationService.kt:215) resolves a new saved snapshot and compares it to the current saved one, never comparing `runtime.client.fixedSnapshot`. Same-ID URL/credential edits leave the stale runtime installed; secret-only changes may not emit either observed flow at 94. Fix: observe connection scope generation and compare/rebind the actual runtime snapshot.
 
-- Added a bound for recursively stringified JSON unwrapping after the artifact extraction stack-overflow regression. Structural depth/node/byte budgets remain forward work under R0.7.
+- **B28 — High — Share retries can duplicate accepted prompts.** [app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareCaptureViewModel.kt:394–407](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareCaptureViewModel.kt:394) converts every delivery exception back to DRAFT/IDLE, ignoring PtyPromptDeliveryException.frameAccepted. If the prompt entered the socket queue but acknowledgement times out, Send becomes available and submits it again. Fix: persist DELIVERY_UNKNOWN whenever any prompt frame may have been accepted and require explicit reconciliation; keep safe retries only for proven pre-send failures.
 
-### v0.8.2 — car host compatibility change, with known security debt
+- **B29 — High — Share import overwrites edits or resurrects discarded drafts.** [app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareCaptureViewModel.kt:443–452](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareCaptureViewModel.kt:443) captures current draft before suspending in copyAndValidate, then replaces it with current.copy. Instructions, target changes, other incoming share text, item removal, or discard during the copy are lost; a discarded draft can reappear. Fix: merge the new item into the latest matching draft generation after await and delete the staged file if ownership changed.
 
-- Allowed all car hosts in release to work around sample-allowlist/OEM incompatibility. This shipped behavior is preserved as history, not endorsed as the target posture; R0.2 replaces it with authenticated release trust.
+- **B32 — High — Delivery journal durability unchecked.** [app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareIntakeStore.kt:104–108](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareIntakeStore.kt:104) uses KTX edit(commit=true), which discards commit's Boolean. ShareCaptureViewModel sends after this unverified journal write (356–377), so a failed SENDING persistence can allow a previously sent draft to restore as resendable. Fix: require successful commit before remote side effects and retain a recoverable storage error.
 
-### v0.8.3 — Android Auto capability discovery
+- **B33 — High — Wrong-session discovery.** [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:1355–1363,3122–3136](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:1355): a newly sending tab claims the newest session absent from its baseline, with no channel/request correlation. Two new tabs or an unrelated Discord/CLI session can swap ownership; later approvals, images and history target that unrelated session. Fix: obtain a durable session ID from the creating channel; never infer identity from recency.
 
-- Added `com.google.android.gms.car.application` metadata and `automotive_app_desc.xml` declaring both `notification` and `template`. The descriptor is shipped; it is not a forward backlog item.
+- **B34 — High — Chat mutations use the active profile instead of the target tab’s profile.** [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:1705](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:1705) renames through the active-profile repository while tabs can belong to other profiles (508–517,660–684). Branch completion at 1758/1812 opens the child using whichever snapshot is active after the request. Fix: capture the target tab’s immutable operation context for rename, branch and child creation, then verify that the tab/request still exists before applying completion. B12 separately covers client eviction.
 
-### v0.9.0 — 2026-08-06
+- **B36 — High — Old REST history can finish a new turn.** [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:3220–3233](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:3220): the comment promises a superset check, but implementation accepts any nonempty unequal transcript and treats any trailing assistant as the new reply. An eventually consistent response containing the previous turn drops the optimistic user prompt, clears working, and can drain another queued prompt (3239). Fix: correlate server revision/turn ID and require acknowledgement of the submitted prompt before accepting completion.
 
-- One-tap token fetch from the dashboard, connection-doctor REST probe, explicit refresh on delayed live updates, multi-item share intake, local session labels/groups/favorites, transcript deletion + reconciliation, widget/car strings in all five locales, draft debounce + mic-off-screen, and Android Auto consent E2E.
-- Fixes for the fetch-token main-thread hang, REST/WS token divergence, pasted-token crash loop, and `super.onCreate()` ordering on Auto hosts.
+- **B41 — High — Provider credential operations can cross connections.** [app/src/main/java/com/hermesgadget/talaria/feature/connection/ConnectViewModel.kt:540,777–789](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/connection/ConnectViewModel.kt:540): providerApi resolves the mutable active connection separately for add, delete and refresh. Saved-connection Use/Edit remains enabled during provider operations ([app/src/main/java/com/hermesgadget/talaria/feature/connection/ConnectScreen.kt:388–393](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/connection/ConnectScreen.kt:388)). Switching after add can delete the same indexed credential on another server; other async results overwrite the new connection's provider UI. Fix: capture one immutable snapshot and content generation for the whole operation; reject stale confirmations and results.
 
-### v0.9.1 — 2026-08-12
+- **B42 — High — Replacement can delete the working credential after application-level failure.** [app/src/main/java/com/hermesgadget/talaria/feature/connection/ConnectViewModel.kt:780–787](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/connection/ConnectViewModel.kt:780) ignores the add response and unconditionally deletes the prior entry when HTTP succeeds. Fix: validate application success and stable identity of the new credential before deleting; expose partial completion without an unsafe blind retry.
 
-- Audit remediation waves 0–5: transport ingress bounds, profile-scoped drafts/rebinding, serialized config saves, share/Kanban reliability fixes, hardened deep links and FileProvider paths, bounded version arithmetic, and cleartext-consent disclosure.
-- Emulator loopback interceptor release-gated; repository cache invalidation keyed consistently; status widget cache race fixed; download retry fixed.
+- **B45 — High — Sharing a text artifact can silently export only the preview.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/artifacts/ArtifactsViewModel.kt:495–507](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/artifacts/ArtifactsViewModel.kt:495) writes fsReadText.text to the shared file without inspecting FsTextFile.truncated. Fix: use the raw download endpoint for exports; refuse or explicitly label incomplete content if raw retrieval is unavailable.
 
-### Current verification baseline
+- **B48 — High — Config form and serialized editor diverge after save.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/config/ConfigScreen.kt:431](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/config/ConfigScreen.kt:431) applies authoritative text to editorState but never updates configModel or clears fieldDrafts; subsequent form edits at 147–166 serialize the old model and can overwrite server-normalized values. Fix: maintain one versioned config model; reconcile the authoritative response into it while preserving newer drafts.
 
-- 214 unit tests are green by the supplied v0.8.3 baseline.
-- The app remains one `:app` module at roughly 48k production lines.
-- GitHub’s signed APK workflow runs unit tests and release assembly on version tags/manual dispatch. It is not yet a PR quality gate and does not run the instrumentation suite.
+- **B49 — High — Config readback does not verify that the requested change committed.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/config/ConfigSaveCoordinator.kt:87–100](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/config/ConfigSaveCoordinator.kt:87) accepts any successful GET as Committed without comparing it to the requested config; `ConfigEditorState:149–153` then replaces the user's draft and declares Saved. A semantically rejected PUT or stale readback loses the intended change. Fix: validate mutation success and compare acknowledged revision/fields; retain the requested draft when the result cannot be verified.
 
-## Dependency graph
+- **B66 — High — Editing a skill destroys unknown YAML metadata.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/skills/SkillsViewModel.kt:532–548,559–564](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/skills/SkillsViewModel.kt:532) parses only name/description/body and regenerates a header with only those two keys. Any other metadata is deleted by an ordinary body edit; multiline/nested YAML is misparsed as well. Fix: retain original front matter and patch supported keys using a real YAML parser or lossless document model; add preservation tests with multiline descriptions and unknown fields.
 
-```mermaid
-flowchart TD
-  R01[R0.1 cleartext decision model] --> R17[R1.7 guided onboarding]
-  R01 --> R23[R2.3 roaming endpoints]
+- **B77 — High — Navigation scope changes retain old destination ViewModels.** [app/src/main/java/com/hermesgadget/talaria/ui/navigation/TalariaNavRoot.kt:364–368](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/ui/navigation/TalariaNavRoot.kt:364) replaces rememberNavController under key(activeScope), while NavHost uses the activity’s ViewModelStore. Inspection of the pinned Navigation 2.9.8 implementation shows disposal only completes transitions; back-stack entry stores are cleared when entries are removed or the owning activity store is cleared. The old controller’s entries remain retained, including ViewModels with independent jobs/resources. Fix: give each scope an explicitly owned ViewModelStoreOwner that is cleared on disposal, or pop and clear the old graph and saved stacks before replacement. Verify onCleared, socket counts and retained heap after repeated switches. Evidence: [Navigation Compose 2.9.8 source archive](https://dl.google.com/dl/android/maven2/androidx/navigation/navigation-compose/2.9.8/navigation-compose-2.9.8-sources.jar), [Navigation Runtime 2.9.8 source archive](https://dl.google.com/dl/android/maven2/androidx/navigation/navigation-runtime/2.9.8/navigation-runtime-2.9.8-sources.jar).
 
-  R02[R0.2 authenticated car hosts] --> R14[R1.4 Auto messaging and qualification]
-  R03[R0.3 immutable-snapshot auth] --> R06[R0.6 PTY auto-reconnect]
-  R03 --> R13[R1.3 worker and notification delivery]
+- **B01 — Medium — Crash risk.** [app/src/main/java/com/hermesgadget/talaria/MainActivity.kt:187](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/MainActivity.kt:187) calls `Uri.getQueryParameter()` on an externally supplied ACTION_VIEW URI without checking `isHierarchical`. An explicit launch with `talaria:opaque` reaches this before the navigation parser. Fix: validate action/scheme/hierarchy before query access; add an intent regression test.
 
-  R04[R0.4 bounded streams and cancellation] --> R05[R0.5 event-driven transcript reconciliation]
-  R04 --> R06
-  R04 --> R11[R1.1 runtime/socket ownership]
-  R05 --> R11
-  R06 --> R11
+- **B03 — Medium — Filter corruption.** [app/src/main/java/com/hermesgadget/talaria/core/data/db/Daos.kt:94–96](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/data/db/Daos.kt:94) clears both labelId and groupId when either references a deleted collection. Deleting a label unexpectedly removes a still-valid group constraint (and vice versa). Fix: independent CASE expressions; test a saved filter containing both references.
 
-  R08[R0.8 secure-store recovery] --> R112[R1.12 credential migration]
-  R15[R1.5 attention inbox] --> R16[R1.6 event spine]
-  R11 --> R16
-  R16 --> R24[R2.4 ambient surfaces]
-  R16 --> R28[R2.8 advanced car loop]
+- **B05 — Medium — Broken corruption handling.** [app/src/main/java/com/hermesgadget/talaria/core/data/prefs/CarHostTrustStore.kt:288–292](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/data/prefs/CarHostTrustStore.kt:288) performs encrypted `getString` outside the catch; runtime decryption failures escape into car/template/UI callers. Invalid JSON silently becomes an empty Available store, and retry (132–138) returns true whenever prefs is non-null without validating content. Fix: catch authenticated reads, publish typed corruption, validate on retry, and prevent silent overwrite of damaged records.
 
-  R110[R1.10 state/network facades] --> R21[R2.1 Gradle modules]
-  R07[R0.7 content budgets] --> R22[R2.2 streaming and revision APIs]
-  R13 --> R27[R2.7 offline outbox]
-  R18[R1.8 share and attachments] --> R27
-```
+- **B06 — Medium — Consent race.** [app/src/main/java/com/hermesgadget/talaria/core/data/repo/ConnectionRepository.kt:211–232](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/data/repo/ConnectionRepository.kt:211) reads a snapshot then unconditionally upserts it when recording cleartext consent. A concurrent edit/deletion can be overwritten or resurrected, including stale secrets. Fix: store-level exact-snapshot compare-and-set covering the whole consent operation.
 
-The graph captures hard sequencing, not every useful relationship. For example, tests land with each node, while R0.11 supplies the shared CI machinery.
+- **B10 — Medium — Transcript rollback race.** [app/src/main/java/com/hermesgadget/talaria/core/data/repo/HermesRepository.kt:387–427](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/data/repo/HermesRepository.kt:387) has no per-session ordering/mutex around concurrent fetch, DB replace, and fingerprint publication. An older slow response can replace a newer completed transcript and stamp its fingerprint. Fix: serialize per scope/session or compare request/revision generations before cache commit.
 
-## P0 — now
+- **B11 — Medium — Activity collection misses first connection and discards event origin.** [app/src/main/java/com/hermesgadget/talaria/core/lifecycle/HermesForegroundObserver.kt:60–66](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/lifecycle/HermesForegroundObserver.kt:60) returns without installing its Activity-feed collector when the process starts with no connection. Saving the first connection while already foreground does not trigger another process onStart. At 104–105 it also attributes unscoped events to whichever snapshot is current at consumption time, allowing an event queued across a switch to be recorded under the wrong connection. Fix: observe foreground and connection state together, consume the scoped event envelope, and carry its originating snapshot through persistence and deduplication.
 
-### R0.1 — Cleartext consent, legacy migration, and private-route support
+- **B13 — Medium — Malformed frame handling.** [app/src/main/java/com/hermesgadget/talaria/core/network/HermesEventClient.kt:723–744,1049–1071,1174–1176](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/HermesEventClient.kt:723) catches JSON syntax parsing but performs `jsonPrimitive` casts and typed classification outside the catch. Valid JSON such as an object-valued id/method/choice throws instead of producing a contained protocol error. Fix: safe type accessors and a full classifier boundary, with malformed-shape tests.
 
-**Why / value:** **Critical.** New physical-device HTTP LAN profiles cannot record the required consent, legacy profiles missing the field deserialize as approved, and Tailscale CGNAT `100.64.0.0/10` is rejected despite the advertised LAN/Tailscale workflow. This is both a broken connection path and a confidentiality boundary. Sources: **COMPAT, SEC, TEST**.
+- **B15 — Medium — Invalid credential characters escape the transport error boundary.** [app/src/main/java/com/hermesgadget/talaria/core/network/AuthInterceptor.kt:111–117](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/AuthInterceptor.kt:111) removes C0/DEL but retains non-ASCII characters. Its Authorization header construction can therefore throw IllegalArgumentException outside the interceptor’s IOException conversion boundary. A JVM probe of the installed OkHttp 4.12.0 Headers.Builder confirmed rejection of a synthetic non-ASCII bearer value. Fix: validate header-compatible credential characters on entry and convert invalid stored credentials into a typed recoverable error.
 
-**Effort:** **M**. **Dependencies:** none; must precede R1.7 and R2.3.
+- **B20 — Medium — Loopback token discovery returns authentication for a stale client snapshot.** [app/src/main/java/com/hermesgadget/talaria/core/network/WsAuthHelper.kt:124–129](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/WsAuthHelper.kt:124) updates the saved token but returns only an auth query to a caller whose client is bound to the old snapshot. The next current-snapshot guard rejects the handshake; retries that reuse that snapshot remain stale. Existing WsAuthHelperLoopbackTokenSyncTest mocks the write without changing its returned snapshot, so it misses this boundary. Fix: return the refreshed snapshot with the auth result and acquire the handshake client from that same snapshot; test rotation through a real store and client factory.
 
-**How:**
+- **B21 — Medium — Notification reply can crash before error handling.** [app/src/main/java/com/hermesgadget/talaria/core/notifications/NotificationActionReceiver.kt:65–68](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/notifications/NotificationActionReceiver.kt:65) constructs the spill directory and writes the reply file before entering try. [app/src/main/java/com/hermesgadget/talaria/core/notifications/ReplyPayloadBuilder.kt:27–40](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/notifications/ReplyPayloadBuilder.kt:27) throws on mkdir/write failures (e.g. disk full), escaping BroadcastReceiver.onReceive; disk writes also run on main. Fix: async bounded staging inside the error boundary, cleanup on enqueue failure, and a retained/retryable reply error.
 
-- Change the persisted `allowCleartext` default from true to false/undecided and add a versioned migration. Auto-approve only loopback, `127.0.0.0/8`, `::1`, and emulator `10.0.2.2`.
-- Extend literal-address classification to RFC1918 IPv4, `100.64.0.0/10`, IPv6 ULA `fc00::/7`, and IPv6 link-local `fe80::/10`. Continue rejecting public HTTP, malformed literals, embedded credentials, arbitrary DNS names as private proof, and redirects that cross the approved origin.
-- Add an explicit warning sheet showing the exact origin and consequences; store the decision per connection; show a persistent “HTTP — local network traffic is unencrypted” badge and a revoke action.
-- Force consent false when the URL becomes HTTPS or the approved origin changes. Route save, doctor, password bootstrap, OIDC, REST, and WebSocket clients through the same policy.
+- **B22 — Medium — Dead foreground monitor.** [app/src/main/java/com/hermesgadget/talaria/core/notifications/AgentTaskNotificationService.kt:368–369](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/notifications/AgentTaskNotificationService.kt:368) only recognizes a few string forms as terminal, while HermesEventClient emits “WebSocket closed permanently (...)” for permanent close codes. Such a watcher never stops and the ongoing service stays alive. Fix: typed terminal transport state and terminal-close tests.
 
-**Key files / API and UX sketch:** `domain/model/ConnectionProfile.kt`; `core/network/ConnectionSnapshot.kt`, `CleartextPolicyInterceptor.kt`; `core/data/repo/ConnectionRepository.kt`; `feature/connection/ConnectViewModel.kt`, `ConnectScreen.kt`; migration fixtures. The connection button becomes “Review HTTP risk” before “Save and connect” for a verified private literal.
+- **B24 — Medium — Dictation restarts before final results.** [app/src/main/java/com/hermesgadget/talaria/core/voice/SpeechCoordinator.kt:161–165](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/voice/SpeechCoordinator.kt:161) starts a new session shortly after onEndOfSpeech, while onResults/onError also schedule restarts (166–192). Android can still be processing the preceding utterance, causing busy errors and stale final callbacks toggling the next session's listening flag. Fix: restart only after a terminal result/error, with one pending restart token.
 
-**Acceptance test:** Table-test all range boundaries and spoof-like hosts; a new RFC1918/CGNAT/ULA origin needs one explicit approval and then survives restart; revocation blocks the next request; missing-field legacy data is undecided; HTTPS never prompts; public HTTP and origin-changing redirects have no override.
+- **B26 — Medium — Mixed timestamp ordering.** [app/src/main/java/com/hermesgadget/talaria/domain/model/MultiProfileModels.kt:97–102](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/domain/model/MultiProfileModels.kt:97) compares numeric epoch seconds directly against ISO strings converted to epoch milliseconds. An older ISO-dated session sorts ahead of newer numeric sessions. Fix: normalize all timestamps to one unit, reject non-finite values, reuse a shared timestamp parser, and test mixed legacy/current rows.
 
-### R0.2 — Authenticate release car hosts; allow all only in debug
+- **B27 — Medium — Cron notification decode mismatch.** [app/src/main/java/com/hermesgadget/talaria/domain/model/HermesModels.kt:161–173](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/domain/model/HermesModels.kt:161) still declares CronJob.schedule as String, while the API source explicitly retains raw cron methods because the current shape is an object ([app/src/main/java/com/hermesgadget/talaria/core/network/HermesApi.kt:202–204](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/HermesApi.kt:202)). Background notification polling uses the incompatible typed method ([app/src/main/java/com/hermesgadget/talaria/core/data/repo/HermesRepository.kt:1240–1245](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/data/repo/HermesRepository.kt:1240)) and suppresses decode errors to null. Fix: share the compatible cron decoder with the background worker; test the current schedule object through polling.
 
-**Why / value:** **Critical.** The exported service currently accepts any installed app as a car host, exposing recent conversations and prompt/create actions. The v0.8.3 descriptor improves discovery but does not authenticate callers. Sources: **COMPAT, SEC, TEST**.
+- **B30 — Medium — Share image targets a fabricated session ID.** [app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareIntakeDelivery.kt:106–109,151–155](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareIntakeDelivery.kt:106) uses the PtyEvent.Connected sessionKey in image.attach_bytes, but PtyWebSocketSession.kt:134,172 generates that key with UUID.randomUUID() locally. It is not the resumed or runtime Hermes session ID. Fix: wait for correlated session.info/server identity before attaching, or use the actual existing target identity; test against RPC contract.
 
-**Effort:** **M**. **Dependencies:** none for caller policy; R0.3 also secures accepted-host transport.
+- **B31 — Medium — Valid UTF-8 attachments can be rejected.** [app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareIntakePolicy.kt:157–164](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareIntakePolicy.kt:157) decodes a 64 KiB prefix as a complete UTF-8 stream. A multibyte character split exactly at the sniff boundary is falsely malformed. Fix: incremental decoder with endOfInput=false for partial prefixes or trim only an incomplete trailing sequence; test 2/3/4-byte boundary splits.
 
-**How:**
+- **B35 — Medium — Profile switch closes other-profile automatic tabs.** [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:1252–1260](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:1252) computes stillActive for only the foreground profile, then closes every auto-opened tab absent from that set, including other profiles. Fix: compare against each tab's profile and only an authoritative complete list.
 
-- Return `ALLOW_ALL_HOSTS_VALIDATOR` only for debug/DHU builds with the debug application ID.
-- In release, begin with AndroidX known hosts and a maintained, provenance-documented package + signing-certificate SHA-256 table for verified Google/AOSP/OEM hosts. Never trust package name alone.
-- Add phone-side observed-host enrollment/revocation for sideload/OEM compatibility. Default it off; display package, certificate fingerprint, and warning on the handset. Before enrollment, expose no transcript and no send/create action.
-- Require recent handset confirmation for high-risk create/send controls when the host is manually enrolled; record the host identity used for each action.
+- **B37 — Medium — Prompt response acknowledgement clears a newer prompt.** [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:2535–2544](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:2535) closes the current prompt on old request success without comparing request/instance ID; a new prompt arriving before the acknowledgement disappears. Fix: mutate only the captured prompt instance and disable duplicate response submissions while pending.
 
-**Key files / API and UX sketch:** `car/TalariaCarService.kt`, `CarSessionsRepository.kt`, `SessionListScreen.kt`; `AndroidManifest.xml`; `app/build.gradle.kts`; a small encrypted host-trust store and a You → Car hosts screen.
+- **B38 — Medium — Queued message is removed before transport acceptance.** [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:2338–2341,2453–2456](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:2338) dequeues before sending; a rejected socket send only sets an error and loses the queued text. Fix: retain/reinsert the item until accepted, with a delivery ID and explicit unknown-delivery state.
 
-**Acceptance test:** Known verified hosts pass; unknown, debug-signed, rotated-unapproved, and fake hosts fail closed; fake host gets no transcript/callback; enrollment is explicit and revocable; debug DHU still works; release policy is locked by unit/instrumentation tests.
+- **B39 — Medium — Draft persistence uses foreground scope instead of tab scope.** [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:2139–2157](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:2139) persists any tab's edits under currentDraftPersistenceScope; old-profile tabs remain selectable. Multiple tabs also share one persisted draft and restore it to the first tab (729–746). Fix: persist per immutable connection/profile/session or tab identity and flush pending edits on lifecycle exit.
 
-### R0.3 — Bind OIDC, workers, car, REST, and WebSocket auth to one immutable snapshot
+- **B40 — Medium — Fresh image cannot be removed before session assignment.** [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:2270–2272](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:2270): both attachedSessionId and sessionId are null, so equality reports an unattached image as already staged. Fix: require a nonnull attachedSessionId before comparing.
 
-**Why / value:** **Critical.** OIDC token exchange, `ReplyWorker`, and car PTY delivery can capture server A but later read mutable active-profile B credentials or tickets. Sources: **SEC, COMPAT, TEST**.
+- **B43 — Medium — Monitor uses an unfiltered shared stream and unsafe raw-field casts.** [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatScreen.kt:1299–1302](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatScreen.kt:1299) passes the AppContainer eventClient rather than the active tab runtime; [app/src/main/java/com/hermesgadget/talaria/feature/chat/SubagentMonitor.kt:93–105](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/SubagentMonitor.kt:93) never filters session/profile, so another session's activity appears in the current panel. Raw payload fields at 367–389 use jsonPrimitive without checking type or catching exceptions in the Compose LaunchedEffect. An object-valued goal/id/status can crash the UI. Fix: expose scoped typed monitor events from the owning runtime; parse optional scalar fields defensively.
 
-**Effort:** **M**. **Dependencies:** none; finish before R0.6 retries mint tickets.
+- **B44 — Medium — Artifact scan caches transient failures as success.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/artifacts/ArtifactsViewModel.kt:393–420](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/artifacts/ArtifactsViewModel.kt:393): failed per-session transcript reads become empty lists, then the partial result is cached under the unchanged session-list revision. Refresh returns this cache without retrying failed reads. Fix: preserve successful records, report partial failure, and do not mark that revision complete until failed sessions are retried.
 
-**How:**
+- **B46 — Medium — Untrusted response shape can crash management Compose code.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/analytics/AnalyticsScreen.kt:438–460](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/analytics/AnalyticsScreen.kt:438) uses jsonPrimitive during composition; [app/src/main/java/com/hermesgadget/talaria/feature/manage/channels/ChannelsScreen.kt:275–279](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/channels/ChannelsScreen.kt:275) performs jsonObject/jsonPrimitive casts in onSuccess outside a failure boundary. Arrays/objects where scalars are expected throw and escape the UI coroutine. Fix: parse/validate typed results in repositories/ViewModels and surface unsupported-response errors. The same unsafe composition-time field access occurs in [app/src/main/java/com/hermesgadget/talaria/feature/manage/config/ConfigScreen.kt:305–307,526,532](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/config/ConfigScreen.kt:305), [app/src/main/java/com/hermesgadget/talaria/feature/manage/sessions/SessionDetailScreen.kt:452–456](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/sessions/SessionDetailScreen.kt:452) and [app/src/main/java/com/hermesgadget/talaria/feature/manage/status/StatusScreen.kt:552–556,574–578,588](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/status/StatusScreen.kt:552). Validate these payloads into typed UI state before composition.
 
-- Make `WsAuthHelper` accept a mandatory `ConnectionSnapshot`; remove no-argument active-profile reads from operation paths.
-- Capture one snapshot at operation start and derive URL, REST client, WebSocket client, ticket/token discovery, management profile, and persistence from it.
-- Key `auth_required` discovery by complete transport scope—connection ID, normalized origin, auth mode/provider, management profile—or keep it inside the snapshot client bundle. Invalidate atomically on edits/token changes.
-- Add an `AuthInterceptor` origin guard: scheme, canonical host, and effective port must match before attaching any secret. Cancel if the saved snapshot changes or disappears.
+- **B47 — Medium — API-key and channel saves overwrite newer input.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/apikeys/ApiKeysScreen.kt:124–131](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/apikeys/ApiKeysScreen.kt:124) clears whatever key/value are current when the old request succeeds; [app/src/main/java/com/hermesgadget/talaria/feature/manage/channels/ChannelsScreen.kt:255–258](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/channels/ChannelsScreen.kt:255) removes drafts by field name even if they were edited while saving. Neither tracks pending requests. Fix: capture input revisions, disable duplicate submissions, and clear only the saved version.
 
-**Key files / API and UX sketch:** `core/network/WsAuthHelper.kt`, `HermesClientFactory.kt`, `AuthInterceptor.kt`, `NativeOidcLogin.kt`, `ConnectionSnapshot.kt`; `worker/ReplyWorker.kt`; `car/CarSessionsRepository.kt`; `ConnectionRepository.kt`. No visible new control is needed; errors should say the saved connection changed and the operation was safely canceled.
+- **B50 — Medium — Config reload/import races discard live edits.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/config/ConfigScreen.kt:197–212](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/config/ConfigScreen.kt:197) has no request/draft generation guard and Reload remains enabled while dirty/saving (258). Import completion compares only importGeneration (181–184), not intervening edits. Fix: guard destructive replacement, cancel obsolete loads, and apply only to the captured editor revision.
 
-**Acceptance test:** Deterministically switch A→B during each OIDC/worker/car stage for every auth mode. No B secret/ticket reaches A; a request either completes entirely under captured A or fails closed. Absolute cross-origin URLs receive no authorization header. Editing a saved profile gated↔ungated invalidates discovery.
+- **B51 — Medium — Large config export uses a Binder extra.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/config/ConfigScreen.kt:457–462](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/config/ConfigScreen.kt:457) places the complete JSON in EXTRA_TEXT; imports allow 10MiB (643), so valid editor content can exceed Android transaction limits and fail/crash at startActivity. Fix: stage a bounded FileProvider attachment and report chooser failures. [app/src/main/java/com/hermesgadget/talaria/feature/manage/logs/LogsScreen.kt:97–102](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/logs/LogsScreen.kt:97) likewise shares potentially large text directly in EXTRA_TEXT. Use a bounded file URI and handle unavailable share targets.
 
-### R0.4 — Bound WebSocket ingress, PTY frames, answer buffers, and preserve cancellation
+- **B52 — Medium — Pairing polling cannot recover from a transient failure/cancel failure.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/channels/ChannelsViewModel.kt:366–372,382–388](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/channels/ChannelsViewModel.kt:366) stops permanently after one poll failure; Cancel failure at 312–320/347–355 restores Waiting without restarting polling. Existing pairingId keeps Start hidden. Fix: bounded retry/backoff, explicit Retry/Restart, expiration enforcement, and lifecycle-aware polling.
 
-**Why / value:** **High.** An unlimited event channel, uncapped live-answer builders, complete-message frame conversion, and cancellation-swallowing `runCatching` permit burst-driven OOM, stale work, and misleading errors. Sources: **CQ, SEC, PERF, TEST**.
+- **B53 — Medium — Optional cron endpoints disable the entire core scheduler screen.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/cron/CronViewModel.kt:92–98](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/cron/CronViewModel.kt:92) requires jobs, delivery targets and blueprints all to succeed; a server lacking optional blueprints produces total Failure even when jobs are available. Fix: fetch optional sections independently and expose capability-specific fallback, retaining core CRUD.
 
-**Effort:** **M**. **Dependencies:** none; required before R1.1/R1.6 consolidation.
+- **B54 — Medium — Successful cron creation plus failed reload looks like failed creation.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/cron/CronViewModel.kt:290–302](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/cron/CronViewModel.kt:290) loses mutation outcome when the follow-up read fails; [app/src/main/java/com/hermesgadget/talaria/feature/manage/cron/CronScreen.kt:70–87](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/cron/CronScreen.kt:70) leaves the submitted draft and clears its pending flag. Re-entering Create can duplicate a job. Fix: preserve the mutation receipt separately from refresh state and never suggest resubmitting a confirmed create.
 
-**How:**
+- **B55 — Medium — SAF save cancellation does not stop writing.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesViewModel.kt:753–759](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesViewModel.kt:753) has no cancellation check inside its blocking copy loop. Scope change/cancel can continue writing the old file to external storage until EOF. Fix: check cancellation before each chunk and close streams on cancellation; expose partial-output cleanup/retry status.
 
-- Introduce a cancellation-transparent suspend-result helper that always rethrows `CancellationException`; mechanically migrate repository/ViewModel call sites and broad catches.
-- Replace `Channel.UNLIMITED` with measured bounded ingress. Never drop prompt, completion, connection, or request-boundary events; conflate/drop old status, catalog, tool-progress, and token deltas. Reduce replay to the real startup contract.
-- Define maximum text/binary PTY message size and close with WebSocket 1009 before binary UTF-8 conversion/ANSI/UI work. Bound ANSI pending state.
-- Cap PTY and sidecar answer buffers by bytes/characters, retain a diagnostic tail, and represent truncation visibly. Add drop/high-water diagnostics without recording sensitive payloads.
+- **B56 — Medium — Fresh backup shares are deleted after process recreation.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/files/ShareFileManager.kt:307–308,355–362](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/files/ShareFileManager.kt:307) sweeps every managed-download file lacking the current process token, including retained chooser-owned backups before their 15-minute grace period. Fix: distinguish retained shares from transfers and preserve unexpired grants across process death.
 
-**Key files / API and UX sketch:** `core/network/HermesEventClient.kt`, `PtyWebSocketSession.kt`; `core/util/AnsiStripper.kt`; `core/data/repo/HermesRepository.kt`; `feature/chat/ChatViewModel.kt`; `feature/terminal/TerminalOutput.kt`. Truncated streams display a compact “Earlier live output omitted; full history remains on server” marker.
+- **B57 — Medium — Kanban updates leave the open task detail stale.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/kanban/KanbanViewModel.kt:360–362,473–481](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/kanban/KanbanViewModel.kt:360) patches a task then refreshes only the board; the modal keeps the old task status/body. `openTask:385–388` also clears run state without incrementing runGeneration, allowing an old run response (448) into a newly opened task. Fix: refresh/reconcile the specific detail and invalidate all dependent request generations when its identity changes.
 
-**Acceptance test:** Sustained and oversized text/binary bursts stay within configured heap/queue limits; critical events preserve order; replaceable events coalesce; oversized frames close 1009; cancellation publishes neither late state nor “connection failed”; buffer limits and drop counters have deterministic tests.
+- **B58 — Medium — Learning zoom draw transform disagrees with hit testing.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/learning/LearningGraphCanvas.kt:172,195–197](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/learning/LearningGraphCanvas.kt:172) computes taps as scaling around translated local origin, but scale(zoom,zoom) uses the draw scope's default center pivot after translation. At nonunit zoom, rendered positions and tap targets differ. Fix: explicitly scale about Offset.Zero or use one matrix and its inverse for drawing/gestures/hit tests. The [DrawTransform contract](https://developer.android.com/reference/kotlin/androidx/compose/ui/graphics/drawscope/DrawTransform) confirms that scale defaults to the center pivot.
 
-### R0.5 — Event-driven, lifecycle-aware transcript/session reconciliation with atomic Room writes
+- **B59 — Medium — Learning's independent requests invalidate each other and leave spinners stuck.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/learning/LearningViewModel.kt:70–74,100,131](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/learning/LearningViewModel.kt:70) shares loadGeneration between graph refresh and node detail. Opening a node during refresh makes the graph response stale without clearing loading; refreshing while detail loads invalidates the detail response without clearing its busy flag. Fix: separate graph/detail generations and cancel/reset the matching operation.
 
-**Why / value:** **High, highest combined performance return.** Every open tab can fetch the full transcript every 2.5 seconds outside visible lifecycle and rewrite all Room messages even when unchanged. Session refresh also fails to delete stale rows, and message replacement is not transactional. Sources: **PERF, COMPAT, CQ, TEST**.
+- **B60 — Medium — Models refresh can permanently disable saving/model selection.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/models/ModelsViewModel.kt:223–241](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/models/ModelsViewModel.kt:223) cancels all work, including mutations, without resetting moaSaving or setting; the cancelled paths have no finally cleanup. Refresh during a save leaves the Save button disabled. Fix: separate read and mutation jobs and reconcile cancelled/unknown mutation outcomes; clear pending state in identity-checked finally blocks.
 
-**Effort:** **M** client-side; optional backend revisions belong to R2.2. **Dependencies:** R0.4 event bounds.
+- **B61 — Medium — MoA save parses an acknowledgement as a complete replacement configuration.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/models/ModelsViewModel.kt:297–304,526–555](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/models/ModelsViewModel.kt:297) accepts any object, including `{ok:true}`/`{ok:false}`, as a new config with empty slots and marks it saved. [app/src/main/java/com/hermesgadget/talaria/feature/manage/models/ModelsScreen.kt:498](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/models/ModelsScreen.kt:498) then replaces the editor. Fix: validate success and distinguish acknowledgement from a full config; fetch authoritative configuration and preserve newer drafts.
 
-**How:**
+- **B62 — Medium — Memory OAuth capability failures are silently treated as unsupported.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/memory/MemoryViewModel.kt:374–381](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/memory/MemoryViewModel.kt:374) claims to handle 404 but hides OAuth for every failure, including network/authentication errors. Fix: classify only the documented unsupported status as absent and expose retryable errors for the rest.
 
-- Parse `sessions.changed` and use session/message completion, detected event gaps, tab selection, and foreground resume as dirty signals.
-- Retain one adaptive fallback only for the active, visible, working tab: immediate refresh, 2.5 seconds only while events are unhealthy/working, then 15–60 second backoff and stop. Cancel below `Lifecycle.State.STARTED`.
-- Compare server revision/message count/hash before mapping or writing. Suppress unchanged Room work, not merely equal Compose publication.
-- Add `@Transaction replaceSessionMessages`; add per-session delete/reconciliation so delete/prune/server removal cannot leave ghosts. Preserve last-good data on request failure.
-- Lifecycle-gate the 30-second profile registry loop, refresh selected/visible profile first, cap per-profile concurrency, and skip semantically equal state publication.
+- **B63 — Medium — MCP bearer replacement discards unrelated headers.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/mcp/McpScreenHelpers.kt:207–217](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/mcp/McpScreenHelpers.kt:207) replaces the entire headers object with Authorization on token rotation, losing required custom headers. Fix: merge only the Authorization entry into existing headers and preserve transport-specific fields.
 
-**Key files / API and UX sketch:** `core/network/HermesEventClient.kt`, `ProfileRegistry.kt`; `feature/chat/ChatViewModel.kt`, `ChatScreen.kt`; `core/data/repo/HermesRepository.kt`; `core/data/db/Daos.kt`; `ui/components/PollEffect.kt`. A subtle “Live updates delayed; reconciling…” status replaces invisible aggressive polling.
+- **B64 — Medium — Session export filenames are not scoped to server/profile or export attempt.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/sessions/SessionDetailScreen.kt:253–255,361–371](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/sessions/SessionDetailScreen.kt:253) writes a deterministic cache path based solely on sessionId. Exporting the same ID on another connection overwrites the file behind a still-granted chooser URI. Fix: use unique export files with captured connection/profile identity and bounded retention.
 
-**Acceptance test:** Five tabs produce zero transcript/profile polling while backgrounded and no inactive-tab polling; one completion produces one scoped refresh; unchanged payload produces zero DAO writes; delete/prune removes Room rows; failure between replacement steps cannot expose empty partial cache; resume refreshes immediately.
+- **B65 — Medium — Post-delete reconciliation can turn a confirmed delete into failure.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/sessions/SessionAdminViewModel.kt:63–73,79–82,399–400](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/sessions/SessionAdminViewModel.kt:63) throws a refresh failure before returning the successful server receipt. UI retains selection and invites retries without knowing what was deleted. Fix: report mutation result separately from cache reconciliation and retry only the latter.
 
-### R0.6 — Automatic, generation-safe PTY recovery
+- **B67 — Medium — Skill/config dialogs reopen after dismissal.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/skills/SkillsViewModel.kt:364–385,454–483](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/skills/SkillsViewModel.kt:364) does not cancel or version detail loads; closeEditor/closeToolsetConfig only changes UI state. A delayed response recreates the dismissed dialog or replaces a newer selection. Fix: give each selected detail an identity/generation and cancel/check it before publishing.
 
-**Why / value:** **High.** Sidecars automatically reconnect but the authoritative PTY remains disconnected after an in-foreground failure, leaving a half-live tab. Sources: **PERF, TEST** and the known v0.8.3 baseline.
+- **B68 — Medium — Global System refresh discards raw YAML drafts.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/system/SystemViewModel.kt:251–255,742–747](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/system/SystemViewModel.kt:251) unconditionally replaces rawConfig with Loading then freshly loaded YAML, including dirty edits and potentially an in-flight save. Fix: refresh host status independently; guard explicit YAML reload with draft-discard confirmation and request identity.
 
-**Effort:** **M**. **Dependencies:** R0.3, R0.4, R0.5.
+- **B69 — Medium — Provider metadata/chooser exceptions escape the System screen.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/system/SystemScreen.kt:119,131,634–638](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/system/SystemScreen.kt:119) queries external document metadata on main outside a failure boundary and launches the chooser without handling provider/ActivityNotFound failures. Fix: perform metadata resolution on IO with a safe fallback and surface launch errors without consuming the pending share.
 
-**How:**
+- **B70 — Medium — Stop playback does not cancel pending speech synthesis.** [app/src/main/java/com/hermesgadget/talaria/feature/voice/VoiceViewModel.kt:493–496](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/voice/VoiceViewModel.kt:493) stops only the local player; the in-flight speakJob can later reach 466–475 and start playback after Stop. A newer request shares the same scope, so scope checks alone do not prevent it. Fix: cancel/invalidate synthesis and playback together and check a per-playback generation.
 
-- Extract a reusable transport supervisor with bounded jittered backoff, stability reset, terminal close-code classification, and a fresh ticket for each attempt.
-- Preserve durable tab/session identity; resume/attach rather than create; keep sidecar progress visible; associate each socket with a generation and reject sends/callbacks from stale generations.
-- After retry exhaustion, reconcile through the REST transcript and show a single clear retry action. Authentication/not-found/policy close codes should stop rather than loop.
-- Keep user-initiated delivery idempotency separate from transport reconnection so a reconnect never resends an already accepted prompt.
+- **B71 — Medium — Audio decoding can leak temporary files on cancellation.** [app/src/main/java/com/hermesgadget/talaria/feature/voice/VoiceAudioPlayer.kt:55–58](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/voice/VoiceAudioPlayer.kt:55) assigns decodedFile only after withContext returns. Cancellation on dispatcher return discards the result, leaving catch with null and the decoded cache file orphaned. Fix: establish file ownership inside the IO block with cancellation-safe handoff and startup TTL cleanup; apply the same pattern to bounded images/import preparation.
 
-**Key files / API and UX sketch:** `core/network/PtyWebSocketSession.kt`, `HermesEventClient.kt`, `WsAuthHelper.kt`, `PtyPromptDelivery.kt`; `feature/chat/ChatViewModel.kt`. Tab state becomes Connected → Recovering (attempt/backoff) → Reconciled/Retry.
+- **B72 — Medium — Terminal silently clears commands rejected by the socket.** [app/src/main/java/com/hermesgadget/talaria/feature/terminal/TerminalViewModel.kt:273–279](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/terminal/TerminalViewModel.kt:273) ignores sendText's result and records/clears input unconditionally. A close between Connected state and enqueue loses the user's command. Fix: clear only after accepted enqueue; preserve input and report delivery uncertainty otherwise.
 
-**Acceptance test:** Drop PTY mid-turn with sidecars alive: the tab remints auth, resumes once, preserves output/session, and sends no duplicate prompt. Stale socket cannot accept input. 4401/4403/4404/4408 stop appropriately. Exhaustion produces a final transcript and working manual retry.
+- **B73 — Medium — Terminal backend selection can inherit a cancelled loading flag.** [app/src/main/java/com/hermesgadget/talaria/feature/terminal/TerminalViewModel.kt:146–155,193–216](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/terminal/TerminalViewModel.kt:146) cancels backendJob during selection without clearing backendsLoading; loadBackends then returns early at147. Fix: separate list/select jobs or reset the cancelled operation's flags in identity-checked cleanup.
 
-### R0.7 — End-to-end budgets for artifacts, image previews, and untrusted content
+- **B74 — Medium — Unicode search highlighting uses indices from a different string.** [app/src/main/java/com/hermesgadget/talaria/ui/components/SimpleMarkdown.kt:435–443,459–463](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/ui/components/SimpleMarkdown.kt:435) computes offsets in lowercased text, whose UTF-16 length can change (e.g. `İx` becomes `i\u0307x`), then applies them to the original. Fix: search the original with case-insensitive comparison or maintain an offset map; test expansion characters.
 
-**Why / value:** **High.** Artifact traversal still resets structural depth and lacks node/byte/candidate budgets; file/artifact images decode full resolution synchronously in composition and retain encoded + decoded forms. Sources: **CQ, SEC, PERF, TEST**.
+- **B75 — Medium — Scoped deep-link validation has a check/use race.** [app/src/main/java/com/hermesgadget/talaria/ui/navigation/TalariaNavRoot.kt:191–206](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/ui/navigation/TalariaNavRoot.kt:191) checks expectedScope only before suspending in validateDeepLinkScope; user selection can change during server profile validation, after which the old confirmation applies to the new active connection. Fix: recheck full scope revision after every suspension and update the intended connection atomically, not the mutable active target.
 
-**Effort:** **M**. **Dependencies:** none; R2.2 is the ideal server-assisted follow-up.
+- **B76 — Medium — Durable notification reply loses its payload on retry.** [app/src/main/java/com/hermesgadget/talaria/worker/ReplyWorker.kt:42–48](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/worker/ReplyWorker.kt:42) reads and immediately deletes an oversized reply’s spill file; retry paths at 109–110 and 122–123 then re-run with a missing file. Fix: keep the payload until terminal completion and clean it up explicitly after retries are exhausted.
 
-**How:**
+- **B78 — Medium — Manifest omits speech-recognition service visibility.** [app/src/main/AndroidManifest.xml:5–20](/home/ben/Talaria/app/src/main/AndroidManifest.xml:5) declares audio permission but no RecognitionService query. The generated merged debug manifest also lacks it; only car queries are merged. [app/src/main/java/com/hermesgadget/talaria/core/voice/SpeechCoordinator.kt:208](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/voice/SpeechCoordinator.kt:208) uses the generic SpeechRecognizer. Fix: declare the speech service intent under queries and validate discovery on Android 11+ with an installed recognizer. The [Android SpeechRecognizer reference](https://developer.android.com/reference/android/speech/SpeechRecognizer.html) documents this target-SDK requirement.
 
-- Carry monotonically increasing depth through strings, arrays, and objects; cap input bytes, structural depth, nodes, candidates, and nested decode attempts; prefer iterative traversal.
-- Run extraction/sorting on `Dispatchers.Default`; extract each session within its semaphore permit, merge incrementally, and discard full transcript responses immediately. Cache extraction by session revision when available.
-- Probe bitmap bounds off-main, reject excessive decoded pixels, sample to display size, use lifecycle-aware cache eviction/hardware bitmaps where valid, and stop storing data URLs in Compose state.
-- Lower client attachment peak by re-encoding/downscaling and sending one bounded image at a time until R2.2 adds streaming handles.
+- **B25 — Low — Prepared image leak on cancellation.** [app/src/main/java/com/hermesgadget/talaria/core/util/BoundedImage.kt:67–71,91–95](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/util/BoundedImage.kt:67) checks cancellation after a successful prepareFile but only deletes the source in finally; the newly produced JPEG is orphaned if cancellation occurs before return. Fix: transfer output ownership only after the coroutine return boundary or delete unreturned handles on cancellation.
 
-**Key files / API and UX sketch:** `feature/manage/artifacts/ArtifactExtraction.kt`, `ArtifactsViewModel.kt`, `ArtifactsScreen.kt`; `feature/manage/files/FilesViewModel.kt`, `FilesScreen.kt`; `feature/chat/ChatImageAttachments.kt`, `ChatViewModel.kt`. Rejected previews show dimensions/size and a safe download alternative.
+## Missing/Incomplete Features
 
-**Acceptance test:** Depth 16/17, deeply structural JSON, alternating stringified containers, node/byte overflow, decompression-bomb dimensions, canceled previews, and 50-session scans terminate within budget without main-thread decode, stack overflow, ANR, or retained oversized data URLs.
+- **F02 — High — Unrecoverable share state.** [app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareIntakeStore.kt:90–97](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareIntakeStore.kt:90) restores SENDING as DELIVERY_UNKNOWN, but ShareCaptureViewModel.discard (414–416) only allows DRAFT and ShareCaptureScreen disables Send outside IDLE. No reconcile/reset action exists; even new incoming shares are rejected (ViewModel 230–233). Fix: allow explicit discard of an unknown draft without resending and provide “check destination” recovery.
 
-### R0.8 — Typed secure-store failure recovery
+- **F04 — High — Messaging QR pairing does not render a QR code.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/channels/ChannelsScreen.kt:391–396,558–563,688–717](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/channels/ChannelsScreen.kt:391) displays the raw qrPayload as five lines of selectable text. A WhatsApp linked-device flow requires a scannable QR; there is no renderer in this implementation. Fix: render the supplied QR payload with an actual QR encoder, preserve expiry/refresh handling, and offer an accessible alternative where supported.
 
-**Why / value:** **High.** Profile/secret decode failure silently becomes an empty connection list or empty credentials, masking recoverable corruption and encouraging overwrite. Sources: **CQ, SEC, TEST**.
+- **F07 — High — File editor Save does nothing beyond setting an unrendered flag.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesScreen.kt:374](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesScreen.kt:374) calls saveEdit; [app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesViewModel.kt:390–395](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesViewModel.kt:390) only sets confirmSave=true. FilesScreen never renders a confirmSave dialog or invokes vm.confirmSave(), the sole implementation that writes (399–450). Fix: wire the confirmation UI, errors and pending state to the write method and test the actual Compose interaction.
 
-**Effort:** **M**. **Dependencies:** none; R1.12 builds on this state model.
+- **F01 — Medium — Incomplete car experience.** [app/src/main/java/com/hermesgadget/talaria/car/SessionListScreen.kt:133–134,357–385](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/car/SessionListScreen.kt:133) only fetches conversations initially or after a local action; there is no refresh/timer/event subscription, so replies from the agent or other clients remain stale while the screen stays open. `onMarkAsRead()` at 305/328 is an explicit no-op. Fix: lifecycle-bound refresh/event invalidation and a meaningful local/server read policy.
 
-**How:**
+- **F03 — Medium — Provider device-flow authorization requires manual polling and is not persisted.** [app/src/main/java/com/hermesgadget/talaria/feature/connection/ConnectViewModel.kt:509–537](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/connection/ConnectViewModel.kt:509) only polls on explicit Check status; no lifecycle-owned expiry-aware polling or resume after process death. `ProviderOAuthSession` is plain ViewModel state. Fix: implement bounded interval/expiry polling and resumable nonsecret flow identity, with cancellation and clear terminal states.
 
-- Model `Available`, `RecoverableCorruption`, and `PermanentKeystoreLoss`; preserve the raw encrypted preference and fail secrets closed.
-- Show a dedicated recovery screen with non-secret diagnostics and exact consequences. Offer an explicit destructive reset only after confirmation; never auto-recreate empty state.
-- If a non-secret connection-name inventory is retained to explain impact, version and integrity-protect it; never duplicate tokens/passwords outside the encrypted store.
+- **F05 — Medium — Artifact browser has no way to scan beyond its fixed recent slice.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/artifacts/ArtifactExtraction.kt:94](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/artifacts/ArtifactExtraction.kt:94) reads the first 512 messages, and [app/src/main/java/com/hermesgadget/talaria/feature/manage/artifacts/ArtifactsViewModel.kt:57,392,469–477](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/artifacts/ArtifactsViewModel.kt:57) limits sessions to 50 and total artifacts to 256. UI pagination only pages the already truncated results and reports an unqualified found count. Fix: disclose scan coverage and limits, scan newest messages first, and add explicit older-session discovery/pagination.
 
-**Key files / API and UX sketch:** `core/data/prefs/SecureConnectionStore.kt`; `TalariaApp.kt`; `di/AppContainer.kt`; `feature/connection/*`. Recovery UI offers Retry, Copy diagnostics, and Reset encrypted connections.
+- **F06 — Medium — Curator run has no job-completion tracking.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/curator/CuratorViewModel.kt:56–59](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/curator/CuratorViewModel.kt:56) immediately clears busy on ActionStatus receipt, with no polling when running=true; [app/src/main/java/com/hermesgadget/talaria/feature/manage/curator/CuratorScreen.kt:74](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/curator/CuratorScreen.kt:74) ignores running and displays an exit status. Fix: track the returned action until terminal status and prevent duplicate runs while active.
 
-**Acceptance test:** Corrupt profile JSON, corrupt secret ciphertext, and invalidated Keystore reach distinct states; no request uses an empty credential fallback; reset clears only documented state; existing healthy encrypted preferences survive upgrade/readback unchanged.
+- **F08 — Medium — Kanban Terminate is a no-op until a run has been inspected.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/kanban/KanbanScreen.kt:670–675](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/kanban/KanbanScreen.kt:670) always shows Terminate for unfinished runs, but [app/src/main/java/com/hermesgadget/talaria/feature/manage/kanban/KanbanViewModel.kt:456–458](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/kanban/KanbanViewModel.kt:456) returns unless the separate selected-run state is Content/Loading. Fix: authorize termination using the clicked run's own identity/state and show its pending/result feedback independently of inspection.
 
-### R0.9 — Own and bound backup/debug/cache files
+- **F10 — Medium — Session browsing stops at the first 100 results.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/sessions/SessionsScreen.kt:131,192–203](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/sessions/SessionsScreen.kt:131) never requests an offset/next page and applies local favorites/pins/automation filters only to those rows. Older organized sessions cannot be found through their filter. Fix: implement pagination and scoped local-index queries, with correct totals/loading/empty states.
 
-**Why / value:** **High for S/M effort.** System backup downloads can overlap, stream unbounded data, leave partial files, and bypass the managed share-file TTL. Sources: **CQ, PERF, TEST**.
+- **F11 — Medium — Partially available voice capabilities are blocked by the screen.** [app/src/main/java/com/hermesgadget/talaria/feature/voice/VoiceScreen.kt:164–184](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/voice/VoiceScreen.kt:164) requires capabilities.isComplete, while VoiceViewModel intentionally supports either STT or TTS (147,226,440). A server with one capability cannot use it. Fix: gate Record and Speak independently and keep the transcript editor available.
 
-**Effort:** **S/M**. **Dependencies:** reuse existing `ShareFileManager`.
+- **F12 — Medium — Local fallback dictation has no visible usable output.** [app/src/main/java/com/hermesgadget/talaria/feature/voice/VoiceScreen.kt:164–169,258–303](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/voice/VoiceScreen.kt:164) renders only the unavailable card while VM stores results in text/history (VoiceViewModel:368–381). The editor, partial transcript and Copy action exist only in ReadyVoiceContent. Fix: render shared transcript/copy/history UI in both modes.
 
-**How:** Keep one download job/generation; enforce content-length and streamed byte limits; delete partial files on all failure/cancel paths; route successful backup/debug output into `ShareFileManager`; enforce TTL/count/weight cleanup; consume UI state without prematurely deleting a chooser-owned file.
+- **F09 — Low — Learning cluster chips are interactive no-ops.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/learning/LearningScreen.kt:172–175](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/learning/LearningScreen.kt:172) renders SuggestionChip(onClick={}) with no filtering/navigation. Fix: filter nodes by cluster or render a noninteractive label.
 
-**Key files / API and UX sketch:** `feature/manage/system/SystemViewModel.kt`; `feature/manage/files/ShareFileManager.kt`; System tests. System shows size/progress and “replaced by newer download” rather than racing results.
+## Code Quality Issues
 
-**Acceptance test:** Duplicate taps create one current job; oversized/canceled/failed copies leave no file; success remains shareable for policy TTL and then expires; stale completion cannot replace newer state.
+- **Q07 — High — ChatViewModel combines unrelated ownership responsibilities.** [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:330–3633](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:330) owns sockets/retries, session identity, registry, persistence, media encoding, microphone, commands, approvals and presentation state; direct global AppContainer access bypasses injected repositories. Fix: extract independently testable session-runtime, delivery, transcript, draft and dictation components with explicit lifetimes.
 
-### R0.10 — Close remaining low-effort correctness and release-integrity gaps
+- **Q02 — Medium — Non-atomic remote editing.** [app/src/main/java/com/hermesgadget/talaria/core/data/repo/HermesRepository.kt:1131–1147](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/data/repo/HermesRepository.kt:1131) compares a preflight read then writes without an expected version/hash sent to the server. A host edit between those requests is overwritten. Fix: server conditional write/ETag; if unsupported describe the limitation and provide diff/conflict recovery.
 
-**Why / value:** **High aggregate value for S effort.** These are independent small defects: stale profile choices after connection change, overlapping Cron/Kanban mutations, incorrect CI-signing report, implicit Voice link gap, mic feature filtering, car-doc drift, duplicate config helper, and personal local path literals. Sources: **CQ, COMPAT, SEC, TEST**.
+- **Q03 — Medium — Monolithic transport/API layer.** [app/src/main/java/com/hermesgadget/talaria/core/network/HermesApi.kt:109](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/HermesApi.kt:109) exposes 1,000+ lines of unrelated feature endpoints and the repository is 1,256 lines. Several routes have duplicate typed/raw forms. Fix: split cohesive API/repository interfaces while preserving shared snapshot enforcement and one tested contract per endpoint.
 
-**Effort:** **S** as a tracked bundle; each subchange remains independently reviewable. **Dependencies:** none.
+- **Q05 — Medium — Inconsistent DTO validation.** many mutation responses allow missing status fields ([app/src/main/java/com/hermesgadget/talaria/domain/model/HermesModels.kt:413,604–609](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/domain/model/HermesModels.kt:413)) while repositories discard the result or infer success from HTTP 2xx. Fix: typed success/error adapters per endpoint and no success toast/cache mutation until the semantic result is validated. Concrete ignored response bodies occur at [app/src/main/java/com/hermesgadget/talaria/feature/manage/memory/MemoryViewModel.kt:127–172](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/memory/MemoryViewModel.kt:127), [app/src/main/java/com/hermesgadget/talaria/feature/manage/mcp/McpScreen.kt:364–377](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/mcp/McpScreen.kt:364), [app/src/main/java/com/hermesgadget/talaria/feature/manage/plugins/PluginsViewModel.kt:210–211](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/plugins/PluginsViewModel.kt:210) and [app/src/main/java/com/hermesgadget/talaria/feature/manage/review/ReviewViewModel.kt:217–225](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/review/ReviewViewModel.kt:217). Distinguish HTTP transport success from application success and keep accepted mutations separate from refresh failures.
 
-**How / files:**
+- **Q09 — Medium — Operation scope ownership is inconsistent across management features.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/channels/ChannelsViewModel.kt:100,217,266](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/channels/ChannelsViewModel.kt:100) and [app/src/main/java/com/hermesgadget/talaria/feature/manage/cron/CronViewModel.kt:63–68](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/cron/CronViewModel.kt:63) mix fixed API instances with mutable profile providers. [app/src/main/java/com/hermesgadget/talaria/feature/manage/commandcenter/CommandCenterViewModel.kt:44–81](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/commandcenter/CommandCenterViewModel.kt:44) lacks the cancellation/generation pattern used elsewhere. This makes safety depend on navigation teardown, which itself has B77. Fix: standardize immutable operation contexts and explicit ViewModel disposal; preserve the working ConnectionScopeObserver guards already covered in Files/Learning/Models tests.
 
-- Clear `hermesNames` on connection-key change and show refresh failure: `ui/components/ProfileSwitcherBar.kt`.
-- Serialize/reject `CronViewModel.mutate`; generation-guard/cancel Kanban refresh and mutations: `feature/manage/cron/*`, `feature/manage/kanban/*`.
-- Report `useCiSigning || local keystore` and selected config: `app/build.gradle.kts`.
-- Add `android:host="voice"` and declare microphone optional: `AndroidManifest.xml`.
-- Correct min-car technical docs, replace personal paths with neutral examples, and remove test-only `updateConfigKey` after tests use the runtime reducer.
+- **Q12 — Medium — Re-entry/pending-operation contracts vary widely.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/webhooks/WebhooksScreen.kt:226–238](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/webhooks/WebhooksScreen.kt:226) has no create guard; [app/src/main/java/com/hermesgadget/talaria/feature/manage/system/SystemViewModel.kt:285–309](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/system/SystemViewModel.kt:285) allows multiple doctor/audit/backup jobs with no pending state, and [app/src/main/java/com/hermesgadget/talaria/feature/manage/profiles/ProfilesScreen.kt:398–414](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/profiles/ProfilesScreen.kt:398) permits overlapping creates. Fix: use explicit per-operation busy state and durable outcome handling for non-idempotent operations, not only button disabling in composition.
 
-**Acceptance test:** Late A response never appears on B; duplicate mutation invokes at most one call; CI-signed release reports signed; implicit `talaria://voice` resolves; mic-less devices remain eligible; source search finds no personal production path; runtime tests cover the actual config reducer.
+- **Q13 — Medium — Two cleartext denial checks can pass without rejecting traffic.** [app/src/test/java/com/hermesgadget/talaria/core/network/CleartextPolicyTest.kt:120–128](/home/ben/Talaria/app/src/test/java/com/hermesgadget/talaria/core/network/CleartextPolicyTest.kt:120) calls a Boolean-returning `assertThrowsOrNull` helper but ignores both results. Fix: wrap them in assertions or use `assertThrows`; otherwise wrong-port and spoofed-origin regressions pass. Other transport tests do assert denial correctly.
 
-### R0.11 — Unsigned PR validation and P0 regression harness
+- **Q14 — Medium — Test teardown parks unfinished ViewModel work instead of cleaning it up.** [app/src/test/java/com/hermesgadget/talaria/util/MainDispatcherRule.kt:31–47](/home/ben/Talaria/app/src/test/java/com/hermesgadget/talaria/util/MainDispatcherRule.kt:31) leaves Main installed and has an empty finished callback specifically so late IO continuations stay on a dead scheduler. [app/src/test/java/com/hermesgadget/talaria/feature/capture/ShareCaptureViewModelTest.kt:34–40](/home/ben/Talaria/app/src/test/java/com/hermesgadget/talaria/feature/capture/ShareCaptureViewModelTest.kt:34) and [app/src/test/java/com/hermesgadget/talaria/feature/manage/files/FilesDownloadRetryTest.kt:41–47](/home/ben/Talaria/app/src/test/java/com/hermesgadget/talaria/feature/manage/files/FilesDownloadRetryTest.kt:41) use the same workaround. This conceals unfinished work and creates global test-order dependence. Fix: inject all dispatchers/scopes, clear ViewModels, await cleanup, and reset Main in teardown; validate the suite in varied order.
 
-**Why / value:** **High.** The 214 tests run only on tag/manual release; car has zero coverage, workers lack success-path tests, Compose has no behavior tests, and orchestration remains singleton/private. Sources: **TEST**, with required cases from every other review.
+- **Q01 — Low — Incomplete local purge.** [app/src/main/java/com/hermesgadget/talaria/core/data/prefs/SettingsStore.kt:211–220](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/data/prefs/SettingsStore.kt:211) claims to remove every scoped key but omits `cache_pending_pairing_`, `sync_*`, and hashed agent notification bookkeeping (225–264,310–320). Fix: centralize scoped key ownership and purge all namespaces, with a connection identity in currently hashed lanes.
 
-**Effort:** **M**. **Dependencies:** tests land alongside R0.1–R0.10.
+- **Q04 — Low — Inconsistent permanent-close policy.** PTY terminal codes ([app/src/main/java/com/hermesgadget/talaria/core/network/PtyTransportSupervisor.kt:57](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/PtyTransportSupervisor.kt:57)) omit 1009 while the sidecar includes it; oversized PTY messages therefore trigger repeated reconnects up to exhaustion. Fix: share close classification and treat message-too-large as a user-visible terminal protocol failure.
 
-**How:**
+- **Q08 — Low — Compatibility fallback is bypassed by permissive decode defaults.** [app/src/main/java/com/hermesgadget/talaria/feature/connection/ProviderParsing.kt:144–169](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/connection/ProviderParsing.kt:144) tries alias-aware fallback only when typed decoding throws; all-optional/default response models can decode an unsupported/camelCase shape successfully into empty defaults. Fix: validate required discriminator/identity fields before accepting typed decode; cover each supported contract with fixtures.
 
-- Add a PR/branch workflow needing no signing secrets: unit tests, Android Lint, release-like compile/manifest checks, coverage report, and uploaded failures. Keep signed tag publishing separate.
-- Extract injectable seams for PTY delivery, session synchronizer/owner registry/clock/poll delay, workers, car repository/validator, snapshot clients, and secure store.
-- Use `StandardTestDispatcher` and virtual time for races; add timeouts to every blocking MockWebServer `takeRequest`; isolate temp folders/shared preferences.
-- Add a small managed-device shard for merged manifest/network security, car/notification, and Compose smoke. Broader test gates continue in R1.13.
+- **Q10 — Low — MCP helper extraction left dead declarations/imports.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/mcp/McpScreenHelpers.kt:18–85,87–99](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/mcp/McpScreenHelpers.kt:18) duplicates UI imports and an unused private mutex/auth-mode constant from McpScreen. The helper mutex provides no transaction protection. Fix: remove these declarations and use one transaction owner. [app/src/main/java/com/hermesgadget/talaria/feature/manage/plugins/PluginsViewModel.kt:222–223](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/plugins/PluginsViewModel.kt:222) immediately awaits each async load, so the ostensibly concurrent independent loads run sequentially; remove redundant async or await both together.
 
-**Key files / API and UX sketch:** `.github/workflows/validation.yml`; Gradle coverage/lint config; `app/src/test/**`; `app/src/androidTest/**`. No user-facing UI.
+- **Q11 — Low — Local quadratic diff implementation is unused by the app.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/review/DiffRenderer.kt:35–79](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/review/DiffRenderer.kt:35) has only two unit-test callers; production Review uses renderUnifiedDiff (ReviewViewModel:166). Fix: remove unused LCS implementation or explicitly integrate a bounded fallback; do not count its quadratic allocation as an active production performance bug.
 
-**Acceptance test:** A PR breaking cleartext consent, auth scope, PTY retry/ack, car host policy, transcript lifecycle, parser limits, or Room transaction fails without access to a signing secret; lint/test reports upload on failure; network tests cannot hang indefinitely.
+## Performance Improvements
 
-## P1 — next
+- **P05 — High — Eager sockets for every unfinished session.** [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:1157–1227](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:1157) auto-opens a PTY and two sidecar sockets for every nonautomation session lacking end metadata, even idle history. There is no tab/socket cap; each tab also owns several coroutines. Fix: keep merged session metadata cheap, connect visible/actively watched sessions on demand, and bound concurrency.
 
-### R1.1 — One lifecycle owner per channel and lazy active-tab restoration
+- **P08 — High — Share manager monitor can block the main thread for an entire transfer.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/files/ShareFileManager.kt:132–145,257–273](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/files/ShareFileManager.kt:132) holds its synchronized instance lock while reading a remote stream; [app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesViewModel.kt:795–800,998–1008](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesViewModel.kt:795) synchronously calls deleteOwnedFile on cancel/clear, which needs the same lock (178). A slow/stalled download can freeze navigation/cancellation. Fix: lock only bookkeeping, perform IO outside locks, and move cleanup off main.
 
-**Why / value:** **High.** Chat, process observer, and foreground service can duplicate sockets; cold start eagerly opens PTY + two sidecars and history for every restored tab; off-screen runtimes keep working. Sources: **PERF, COMPAT, CQ, TEST**.
+- **P13 — High — Malformed Markdown can monopolize the UI thread despite size budgets.** [app/src/main/java/com/hermesgadget/talaria/ui/components/SimpleMarkdown.kt:101,756–757,830–831](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/ui/components/SimpleMarkdown.kt:101) reparses in composition and searches the remaining suffix for `](` at every unmatched `[`. A single long line of opening brackets has quadratic work while consuming only one inline node. Fix: use linear delimiter scanning, bound parse work/time, and move parsing off main; add a pathological-input performance regression test.
 
-**Effort:** **L**, delivered in vertical slices. **Dependencies:** R0.4–R0.6.
+- **P01 — Medium — Startup I/O.** [app/src/main/java/com/hermesgadget/talaria/TalariaApp.kt:38–42](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/TalariaApp.kt:38) performs cache cleanup and recursive ops-import deletion synchronously during Application.onCreate. Cost grows with leftovers and delays every cold launch. Fix: perform cleanup on an I/O executor with ownership coordination before consumers use affected files.
 
-**How:** Restore lightweight tab metadata immediately; hydrate only active tab; make inactive tabs dormant; close PTY/RPC when not needed; keep one foreground event subscriber; hand off to one turn-scoped foreground service only when process backgrounds; explicitly stop chat/terminal/recording producers below their lifecycle state. Preserve remote server work independently of local socket ownership.
+- **P02 — Medium — Cache budget does not bound retained payloads.** [app/src/main/java/com/hermesgadget/talaria/core/data/repo/ResponseCache.kt:238–247](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/data/repo/ResponseCache.kt:238) assigns any DTO 256 bytes and clamps aggregate collections/maps to the whole 8 MiB budget. A huge collection can therefore fit by definition, and DTO strings are not counted. `keyGenerations` also grows without eviction. Fix: real payload-aware weights, reject oversize entries, and bound/remove generation bookkeeping safely.
 
-**Key files / API and UX sketch:** `feature/chat/ChatViewModel.kt`, `ChatScreen.kt`; `feature/terminal/*`; `core/lifecycle/HermesForegroundObserver.kt`; `core/notifications/AgentTaskNotificationService.kt`; `ui/navigation/TalariaNavRoot.kt`. Dormant tabs show cached title/state and hydrate on selection.
+- **P03 — Medium — Repeated credential decryption.** [app/src/main/java/com/hermesgadget/talaria/core/network/AuthInterceptor.kt:41,90,98](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/AuthInterceptor.kt:41), [app/src/main/java/com/hermesgadget/talaria/core/network/HermesClientFactory.kt:230–233](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/HermesClientFactory.kt:230), and snapshot capture repeatedly decrypt the same saved secret set per request. Fix: publish immutable authenticated snapshots with a generation stamp after store mutations and check that stamp on each hop.
 
-**Acceptance test:** N restored tabs create one active runtime, not `3N`; foreground turn has one event subscriber; background handoff has no gap or duplicate notification; stop closes intended producers; selecting a dormant tab hydrates exactly once.
+- **P04 — Medium — Oversized-frame protection happens after allocation.** [app/src/main/java/com/hermesgadget/talaria/core/network/PtyWebSocketSession.kt:175–190](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/PtyWebSocketSession.kt:175) and [app/src/main/java/com/hermesgadget/talaria/core/network/HermesEventClient.kt:552–566](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/network/HermesEventClient.kt:552) check size only inside OkHttp onMessage, which receives an already-materialized complete message. This caps retained application payloads but does not prevent transport-level OOM from a huge/fragmented message. Fix: transport reader budget or trusted proxy cap; document and test the actual boundary.
 
-### R1.2 — Coalesced chat UI state and chunked terminal rendering
+- **P06 — Medium — Composer histories and queue have no total byte/namespace budget.** [app/src/main/java/com/hermesgadget/talaria/feature/chat/ComposerInputState.kt:27–29,117–136](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ComposerInputState.kt:27) bounds history count per session only; individual prompts, number of stored sessions and queued prompts remain unlimited. Every submitted long prompt rewrites its JSON preference on the UI path; histories are not removed by connection deletion (extends Q01). Fix: per-entry/total byte limits, bounded queue, per-scope cleanup and IO persistence.
 
-**Why / value:** **High.** Each PTY/sidecar frame copies large strings and broad tab/UI state; terminal measures one 120k-character node per frame and re-strips raw ANSI; rows repeat linear scans. Sources: **PERF, CQ**.
+- **P07 — Medium — Artifact decoding/download costs on the wrong path.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/artifacts/ArtifactsViewModel.kt:287–289](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/artifacts/ArtifactsViewModel.kt:287) Base64-decodes up to 16MiB on viewModelScope's main dispatcher before switching to IO. Archive preview at 311–320 downloads the whole data URL only to display metadata. Fix: move all decoding off main; use metadata/HEAD for binary previews and stream downloads for sharing.
 
-**Effort:** **M**. **Dependencies:** R0.4; benefits from R1.1.
+- **P09 — Medium — File metadata and preview processing block main.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesViewModel.kt:541,551,571](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesViewModel.kt:541) queries ContentResolver before launching IO; 309/321 Base64-decodes up to16MiB on main; 412–419 allocates/encodes edited content there. Fix: use IO for provider calls and Default for decode/encode before publishing small UI state.
 
-**How:**
+- **P10 — Medium — Kanban columns and graph rendering eagerly process large collections.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/kanban/KanbanScreen.kt:477–486](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/kanban/KanbanScreen.kt:477) composes every task in each column using a scrolling Column; [app/src/main/java/com/hermesgadget/talaria/feature/manage/learning/LearningGraphCanvas.kt:191–192](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/learning/LearningGraphCanvas.kt:191) allocates node/edge filtering collections on every draw, and recreates Typeface per node (234). Fix: lazy task columns, precomputed visible edges and reusable paint/typeface state; cap render complexity separately from API byte budgets.
 
-- Publish visible stream snapshots at most every display frame or 50–100 ms; publish no raw terminal delta to Compose while Reading mode hides it.
-- Split composer, transcript, connection status, prompt, and session rail into narrower flows/state holders; guard no-op `working=true` copies.
-- Precompute line-index and session-parent maps; derive search results/count in one pass.
-- Use one stateful ANSI parser; store bounded chunks/lines in a ring; render a keyed `LazyColumn`; follow only when already at bottom.
+- **P11 — Medium — Review fetches complete working-tree text before the diff even though it only displays binary metadata from it.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/review/ReviewViewModel.kt:158–166](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/review/ReviewViewModel.kt:158), [app/src/main/java/com/hermesgadget/talaria/feature/manage/review/ReviewScreen.kt:458–469](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/review/ReviewScreen.kt:458) serializes two reads and retains unused text. Fix: fetch the diff directly, request metadata only when needed, and parse large patches off main.
 
-**Key files / API and UX sketch:** `feature/chat/ChatViewModel.kt`, `ChatScreen.kt`, `SessionRailPane.kt`, `ChatTranscriptPolicy.kt`; `feature/terminal/*`; `core/util/AnsiStripper.kt`.
+- **P12 — Medium — Terminal output re-layout runs for every frame.** [app/src/main/java/com/hermesgadget/talaria/feature/terminal/TerminalViewModel.kt:363–366](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/terminal/TerminalViewModel.kt:363), [app/src/main/java/com/hermesgadget/talaria/feature/terminal/TerminalOutput.kt:90–100](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/terminal/TerminalOutput.kt:90), [app/src/main/java/com/hermesgadget/talaria/feature/terminal/TerminalScreen.kt:192–203](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/terminal/TerminalScreen.kt:192) copies/replaces up to120k characters and lays out one Text on every output event. Fix: batch display updates, use a line/ring buffer and lazy rendering while retaining ANSI parser continuity.
 
-**Acceptance test:** High-rate stream yields equal final text with no split-escape corruption; no full-screen recomposition per token; terminal history position remains stable; p95/p99 and missed frames improve under a repeatable release-like stream test.
+## Security Concerns
 
-### R1.3 — Delivery-grade workers, notifications, and foreground watches
+Build/configuration review found no embedded signing secret in the Gradle scripts: [app/build.gradle.kts:25](/home/ben/Talaria/app/build.gradle.kts:25) reads credentials from environment or local properties. [network_security_config.xml:20](/home/ben/Talaria/app/src/main/res/xml/network_security_config.xml:20) trusts system CAs in release and permits cleartext, with the app’s origin/consent interceptor providing the enforcement boundary. [AndroidManifest.xml:213](/home/ben/Talaria/app/src/main/AndroidManifest.xml:213) makes FileProvider nonexported; its configured roots are limited cache directories. The URI finding below concerns the exported intake activity reading with Talaria’s own authority.
 
-**Why / value:** **High.** User replies have no network constraint/expedited/idempotent contract; originating notifications can disappear before delivery; foreground start/time-limit failures are swallowed. Sources: **COMPAT, TEST, IDEAS**.
+- **S01 — High — Cloud dictation opt-out is only an advisory flag.** [app/src/main/java/com/hermesgadget/talaria/core/voice/SpeechCoordinator.kt:92–99,208](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/voice/SpeechCoordinator.kt:92) always creates the generic recognizer and sets EXTRA_PREFER_OFFLINE when cloudSttOptIn is false. Android explicitly permits implementations to ignore this extra, so the source’s offline-only promise is not enforced. Fix: use createOnDeviceSpeechRecognizer after an availability check on supported API levels, and fail with an actionable local-recognition state when offline operation cannot be guaranteed. Select the generic recognizer only under explicit cloud opt-in. See the [RecognizerIntent contract](https://developer.android.com/reference/android/speech/RecognizerIntent#EXTRA_PREFER_OFFLINE) and [on-device factory](https://developer.android.com/reference/android/speech/SpeechRecognizer.html#createOnDeviceSpeechRecognizer(android.content.Context)).
 
-**Effort:** **M**. **Dependencies:** R0.3 and the attention state in R1.5 where available.
+- **B02 — High — Car notification bridge bypasses the template authorization checks.** [app/src/main/java/com/hermesgadget/talaria/car/SessionListScreen.kt:74–80,371–378](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/car/SessionListScreen.kt:74) does not cancel or version a conversation read when host trust changes, and publishes its notifications after the asynchronous read without rechecking access. [app/src/main/java/com/hermesgadget/talaria/car/CarConversationNotifier.kt:118–150](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/car/CarConversationNotifier.kt:118) always adds a reply PendingIntent, including when the template host is read-only; [app/src/main/java/com/hermesgadget/talaria/core/notifications/NotificationActionReceiver.kt:69–81](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/notifications/NotificationActionReceiver.kt:69) and [app/src/main/java/com/hermesgadget/talaria/worker/ReplyWorker.kt:57–95](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/worker/ReplyWorker.kt:57) carry no car authorization context. The template callbacks check authorization, but this notification path does not. Impact: conversation notifications can survive/reappear after revocation, and their reply action lacks the advertised car-action check. Fix: invalidate pending reads and posted notifications on trust changes; suppress unauthorized reply actions and validate a host-bound authorization token before car-origin work executes. Exercise actual Android Auto notification delivery to validate platform-specific reachability.
 
-**How:** Add connected constraints, expedited user-initiated work with out-of-quota fallback, stable unique/idempotency keys, and accepted-frame no-retry semantics. Preserve delayed/failed status until acknowledgement. Make active-turn watch turn-scoped/resumable; surface `ForegroundServiceStartNotAllowedException` and Android 15 timeout/quota states. Skip background sync categories the user disabled and add explicit backoff.
+- **S02 — High — Exported share intake can read Talaria-private URIs.** [app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareIntentParser.kt:27–49](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareIntentParser.kt:27) accepts URI strings without scheme/authority authorization; [app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareIntakePolicy.kt:35–38](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareIntakePolicy.kt:35) only normalizes/bounds them. [app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareCaptureViewModel.kt:479–505](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/capture/ShareCaptureViewModel.kt:479) opens them as Talaria through ContentResolver, and [app/src/main/AndroidManifest.xml:90–114](/home/ben/Talaria/app/src/main/AndroidManifest.xml:90) exports the capture activity. An explicit crafted share can name a file URI inside Talaria’s private directory or its own provider, causing private bytes to be staged as an ordinary attachment. Sending still requires user interaction; no silent exfiltration was demonstrated. Fix: accept only authorized content URIs, reject app-private file/provider inputs before any read, and verify access using the original caller/grant context where applicable.
 
-**Key files / API and UX sketch:** `worker/ReplyWorker.kt`, `PairingApproveWorker.kt`, `HermesSyncWorker.kt`, `SyncScheduler.kt`; `core/notifications/NotificationActionReceiver.kt`, `AgentTaskNotificationService.kt`, `TalariaNotifier.kt`. Notifications show Queued/Delayed/Failed with safe retry rather than optimistic dismissal.
+- **S03 — High — Dictation audio can be uploaded through a fallback connection.** [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:2703–2742](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:2703) encodes the completed recording before resolving its destination. If the originating tab disappears during encoding, `tabSnapshot(tabId) ?: clientFactory.snapshot()` selects the newly active connection; the scope check occurs only after upload. Fix: capture the originating snapshot at recording start, keep it with the audio handle, and validate the same tab/scope immediately before transmission. Remove fallback to another connection.
 
-**Acceptance test:** Doze/offline reply delivers exactly once after connectivity; pre-accept failure retries while post-accept failure does not; permanent 4xx fails visibly; FGS start/quota failure updates UI; scope changes never retarget work.
+- **S05 — High — Token discovery result is not bound to its draft origin.** [app/src/main/java/com/hermesgadget/talaria/feature/connection/ConnectViewModel.kt:626–660](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/connection/ConnectViewModel.kt:626) fetches from the captured URL but writes the token into the current editable draft after suspension. Editing/selecting a different host during fetch can put host A's secret into host B's form and subsequently transmit it there. Fix: compare draft ID/origin/generation before accepting the token and cancel on any relevant edit.
 
-### R1.4 — Complete Android Auto messaging and supported real-car qualification
+- **S06 — High — Upload filename validation fails open.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesViewModel.kt:541–544](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesViewModel.kt:541) catches joinManagedPath rejection and uses raw displayName as the target path. A document provider can supply an absolute path or ../ name; uploads then target it instead of the displayed current directory (889–908). Fix: reject invalid names, never use the rejected value as a fallback; validate containment on the server too.
 
-**Why / value:** **High.** v0.8.3 fixed capability discovery, but messaging notifications lack `MessagingStyle` and mark-read, raw sideload is not a supported real-vehicle Car App Library distribution criterion, and route-loss/Doze behavior is unqualified. Sources: **COMPAT, TEST**.
+- **S07 — High — Distinct MCP names can overwrite one another's credentials.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/mcp/McpScreenHelpers.kt:163–168](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/mcp/McpScreenHelpers.kt:163) normalizes punctuation/case to the same environment key (e.g. `a-b` and `a_b`), while [app/src/main/java/com/hermesgadget/talaria/feature/manage/mcp/McpScreen.kt:364–370](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/mcp/McpScreen.kt:364) writes that shared key without collision detection. The other configured server then uses the replacement token. Fix: use collision-resistant stable IDs or reject collisions before provisioning; migrate references atomically.
 
-**Effort:** **M** engineering plus device QA. **Dependencies:** R0.2, R0.3, R1.3.
+- **S09 — High — Queued notification actions can follow an edited endpoint.** [app/src/main/java/com/hermesgadget/talaria/core/notifications/NotificationActionReceiver.kt:42–51,69–78](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/notifications/NotificationActionReceiver.kt:42) persists only connection/profile IDs with the action payload. [app/src/main/java/com/hermesgadget/talaria/worker/ReplyWorker.kt:57–62](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/worker/ReplyWorker.kt:57) and [app/src/main/java/com/hermesgadget/talaria/worker/PairingApproveWorker.kt:27–35](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/worker/PairingApproveWorker.kt:27) resolve those IDs to the current saved endpoint when execution starts. Editing the same connection between enqueue and execution can send old reply text or approval to the replacement endpoint. Execution-time snapshot guards do not detect this earlier change. Fix: bind the PendingIntent and queued work to a durable non-secret transport revision and reject a mismatched revision before transmission; allow explicitly compatible credential rotation without silently allowing endpoint changes.
 
-**How:** Implement `NotificationCompat.MessagingStyle`, immutable content/mark-read intents, mutable reply intent, and stable conversation IDs aligned with car items. Test DHU first. Distribute the same signed build through Internal App Sharing or Internal/Closed testing for real vehicles. Cover Pixel, Samsung, OnePlus; touch/rotary; locked/cold/background; notification denial; battery saver/Doze; mobile/Wi-Fi/VPN route loss and recovery. Record host identity/version/certificate for trust maintenance.
+- **S04 — Medium — Deny-only approval choices gain an invented approve option.** [app/src/main/java/com/hermesgadget/talaria/feature/chat/ApprovalChoicePolicy.kt:33–39](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ApprovalChoicePolicy.kt:33), [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatScreen.kt:322–328](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatScreen.kt:322), [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:2521–2522](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatViewModel.kt:2521): filtering deny before the empty-list fallback treats an explicit deny-only list like no choices and allows once. Fix: distinguish absent choices from a nonempty list containing no supported affirmative option; preserve fail-closed behavior. Reproduced by calling the production policy with serverChoices=[deny] and tapped=once.
 
-**Key files / API and UX sketch:** `TalariaNotifier.kt`, `NotificationActionReceiver.kt`, workers; `car/*`; manifest/packaging assertions; release/testing docs and workflow. The phone notification and car conversation show the same reply/read state.
+- **S08 — Medium — Debug-share flow does not enforce its redaction promise.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/system/SystemScreen.kt:449–457](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/system/SystemScreen.kt:449) promises a redacted report, but [app/src/main/java/com/hermesgadget/talaria/feature/manage/system/SystemViewModel.kt:688–723](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/system/SystemViewModel.kt:688) opens a share request even when response.redacted=false or ok indicates failure. Fix: validate the receipt and redaction status before offering generated links; show the actual privacy state and require a deliberate decision if redaction failed. This does not prove the server itself leaked content.
 
-**Acceptance test:** Packaged descriptor has notification + template; DHU Car API 7 launches; trusted builds appear in the supported OEM matrix; reply/mark-read survive Doze/offline recovery; unknown host stays denied. Documentation states that raw GitHub/Obtainium sideload is DHU/emulator-only rather than promising unsupported real-car visibility.
+## UX Gaps
 
-### R1.5 — Durable Agent Attention Inbox
+- **U01 — Medium — Notification localization gaps.** [app/src/main/java/com/hermesgadget/talaria/core/notifications/AgentNotificationPolicy.kt:60,82,109,132–137](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/notifications/AgentNotificationPolicy.kt:60), [app/src/main/java/com/hermesgadget/talaria/core/notifications/NotificationChannels.kt:45–50,103](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/notifications/NotificationChannels.kt:45), and [app/src/main/java/com/hermesgadget/talaria/core/notifications/TalariaNotifier.kt:82,111–114,131–150](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/notifications/TalariaNotifier.kt:82) contain user-visible English and count-dependent text outside resources/plurals. Fix: localized rendering at the Android boundary with plural resources. ConnectScreen and ProviderOnboardingSection hardcode almost all visible English strings; SubagentMonitor includes hardcoded status/accessibility labels. Move to Android resources with plural/locale formatting.
 
-**Why / value:** **High.** Permission requests, clarifications, failures, completions, and expired prompts are too dependent on ephemeral notifications. Sources: **IDEAS, TEST**.
+- **U02 — Medium — Image orientation/format loss.** [app/src/main/java/com/hermesgadget/talaria/core/util/BoundedImage.kt:139–189](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/core/util/BoundedImage.kt:139) decodes pixels without EXIF orientation and always re-encodes JPEG. Portrait camera images can rotate and transparent screenshots lose alpha. Fix: apply EXIF orientation and preserve alpha with a bounded suitable output format; test camera JPEG and transparent PNG.
 
-**Effort:** **M**. **Dependencies:** R0.3 fixed scope; define the data/action contract before R1.6.
+- **U03 — Medium — Silent transcript truncation.** [app/src/main/java/com/hermesgadget/talaria/domain/model/FlexibleTextSerializer.kt:69–71,95–103,147](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/domain/model/FlexibleTextSerializer.kt:69) cuts content at 64 KiB/depth/node limits and returns ordinary text with no truncation marker. Users/exporters cannot tell content is incomplete. Fix: preserve an explicit truncation flag/marker and an on-demand full-content route, including depth and node-budget exits.
 
-**How:** Persist attention records keyed by connection/profile/session/request/instance with status, age, source, and allowlisted actions. Support answer/choice, approve once, deny, snooze, open, dismiss; keep sudo, secret, broad YOLO, and ambiguous actions phone-only or view-only. Notifications become projections of the same record; replay/update resolves idempotently.
+- **U04 — Medium — Chat scrolling and history keys override the user’s reading position.** [app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatScreen.kt:258–259](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/chat/ChatScreen.kt:258) scrolls to the last result whenever its text changes, even while the user is reading older messages. At 1175–1180 all Up/Down presses navigate history, including multiline cursor movement. Fix: follow new content only while near the bottom, offer a jump-to-latest control, and use history only at editor boundaries or through an explicit shortcut.
 
-**Key files / API and UX sketch:** new `feature/attention/*`; Room entities/DAO; `core/notifications/*`; `feature/activity/ActivityScreen.kt`; scoped action worker. Add an Attention destination/badge and filtered All / Needs me / Done views.
+- **U06 — Medium — Connection doctor silently saves/selects the connection.** [app/src/main/java/com/hermesgadget/talaria/feature/connection/ConnectViewModel.kt:931–933](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/connection/ConnectViewModel.kt:931) changes durable settings before diagnostics; errors leave that selection active. Fix: diagnose an ephemeral validated snapshot, or explicitly label and preview the save/selection action.
 
-**Acceptance test:** Clearing a notification does not delete the inbox item; process death/profile switch preserves exact scope; replay creates one record; answering resolves the correct request once; expired/stale requests cannot execute; unsafe prompts expose no unsafe quick action.
+- **U07 — Medium — Refresh failure hidden behind existing analytics.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/analytics/AnalyticsScreen.kt:149–152](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/analytics/AnalyticsScreen.kt:149) only renders the primary error when data is null, so changing date range can leave old totals under the new range title with no error. Fix: show a stale-data/error banner and the actual loaded interval alongside retained results.
 
-### R1.6 — Bounded dashboard event spine with reconciliation fallback
+- **U09 — Medium — File editing silently discards drafts on dismissal and has no SAF retry control.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesScreen.kt:233–234](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesScreen.kt:233) closes preview without an unsaved-edit guard; [app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesViewModel.kt:516–535](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/files/FilesViewModel.kt:516) clears it. A failed SAF save retains the file and exposes retrySaveDownload (793), but TransferStatus only displays error text (624). Fix: confirm draft discard and provide Retry/Choose destination/Cancel for retained downloads. [app/src/main/java/com/hermesgadget/talaria/feature/manage/mcp/McpScreen.kt:572–637,680](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/mcp/McpScreen.kt:572) allows edits/cancel while a save later calls clearForm (381); [app/src/main/java/com/hermesgadget/talaria/feature/manage/memory/MemoryViewModel.kt:302–333](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/memory/MemoryViewModel.kt:302) protects edits made during a load but overwrites drafts already dirty when Configure is clicked; [app/src/main/java/com/hermesgadget/talaria/feature/manage/models/ModelsScreen.kt:498](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/models/ModelsScreen.kt:498) resets drafts when save/refresh replaces config, including edits made while saving. Capture submitted generations and guard deliberate discard separately from refresh. [app/src/main/java/com/hermesgadget/talaria/ui/components/CollapsibleSection.kt:103](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/ui/components/CollapsibleSection.kt:103) removes collapsed content from composition; editors with local remember state, such as ModelsScreen.MoaEditor:498, lose unsaved drafts when their parent section collapses. Hoist drafts outside collapsible content and apply the same discard policy to collapse/navigation/reload.
 
-**Why / value:** **High leverage.** Global/session state is split among per-tab sidecars, process observer, service, and polls. A shared state layer can power notifications, widgets, car, and boards consistently. Sources: **IDEAS, PERF, COMPAT**.
+- **U11 — Medium — Profile mutation failures disappear once the list is loaded.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/profiles/ProfilesScreen.kt:351–355](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/profiles/ProfilesScreen.kt:351) renders error only when list is null, while create/rename/delete/SOUL/model actions set error on failure (175,230,256,307,411). Users see neither rejection nor a recoverable editor. Fix: always render operation errors alongside existing data and retain failed drafts.
 
-**Effort:** **M/L**, depending on dashboard-wide event support. **Dependencies:** R0.4/R0.5, R1.1, R1.5.
+- **U12 — Medium — Failure of session statistics disables unrelated session actions.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/sessions/SessionsScreen.kt:183,531–540](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/sessions/SessionsScreen.kt:183) ignores Failure.previous and enables overflow only when adminContent.busy==false. A stats/empty-count endpoint failure disables resume, open-menu, local pins/organization and individual delete despite a working session list. Fix: retain prior state and give independent capabilities/actions their own availability state.
 
-**How:** Normalize session created/working/needs-input/completed, tool, artifact, cron, and connection events into a process-scoped persisted store. Consume an advertised dashboard-wide stream when available and current channel sockets for detailed events. Maintain cursor/replay or idempotent IDs. Use lifecycle-aware conditional polling only to reconcile gaps/old servers.
+- **U13 — Medium — PiP prioritizes old content and has no follow-latest scrolling.** [app/src/main/java/com/hermesgadget/talaria/feature/pip/PipChatActivity.kt:149–160](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/pip/PipChatActivity.kt:149) spends its byte budget on chronological messages before the current streaming text; 299–318 uses an unpositioned LazyColumn. A long snapshot hides the live answer and opens at its oldest retained row. Fix: budget newest/streaming content first and scroll to the latest item, with a clear partial-transcript indicator.
 
-**Key files / API and UX sketch:** new `core/events/*`; `HermesEventClient.kt`, `ProfileRegistry.kt`; `HermesForegroundObserver.kt`; `AgentTaskNotificationService.kt`; `HermesSyncWorker.kt`. Expose one read-only state API to UI/widget/car consumers.
+- **U14 — Medium — Terminal lacks basic interactive controls and forces scroll to bottom.** [app/src/main/java/com/hermesgadget/talaria/feature/terminal/TerminalScreen.kt:99–101,214–240](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/terminal/TerminalScreen.kt:99) exposes only line submission and history; no interrupt/escape/tab controls or terminal resize integration. Every output update also steals the reading position. Fix: add explicit terminal control keys/interrupt and follow-output behavior that respects manual scrolling; document unsupported full-screen terminal behavior.
 
-**Acceptance test:** One server transition becomes one normalized scoped state across inbox/widget/car; replay is idempotent; dropped stream reconciles without losing completion; queue, persistence, socket, and polling counts stay within budgets.
+- **U16 — Medium — Markdown limits silently remove transcript/code content.** [app/src/main/java/com/hermesgadget/talaria/ui/components/SimpleMarkdown.kt:518–524,549–553,603,959–965,1056](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/ui/components/SimpleMarkdown.kt:518) truncates input/blocks/rows/tokens without a truncation flag or raw-content affordance. Users can copy an incomplete code block without knowing it. Fix: preserve a hasMore/reason marker and provide full-text export/view, keeping memory limits.
 
-### R1.7 — Guided onboarding driven by server and route capability
+- **U17 — Medium — Navigation selection is disconnected from the back stack.** [app/src/main/java/com/hermesgadget/talaria/ui/navigation/TalariaNavRoot.kt:370–380,420–450](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/ui/navigation/TalariaNavRoot.kt:370) updates currentTop only on explicit top-level navigation; Back and direct detail links can show another destination with the previous tab still highlighted. Fix: derive selected top-level route from currentBackStackEntryAsState/hierarchy.
 
-**Why / value:** **High.** The current connection screen is powerful but asks first-time users to choose protocol/auth details before server classification. Sources: **COMPAT, IDEAS**, building on the connection failure in R0.1.
+- **U18 — Medium — Server theme overrides can erase foreground/background contrast.** [app/src/main/java/com/hermesgadget/talaria/ui/theme/ThemePresets.kt:85–90](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/ui/theme/ThemePresets.kt:85) changes primary/secondary/tertiary/background while retaining all corresponding on-colors. A white primary on a scheme with white onPrimary makes button text unreadable. Fix: derive compatible foreground roles and reject or adjust inadequate contrast. Test server skins across light, dark and monochrome variants.
 
-**Effort:** **M**. **Dependencies:** R0.1.
+- **U08 — Low — Command Center maintenance shortcuts do not choose the requested tool.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/commandcenter/CommandCenterScreen.kt:292–294](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/commandcenter/CommandCenterScreen.kt:292) sends Doctor, Backup and Restart to the exact same generic callback. Fix: navigate with a requested action/section so each label has a distinct useful result.
 
-**How:** Use staged progressive disclosure: explain client/server reachability → enter/classify URL → cleartext/TLS guidance → public then protected probe → show only supported auth modes → select management profile/provider setup → completion/doctor. Keep pins, raw tokens, save-without-test, advanced OIDC/provider controls, and diagnostic output behind Advanced. Persist navigation state, not unsubmitted secrets.
+- **U10 — Low — Canvas controls lack accessible node/zoom semantics.** [app/src/main/java/com/hermesgadget/talaria/feature/manage/learning/LearningGraphCanvas.kt:154–188](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/manage/learning/LearningGraphCanvas.kt:154) only exposes pointer gestures. A separate node list offers detail access, but graph relationships/zoom have no accessible equivalent. Fix: add graph summary and accessible zoom/reset controls while retaining the list.
 
-**Key files / API and UX sketch:** `feature/connection/ConnectScreen.kt`, `ConnectViewModel.kt`; capability/probe models in `core/network`; navigation/strings. Offer setup cards for Local emulator, Home LAN, Tailscale/VPN, and HTTPS without weakening policy.
+- **U15 — Low — Per-agent channel settings offer no way to open Android's channel controls.** [app/src/main/java/com/hermesgadget/talaria/feature/settings/NotificationSettingsScreen.kt:153–155,213–233](/home/ben/Talaria/app/src/main/java/com/hermesgadget/talaria/feature/settings/NotificationSettingsScreen.kt:153) lists channel IDs/assignments but provides no channel-settings intent; users are told channels allow independent muting without a direct control. Fix: add a labeled action with current channel importance/mute status.
 
-**Acceptance test:** A novice can connect loopback, RFC1918, Tailscale, system-trusted HTTPS, password, session token, bearer, or OIDC without irrelevant controls; Advanced remains reachable; back/process restoration preserves stage; no secret persists before explicit save.
+## Proposed Roadmap
 
-### R1.8 — Bounded Android share intake and general attachment pipeline
+- **Phase 1: Critical fixes.** Repair the navigation ViewModel-store lifetime and client-pool revision model (B77, B12, B19–B20, B23); enforce scope-bound chat/provider/audio/notification actions (B34, B41, B75, S03, S05, S09); close URI/approval/car authorization gaps (S02, S04, B02) and enforce offline dictation (S01). Fix cache cancellation/invalidation and conservative reconciliation (B07–B10), delivery identity/certainty/journaling (B17, B28, B30, B32–B33, B36, B76), artifact/skill data loss (B45, B66), and wire the file-save confirmation (F07). Remove transfer-length main-thread lock holds and the quadratic Markdown scan (P08, P13). Exit checks: delayed reads cannot cross scope or hang; repeated switches clear old ViewModels and sockets; denied choices and private URIs are rejected; accepted/unknown deliveries never auto-replay; edited/exported files preserve complete content and metadata.
 
-**Why / value:** **High.** Current intake handles one text or image despite existing file/preview infrastructure; multi-item shares and selected text should create a reliable scoped task. Sources: **IDEAS, TEST**.
+- **Phase 2: Core improvements.** Standardize immutable operation contexts, typed response/error boundaries, independent request generations and versioned editor drafts. Separate mutation acceptance from refresh failure; repair config readback, pairing retries, session actions, voice cancellation and terminal send failures. Add injectable gateways/scopes around ChatViewModel and ReplyWorker and repair test teardown (Q07, Q09, Q13–Q14). Centralize scoped purge/cache ownership, move content-provider and encoding work off main, bound aggregate histories and activate sockets on demand. Exit checks: deliberate out-of-order responses, cancellation, disk-write failure and application-level rejection preserve user input and clear only the matching busy state; real factory tests cover concurrent profiles and token rotation.
 
-**Effort:** **M**. **Dependencies:** R0.3; R2.7 adds offline sending later.
+- **Phase 3: Feature completion.** Render usable pairing QR codes; expose deliberate recovery for unknown share delivery and failed SAF saves; support incomplete voice capability sets and display local dictation output. Implement session pagination, older-artifact access, lifecycle-aware OAuth/job completion tracking, working Kanban terminate controls and car read/refresh behavior. Resolve root-versus-prefixed deployment behavior and cron schema compatibility. Exit checks: drive each feature through its actual screen, including expired authorization, optional-endpoint absence, more than 100 sessions and interrupted delivery recovery.
 
-**How:**
-
-- Add a dedicated lightweight capture activity/store for `ACTION_PROCESS_TEXT`, `ACTION_SEND`, `ACTION_SEND_MULTIPLE`, `ClipData`, subject/text/URL, images, PDFs, general documents, and bounded voice-note files.
-- Copy grants into a managed cache with count/aggregate/per-item byte limits, MIME/signature checks, URI dedupe, TTL cleanup, and process-death persistence.
-- Let the user choose current/pinned/new target session and add an instruction. URLs offer local suggestions such as summarize/compare/extract tasks.
-- Use image RPC where supported; otherwise capability-gate managed upload and insert a safe server file reference. Never pretend unsupported arbitrary binary attachment semantics exist.
-
-**Key files / API and UX sketch:** `AndroidManifest.xml`, `MainActivity.kt`; new `feature/capture/*` and cache store; `feature/chat/ChatImageAttachments.kt`, `ChatViewModel.kt`; `PtyPromptDelivery.kt`; managed files API. A bottom-sheet-style task composer shows ordered attachments, target, instruction, and Send/Save draft.
-
-**Acceptance test:** Multi-image/PDF/text and selected-text actions preserve order, reject over-budget/spoofed input, survive process death, cannot be intercepted, never cross scope, and deliver once or retain a visible draft. Unsupported attachment type has an explicit upload/link alternative.
-
-### R1.9 — Capability-gated session organization
-
-**Why / value:** **Medium-high.** Talaria has strong bulk administration but needs better day-to-day grouping and archive workflows. Source: **TEST** coverage implications plus the required product direction for session organization.
-
-**Effort:** **M**. **Dependencies:** capability discovery from R1.7; local grouping can begin independently.
-
-**How:** Add local labels/groups, saved filters, and optional favorites alongside pins. Show a clear Local badge. Add archive/restore and server project/group move only if the connected dashboard advertises a versioned capability; otherwise hide the controls rather than probing speculative endpoints. Preserve bulk delete/prune/import/stats, branch/compact, and latest-descendant semantics.
-
-**Key files / API and UX sketch:** `feature/manage/sessions/SessionAdminViewModel.kt`, `SessionsScreen.kt`, `SessionDetailScreen.kt`; Room entity/DAO; capability/API models. Sessions gets filter chips and a progressive-disclosure Organize action.
-
-**Acceptance test:** Local labels/groups work offline and remain connection/profile scoped; supported archive/move round-trips; unsupported controls are absent; migration preserves pins; bulk operations respect filters without silently mutating hidden rows.
-
-### R1.10 — Extract runtime, repository, and UI facades before modularization
-
-**Why / value:** **High maintainability leverage.** `ChatViewModel`, `ChatScreen`, and `HermesApi` mix multiple state machines; several Composables own repositories and async state directly. Sources: **CQ, PERF, TEST**.
-
-**Effort:** **L**, incremental. **Dependencies:** avoid destabilizing R0 transport fixes; can overlap late P1 work.
-
-**How:** Introduce a connection-scoped `ChatRuntimeCoordinator` with child tab runtimes, generation IDs, resume/backoff, and dirty events. Extract transcript, voice, prompt, and notification collaborators. Move Config/Channels/Analytics request ownership into ViewModels with immutable `UiState`. Split `HermesApi` into feature Retrofit interfaces composed by the client factory. Hoist screen sections into stateless composables.
-
-**Key files / API and UX sketch:** `feature/chat/ChatViewModel.kt`, `ChatScreen.kt`; `core/network/HermesApi.kt`, PTY/event clients; `core/data/repo/ChatRepository.kt`; Config/Channels/Analytics screens; `di/AppContainer.kt`. UX should remain unchanged; this is the seam required for tests/modules.
-
-**Acceptance test:** Runtime recovery/poll tests no longer instantiate the 2.8k-line ViewModel; key screens survive recreation through ViewModel state; feature Retrofit contracts remain wire-compatible; no Composable reaches the global app container in migrated areas.
-
-### R1.11 — Finish localization and responsive surface coverage
-
-**Why / value:** **Medium.** Catalogs exist, but substantial English literals remain in Manage/car/widget/manifest surfaces. Sources: **CQ, COMPAT**.
-
-**Effort:** **M**. **Dependencies:** preferably after R1.7/R1.8 copy settles; CI check can land now.
-
-**How:** Move every user-visible literal into resources; add a CI check for missing translations/new display literals; complete current Japanese, Simplified/Traditional Chinese, and Arabic catalogs; add pseudolocale, RTL, and 200% font review. Then expand based on demand, initially Spanish, French, German, Brazilian Portuguese, and Korean. Add responsive quick-widget layouts with localized labels and smaller safe size modes.
-
-**Key files / API and UX sketch:** `res/values*/strings*.xml`; connection/chat/Manage/car/widget screens; `LocaleManager.kt`; lint config and widget XML/Glance layouts.
-
-**Acceptance test:** Lint/translation completeness passes; representative source/manifest/widget searches find no inline display strings; current locales are complete; RTL/200% font work on compact, rail, and car-safe surfaces; widget remains usable on narrow OEM grids.
-
-### R1.12 — Version and migrate credential persistence; add supply-chain evidence
-
-**Why / value:** **Medium-high security assurance.** Credentials still depend on old/deprecated `security-crypto:1.1.0-alpha06`; no resolved release SBOM/lock evidence is retained. Sources: **CQ, SEC**.
-
-**Effort:** **M** for persistence plus **S/M** CI supply-chain work. **Dependencies:** R0.8.
-
-**How:** Isolate a versioned credential persistence interface; move to stable 1.1.0 only as a tested bridge if useful; implement a direct Keystore-backed AES-GCM envelope with associated data/versioning and atomic rollback/readback. Generate resolved release dependency lock/SBOM, scan for exploitable High/Critical issues, retain results with APK checksums/signing provenance, and review Android security notes.
-
-**Key files / API and UX sketch:** `SecureConnectionStore.kt`; new persistence abstraction; version catalog/Gradle; migration fixtures; release workflow. No normal UX change; failures route to R0.8 recovery.
-
-**Acceptance test:** Fixtures from every released format migrate without lost secrets; interrupted migration leaves old or complete new state readable; corrupt data opens recovery; new installs do not use alpha crypto APIs; release publishes verifiable SBOM/checksum/scan evidence.
-
-### R1.13 — Broader orchestration, UI, and performance gates
-
-**Why / value:** **Medium-high.** Unit vocabulary is broad but repository, worker, car, notification, navigation, widget, Compose, and tail-performance behavior remain shallow. Sources: **TEST, PERF**.
-
-**Effort:** **M**. **Dependencies:** R0.11.
-
-**How:**
-
-- Add `HermesRepository` + MockWebServer integration for scope/cache/error/cancellation/concurrency; WorkManager/boot/scheduler tests; car repository/screen controller; voice lifecycle; notification service/receiver; widget/tile; every manifest deep link.
-- Add Compose smoke/behavior for Chat, Connect, Voice and one happy path per high-risk management surface; compact/expanded, semantics, restoration, permission/error states.
-- Add managed devices at API 29 and target API. Add Kover/JaCoCo reporting and a pragmatic changed-lines signal rather than brittle whole-project percentage theater.
-- Add Macrobenchmark cold start/chat scroll, Perfetto/FrameTimeline high-rate PTY stream, allocation profiling, Room write trace, and Battery Historian one-vs-five-tab scenarios. Track p95/p99/missed frames, heap high-water, requests, writes, and battery—not p50 alone.
-
-**Key files / API and UX sketch:** test/benchmark modules or source sets, Gradle configs, `.github/workflows/*`, `app/src/test`, `app/src/androidTest`.
-
-**Acceptance test:** Nightly/PR reports are reproducible and uploaded; a wiring break in car/worker/navigation/Compose is detected; documented cold-start, p95/p99, heap, Room-write, and background-request budgets fail the appropriate gate without making the fast unit lane unusable.
-
-### R1.14 — Focused startup, cache, file, draft, voice, and tile performance pass
-
-**Why / value:** **Medium-high aggregate.** After the P0 hot path, remaining costs include per-keystroke Room writes, unbounded response cache, duplicate/cancel-less file work, eager TTS/container startup, background audio, profile fan-out, and inaccurate tile state. Sources: **PERF, COMPAT, CQ**.
-
-**Effort:** **M** across independently shippable slices. **Dependencies:** R0.5/R1.1 avoid lifecycle overlap.
-
-**How:** Debounce draft persistence 300–500 ms with `mapLatest/distinctUntilChanged`, flush on send/stop; weighted LRU and expired-entry removal; remove duplicate initial Files listing and generation-cancel previews; paginate/cache large directories; lazy TTS and noncritical container/work/channel initialization after first draw; six-way profile semaphore + timeouts; stop STT/recording on `ON_STOP`; accurate QS `UNAVAILABLE/INACTIVE/ACTIVE`; category-aware background sync/backoff.
-
-**Key files / API and UX sketch:** `ChatViewModel.kt`, `ChatRepository.kt`; `ResponseCache.kt`; `FilesViewModel.kt`, `FilesScreen.kt`; `TalariaApp.kt`, `AppContainer.kt`, `TtsSpeaker.kt`; `ProfileRegistry.kt`; `TalariaTileService.kt`; sync worker.
-
-**Acceptance test:** Typing creates at most one write per debounce window plus send/stop flush; cache obeys weight/TTL; closed preview has no late work; TTS is unbound when disabled; startup metrics improve; microphone stops off-screen; tile reports real availability; no draft/data regression.
-
-## P2 — later
-
-### R2.1 — Enforce Gradle module boundaries
-
-**Why / value:** **Medium-high long-term velocity.** Package naming does not stop feature code reaching the global graph, and every change invalidates one large module. Source: **CQ**, supported by **TEST/PERF** coupling findings.
-
-**Effort:** **L**. **Dependencies:** R1.10 stable facades; do not perform a big-bang move.
-
-**How:** Stage `core:model`, `core:network`, `core:data`; then high-change `feature:chat`, `feature:manage`, `feature:voice`, and shared `feature:car`; keep `:app` as composition/navigation/manifest root. Define allowed dependency direction and deliberate resource/API DTO boundaries. Move one vertical slice at a time with build/test measurements.
-
-**Key files / API and UX sketch:** `settings.gradle.kts`, root/module Gradle files, `di/AppContainer.kt`, package moves. No UX change.
-
-**Acceptance test:** Module graph is acyclic/enforced; migrated features cannot access the app container directly; focused module tests/builds run independently; clean/release build time and APK behavior do not regress.
-
-### R2.2 — Server-assisted streaming attachments, transcript revisions, and artifact index
-
-**Why / value:** **Medium-high scalability.** Base64 image RPC can exceed 90 MiB peak heap; artifact refresh performs up to 51 full-history requests; polling cannot be truly cheap without revisions. Source: **PERF**.
-
-**Effort:** **L** client + Hermes dashboard. **Dependencies:** R0.7 client budgets remain the compatibility floor.
-
-**How:** Add multipart/chunked attachment upload returning handles; server/proxy message limits; incremental transcript endpoint with revision/ETag/after cursor; session summaries with message/artifact revision; artifact index/metadata endpoint. Keep old-server paths behind strict caps.
-
-**Key files / API and UX sketch:** dashboard API plus feature Retrofit interfaces, repository models, chat attachments, artifact/files UI. Upload shows streaming progress and cancel; transcript/artifacts refresh only changed data.
-
-**Acceptance test:** Large supported attachment streams with bounded client heap; incremental refresh transfers/writes only changes; artifact screen avoids N+1 histories; old server remains functional within client limits and clearly reports unsupported streaming.
-
-### R2.3 — Approved multi-endpoint roaming and narrow private trust
-
-**Why / value:** **Medium.** A logical Hermes home may have LAN, VPN/Tailscale, and fallback origins, but today users manually edit one URL. Sources: **IDEAS, COMPAT**.
-
-**Effort:** **M/L**. **Dependencies:** R0.1, R0.3, R1.7.
-
-**How:** Store an ordered list of independently approved origins under one logical connection; probe only those origins on network change; prefer verified local route when present; fail over without changing management/profile identity; display active transport. Never auto-enable cleartext or probe arbitrary hosts. Optionally add narrowly scoped per-profile CA material and current+backup SPKI pins with explicit rotation; never globally trust user CAs.
-
-**Key files / API and UX sketch:** `ConnectionProfile.kt`, secure store, `ConnectionSnapshot.kt`, client factory, connection settings and background monitor. Connection card shows Home LAN / VPN / Offline and lets users reorder/test/revoke origins.
-
-**Acceptance test:** LAN→VPN→offline→VPN chooses only approved origins, keeps scope, and never sends a secret cross-origin; active HTTP/TLS/pin state is visible; route failure cannot silently fall back to public cleartext; pin rotation works with overlap.
-
-### R2.4 — Ambient agent board, contextual shortcuts, and mobile cron recipes
-
-**Why / value:** **Medium-high visible product value.** The launcher should show agents needing attention, not only server status; frequently used sessions/actions should be one tap; Cron should sell outcomes rather than raw schedules. Source: **IDEAS**.
-
-**Effort:** **M** per slice. **Dependencies:** R1.5/R1.6.
-
-**How:** Build a resize-aware Glance board with up to three agents and needs-input count; publish dynamic shortcuts for relevant/pinned sessions, Talk, and one safe pinned action; add recipes for morning brief, commute digest, build watch, memory summary, weekly cost. All consume shared event/attention state and existing cron APIs—no new pollers.
-
-**Key files / API and UX sketch:** widgets/XML, new shortcut publisher, `ProfileRegistry`/event store, cron screens/models, routes/settings. Compact widget shows aggregate; larger layouts show scoped rows and safe actions.
-
-**Acceptance test:** Widget/shortcuts show exact scoped state from cache/live store, deep-link correctly, adapt to launcher size, and create no independent high-frequency socket/poll; recipe previews schedule/prompt/delivery before creation.
-
-### R2.5 — Deliverable Inbox
-
-**Why / value:** **Medium-high.** Artifacts should appear as agent deliveries rather than requiring a manual Manage → Artifacts rescan. Source: **IDEAS**.
-
-**Effort:** **M**. **Dependencies:** R1.5/R1.6 and R0.7 safe extraction.
-
-**How:** On completion, resolve artifact/file references into a durable delivery record with producer, session, kind/MIME, size, preview, download/share, and ask-for-revision. Notify once with the best next action. Keep delivery state separate from full transcript and reuse managed file/artifact preview/cache paths.
-
-**Key files / API and UX sketch:** artifacts extraction/ViewModel/screen, Room, notifications, Activity/Attention, routes, changed-files card. Add Deliveries filter/timeline and exact artifact deep links.
-
-**Acceptance test:** One completion/replay creates one delivery; preview obeys budgets; offline cached metadata remains useful; download/share links exact scope; ask-for-revision targets source session; missing/deleted artifact degrades visibly.
-
-### R2.6 — Capability-gated Kanban, memory, code-brief, and MCP action integrations
-
-**Why / value:** **Medium/niche.** Existing administration can become a mobile workflow layer without moving tool credentials/policy into Talaria. Source: **IDEAS**.
-
-**Effort:** **M** each. **Dependencies:** R1.6, capability discovery, R2.7 when offline guarantees are offered.
-
-**How:**
-
-- “Start agent” from a Kanban task, store explicit session association, show worker/attention/artifact state, and propose—not force—status changes.
-- Review-before-write memory capture from selected text/share/voice/completion and sourced recall into composer.
-- Agent-mediated compact code impact brief with definition/callers/callees/tests/artifact, not an IDE recreation.
-- Schema-derived allowlisted MCP tool cards translated into structured agent prompts until Hermes exposes an authenticated generic invocation endpoint. Store no MCP secret locally.
-
-**Key files / API and UX sketch:** Kanban, MCP, chat/capture, artifacts/review/files, routes/settings, PTY delivery. Each card previews target scope, parameters, side-effect level, and execution mode.
-
-**Acceptance test:** Capability-absent controls are hidden; every action previews scope/side effects and links one exact session; replay is idempotent; no MCP credential is stored; agent-mediated mode is labeled accurately.
-
-### R2.7 — Offline, scoped, exactly-once PTY outbox
-
-**Why / value:** **Medium-high mobile reliability.** A busy-live queue exists, but route loss/process death can still lose captured prompts from chat/share/car. Source: **IDEAS**, supported by **TEST** delivery gaps.
-
-**Effort:** **M**. **Dependencies:** R0.3, R0.6, R1.3; R1.8 supplies attachment handles.
-
-**How:** Persist prompt, managed attachment handles, exact connection/profile/session, and idempotency key. Deliver with connected constrained/expedited work. Expose queued/sending/failed/sent, cancel/edit, and target-loss errors. Retry only before frame acceptance; never silently retarget to active profile.
-
-**Key files / API and UX sketch:** Room; `PtyPromptDelivery.kt`; outbox/reply worker; chat/capture UI; notifications. Composer and Attention show an Outbox chip/list.
-
-**Acceptance test:** Process death/route loss preserve queue; pre-accept failure retries; post-accept timeout does not duplicate; deleting target fails visibly; edit/cancel works before send; multi-attachment order remains stable.
-
-### R2.8 — Continuous, road-safe car loop and phone handoff
-
-**Why / value:** **Medium.** Car should become useful for a whole drive, but only after host trust, delivery, and notification qualification. Source: **IDEAS**.
-
-**Effort:** **M/L**. **Dependencies:** R0.2/R0.3, R1.4–R1.6.
-
-**How:** Add a concise voice loop—dictate, working, final spoken summary, reply/repeat/summarize/continue on phone. Surface only constrained clarification and low-risk approve-once/deny choices; keep sudo, secret, broad YOLO, destructive, and ambiguous actions phone-only. Add bounded user-owned quick starts, artifact summary/send-to-phone, and exact park-and-continue deep link.
-
-**Key files / API and UX sketch:** `car/*`; attention/event models; voice; notifications/routes; settings/cron pin actions. The car screen remains within templated messaging constraints and renders no general file browser.
-
-**Acceptance test:** Driving-restricted DHU never shows secrets/files/destructive controls; safe prompt answers target exact request; artifact handoff opens exact phone preview; voice loop recovers route loss without duplicate prompt; personal quick starts require confirmation for side effects.
-
-### R2.9 — Hinge-aware foldable Agent Cockpit
-
-**Why / value:** **Medium.** Current adaptation is width-only and can disagree with root window info or straddle a hinge. Sources: **COMPAT, IDEAS**.
-
-**Effort:** **L**. **Dependencies:** R1.10 state-hoisted UI.
-
-**How:** Use one `WindowAdaptiveInfo` source plus `WindowLayoutInfo/FoldingFeature`; choose two/three panes by width, height, and posture; place session board and conversation around separating hinge; contextual inspector switches among tools/subagents, changed files, artifact preview, and permission detail. Preserve two panes when three are cramped.
-
-**Key files / API and UX sketch:** `TalariaNavRoot.kt`, `ChatScreen.kt`, session rail, subagent/changed-files/artifact components; window dependency if needed.
-
-**Acceptance test:** Fold/unfold, tabletop, split-screen, desktop windowing, compact height, 200% font, and separating/occluding hinge keep transcript/composer/actions reachable with preserved state and no occlusion.
-
-### R2.10 — Dedicated Android Automotive OS artifact
-
-**Why / value:** **Medium but platform-specific.** The phone APK’s trampoline is not a compliant AAOS templated-app distribution artifact. Source: **COMPAT**.
-
-**Effort:** **L**. **Dependencies:** R2.1 shared car module and completed car security/tests.
-
-**How:** Create a minSdk 29 automotive artifact requiring `android.hardware.type.automotive` and `android.software.car.templates_host`; add `com.android.automotive` descriptor with `template`; make `CarAppActivity` launcher; provide independent connection setup/storage/network handling. Keep phone projection artifact separate and consider restoring phone minSdk 28 after `app-automotive` leaves it.
-
-**Key files / API and UX sketch:** new automotive/shared-car modules, manifests/resources, Gradle settings/workflows. Embedded car gets its own safe setup path; no assumption that phone credentials transfer.
-
-**Acceptance test:** AAOS emulator/target discovers the automotive artifact natively; phone artifact still projects; storage/network setup is independent; minSdk and feature filtering are correct for each artifact.
-
-### R2.11 — Sideload trust center and stable/beta/canary/test lanes
-
-**Why / value:** **Medium release maturity.** Users need provenance, and car/network changes need real-device testing without replacing the trusted daily install. Source: **IDEAS**, with trusted distribution need from **COMPAT**.
-
-**Effort:** **M/L**. **Dependencies:** R0.10 signing accuracy, R0.11 CI, coordinate with R1.4.
-
-**How:** Publish install docs/QR, checksum, release descriptor, and signing fingerprint for Obtainium users. Add About/Updates showing version/code/lane/API baseline/application ID/certificate/source/check status and safe downloaded-APK verification. Add `.beta`, `.canary`, `.test` IDs, labels/icons/signers/version streams; short-lived QA builds and redacted feedback bundle. Export profiles encrypted; exclude or separately protect secrets.
-
-**Key files / API and UX sketch:** Gradle flavors, workflows, release docs/templates, new About/Updates screen, package/certificate helper, profile export/import.
-
-**Acceptance test:** Stable identity upgrades continuously; lanes install side-by-side and cannot cross-update; checksum/certificate can be verified before installer; test builds expire and never enter stable feed; diagnostics contain no token/secret.
-
-### R2.12 — Future Android local-network permission and TLS rotation readiness
-
-**Why / value:** **Medium forward compatibility.** Target 36 local-network protection is forward-looking; one SPKI pin creates a rotation hazard; release correctly does not trust user CAs globally. Sources: **COMPAT, SEC**.
-
-**Effort:** **S/M** when Android finalizes the contract; pin work **M**. **Dependencies:** R0.1/R2.3.
-
-**How:** Test `RESTRICT_LOCAL_NETWORK` now; implement in-context permission only when the final enforced API is documented; explain denial and route users to VPN/TLS. Support ordered current+backup SPKI pins with overlap, rotation, and recovery. Add explicit sign-out that attempts remote/provider revocation, always clears local credentials/sockets, and reports remote outcome.
-
-**Key files / API and UX sketch:** manifest/connection UI, certificate pin model/factory, connection repository, OIDC/logout, tests/docs.
-
-**Acceptance test:** Local permission denial has a recoverable UX; no speculative permission is requested today; pin rotation succeeds through overlap and fails safely without it; sign-out clears local state even if remote revocation fails and reports that distinction.
-
-## Not planned
-
-These decisions prevent obsolete or unsafe work from re-entering the backlog.
-
-### N1 — Re-add the Android Auto capability descriptor
-
-Superseded by v0.8.3. Keep only a merged-release-manifest regression test.
-
-### N2 — Use raw GitHub/Obtainium sideload visibility as the real-car pass criterion
-
-Unsupported for Car App Library production qualification. Use DHU for sideloaded testing and Internal App Sharing/Internal or Closed testing for real vehicles unless Android changes policy.
-
-### N3 — Keep `ALLOW_ALL_HOSTS_VALIDATOR` in release
-
-Availability does not justify authorizing every installed host. Only debug/DHU may allow all; R0.2 is the release design.
-
-### N4 — Globally trust user CAs, arbitrary “local” DNS names, or public cleartext
-
-This weakens the origin boundary and invites DNS-rebinding/misconfiguration risk. Use explicit private literals/routes, system-trusted TLS, or narrowly scoped per-profile trust from R2.3/R2.12.
-
-### N5 — Add frequent global WebSocket pings
-
-No current client-ping battery drain exists. Socket ownership and polling are the real cost. Reconsider only if field data after R1.1 shows idle NAT closures, then use one conservative server-aligned interval.
-
-### N6 — Begin with a big-bang module or cross-platform rewrite
-
-Runtime seams, security, and tests come first. R1.10 extracts boundaries; R2.1 enforces them incrementally. Another platform requires separately funded product demand.
-
-### N7 — Direct generic MCP invocation without a Hermes contract
-
-Do not move tool credentials/policy into Talaria or invent endpoints. R2.6 remains explicitly agent-mediated until Hermes exposes a versioned, authenticated, auditable generic invocation API.
-
-### N8 — F-Droid packaging before current release lanes mature
-
-It adds a separate signing/update/reproducibility program with lower near-term return than security, reliability, and sideload trust. Reconsider after R2.11 and demonstrated demand.
-
-### N9 — Optimize for p50 alone
-
-Tail jank, missed frames, heap high-water, network requests, SQLite writes, and battery are the release metrics. R1.13 owns repeatable p95/p99 resource gates.
-
-## Re-prioritization triggers
-
-- A confirmed credential cross-scope event, fake-host exploit, silent store corruption, or cache data loss keeps the corresponding P0 at the top regardless of feature demand.
-- Field evidence of PTY disconnects moves R0.6 immediately after R0.3/R0.4; it may not bypass those prerequisites.
-- Image/artifact ANR/OOM reports move R0.7 ahead of performance polish, not ahead of release authorization/credential fixes.
-- If a dashboard-wide replayable event API already exists, R1.6 may move earlier after R0.4/R0.5, but it must not introduce another unbounded queue or socket owner.
-- Real-car demand accelerates R1.4 only after R0.2/R0.3; it does not justify restoring release allow-all.
-- Backend staffing can pull R2.2 forward because it retires multiple client mitigations, but old-server bounded fallbacks remain mandatory.
-- Module extraction moves earlier only when a P0/P1 change is blocked by current seams; use a vertical slice, not a repository-wide move.
-- New feature work should consume the attention/event/capture/session facades rather than adding an independent poller, socket, global container lookup, or unbounded cache.
+- **Phase 4: Polish.** Preserve scroll position and drafts across collapse/navigation; surface stale-data errors, truncation and failed actions; provide terminal interrupt/navigation controls and Android notification-channel settings. Complete localized strings/plurals, accessible graph actions, theme contrast and EXIF-aware media handling. Remove dead helpers and redundant reads/allocations. Exit checks: TalkBack, keyboard, large-font, RTL/localized and light/dark/server-theme review; measured cold-start and long-stream responsiveness; device coverage across the supported API range and Android Auto. Keep the existing unit/lint checks and add focused workflow tests for repaired behavior instead of relying on duplicated helper logic.
