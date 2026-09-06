@@ -329,11 +329,6 @@ private data class PendingLocalCreation(
     val startedAtMillis: Long = System.currentTimeMillis(),
 )
 
-private data class CachedServerSttCapability(
-    val supported: Boolean,
-    val checkedAtMillis: Long,
-)
-
 class ChatViewModel(
     private val chatRepository: ChatRepository = TalariaApp.instance.container.chatRepository,
     private val hermesRepository: HermesRepository = TalariaApp.instance.container.hermesRepository,
@@ -436,14 +431,10 @@ class ChatViewModel(
      * settings test uses). On-device Android dictation is the fallback for
      * servers without STT; it can fail with a client error on some devices. */
     private val voiceRecorder = VoiceRecorder(TalariaApp.instance)
-    private var serverDictation = false
-    private var serverDictationTabId: String? = null
-    private var serverDictationScopeGeneration: Long? = null
+    // Q07: dictation ownership lives in ChatDictationController.
+    private val dictation = ChatDictationController()
     private var serverSttUnavailable = false
-    private var serverSttChecked = false
     private var serverSttScope: String? = null
-    private var serverSttProbeGeneration = 0L
-    private val serverSttCapabilities = mutableMapOf<String, CachedServerSttCapability>()
 
     private fun deletePendingImages(tabId: String) {
         pendingImages.remove(tabId)?.values?.forEach { pending ->
@@ -2669,7 +2660,7 @@ class ChatViewModel(
 
     fun toggleListen() {
         if (_ui.value.listening) {
-            if (serverDictation) stopServerDictation() else stopOnDeviceDictation()
+            if (dictation.isServerDictationActive) stopServerDictation() else stopOnDeviceDictation()
             return
         }
         val activeScope = activeChatScopeId()
@@ -2701,23 +2692,16 @@ class ChatViewModel(
 
     /** Keep capability knowledge isolated to one immutable connection/profile scope. */
     private fun resetServerSttForScope(scopeId: String?) {
-        serverSttProbeGeneration += 1
+        dictation.clearProbes()
         serverSttScope = scopeId
-        val cached = scopeId?.let { serverSttCapabilities[it] }
-            ?.takeIf { System.currentTimeMillis() - it.checkedAtMillis < SERVER_STT_CAPABILITY_TTL_MS }
-        if (scopeId != null && cached == null) serverSttCapabilities.remove(scopeId)
-        serverSttChecked = cached != null
+        val cached = scopeId?.let { dictation.cachedCapability(it) }
         serverSttUnavailable = cached?.supported == false
     }
 
     private fun invalidateServerStt(scopeId: String?) {
         if (scopeId.isNullOrBlank()) return
-        serverSttCapabilities[scopeId] = CachedServerSttCapability(
-            supported = false,
-            checkedAtMillis = System.currentTimeMillis(),
-        )
+        dictation.cacheCapability(scopeId, supported = false)
         if (serverSttScope == scopeId) {
-            serverSttChecked = true
             serverSttUnavailable = true
         }
     }
@@ -2726,9 +2710,7 @@ class ChatViewModel(
         sttJob?.cancel()
         sttJob = null
         voiceRecorder.cancel()
-        serverDictation = false
-        serverDictationTabId = null
-        serverDictationScopeGeneration = null
+        dictation.endServerDictation()
         _ui.update {
             if (it.listening || it.partialDictation.isNotEmpty()) {
                 it.copy(listening = false, partialDictation = "")
@@ -2738,25 +2720,29 @@ class ChatViewModel(
         }
     }
 
+    /** Q07: the guard delegates to the dictation controller. */
     private fun isCurrentVoiceScope(scopeId: String?, generation: Long, tabId: String): Boolean =
-        scopeId != null && scopeId == activeChatScopeId() &&
-            generation == connectionScopeGeneration &&
-            _ui.value.tabs.any { it.id == tabId }
+        dictation.isCurrentVoiceScope(
+            scopeId = scopeId,
+            generation = generation,
+            tabId = tabId,
+            activeScopeId = activeChatScopeId(),
+            liveGeneration = connectionScopeGeneration,
+            activeTabIds = _ui.value.tabs.mapTo(mutableSetOf()) { it.id },
+        )
 
     /** One-time capability probe: abort a recording if the server lacks STT. */
     private fun checkServerSttOnce() {
         val scopeId = activeChatScopeId() ?: return
         if (serverSttScope != scopeId) resetServerSttForScope(scopeId)
-        val cached = serverSttCapabilities[scopeId]
-            ?.takeIf { System.currentTimeMillis() - it.checkedAtMillis < SERVER_STT_CAPABILITY_TTL_MS }
+        val cached = dictation.cachedCapability(scopeId)
         if (cached != null) {
-            serverSttChecked = true
             serverSttUnavailable = !cached.supported
             return
         }
-        if (serverSttChecked) return
-        serverSttChecked = true
-        val probeGeneration = ++serverSttProbeGeneration
+        if (dictation.isProbed(scopeId)) return
+        dictation.beginProbe(scopeId)
+        val probeGeneration = dictation.probeGeneration
         // H4: probe the connection the active tab is bound to.
         val probeSnapshot = activeTabSnapshot() ?: return
         viewModelScope.launch {
@@ -2765,7 +2751,7 @@ class ChatViewModel(
                 VoiceCapabilities.fromOpenApiPaths(root["paths"]?.jsonObject?.keys.orEmpty())
             }.getOrNull()
             if (
-                probeGeneration != serverSttProbeGeneration ||
+                probeGeneration != dictation.probeGeneration ||
                 serverSttScope != scopeId ||
                 activeChatScopeId() != scopeId ||
                 !isActive
@@ -2773,15 +2759,12 @@ class ChatViewModel(
             if (capabilities == null) {
                 // A transport failure is not proof that this scope lacks STT;
                 // permit a later tap to retry the probe.
-                serverSttChecked = false
+                dictation.clearProbes()
                 return@launch
             }
-            serverSttCapabilities[scopeId] = CachedServerSttCapability(
-                supported = capabilities.serverStt,
-                checkedAtMillis = System.currentTimeMillis(),
-            )
+            dictation.cacheCapability(scopeId, capabilities.serverStt)
             serverSttUnavailable = !capabilities.serverStt
-            if (!capabilities.serverStt && _ui.value.listening && serverDictation) {
+            if (!capabilities.serverStt && _ui.value.listening && dictation.isServerDictationActive) {
                 cancelVoiceInput()
                 reportError("Server speech-to-text is unavailable on this Hermes — tap the mic again for on-device dictation")
             }
@@ -2801,21 +2784,17 @@ class ChatViewModel(
                     voiceRecorder.cancel()
                     return@onSuccess
                 }
-                serverDictation = true
-                serverDictationTabId = tabId
-                serverDictationScopeGeneration = generation
+                dictation.beginServerDictation(tabId, generation)
                 _ui.update { it.copy(listening = true, partialDictation = "Listening…") }
             }
             .onFailure { reportError(it.message ?: "Could not start recording") }
     }
 
     private fun stopServerDictation() {
-        serverDictation = false
-        val tabId = serverDictationTabId ?: _ui.value.active?.id
+        val tabId = dictation.serverTabId ?: _ui.value.active?.id
         val scopeId = activeChatScopeId()
-        val generation = serverDictationScopeGeneration ?: connectionScopeGeneration
-        serverDictationTabId = null
-        serverDictationScopeGeneration = null
+        val generation = dictation.serverScopeGeneration ?: connectionScopeGeneration
+        dictation.endServerDictation()
         val recorded = voiceRecorder.stop()
         _ui.update { it.copy(listening = false, partialDictation = "") }
         if (recorded.isFailure) {

@@ -98,11 +98,12 @@ class HermesSyncWorker(
                 container.settingsStore.setSyncFingerprint(scopeId, "pairing", current.keys)
             }
 
-            snap.cron?.let { jobs ->
+            snap.cron?.let { raw ->
+                val jobs = com.hermesgadget.talaria.feature.manage.cron.parseCronJobs(raw)
                 val previous = container.settingsStore.syncFingerprint(scopeId, "cron_errors")
                 val current = jobs
-                    .filter { it.state.equals("error", ignoreCase = true) }
-                    .associateBy { "${it.id}:${it.last_run.orEmpty()}" }
+                    .filter { (it.state ?: "").equals("error", ignoreCase = true) }
+                    .associateBy { "${it.id}:${it.lastRunAt.orEmpty()}" }
                 current.filterKeys { it !in previous }.values.forEach {
                     val body = it.name ?: it.id
                     if (isForegroundBound(container, snapshot)) {

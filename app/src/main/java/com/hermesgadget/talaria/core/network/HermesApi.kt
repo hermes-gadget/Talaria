@@ -178,27 +178,6 @@ interface HermesApi {
     @GET("api/analytics/usage")
     suspend fun getAnalytics(@Query("days") days: Int = 30, @Query("profile") profile: String? = null): AnalyticsUsage
 
-    @GET("api/cron/jobs")
-    suspend fun getCronJobs(@Query("profile") profile: String? = null): List<CronJob>
-
-    @POST("api/cron/jobs")
-    suspend fun createCronJob(@Body body: JsonObject, @Query("profile") profile: String? = null): CronJob
-
-    @PUT("api/cron/jobs/{id}")
-    suspend fun updateCronJob(@Path("id") id: String, @Body body: JsonObject, @Query("profile") profile: String? = null): CronJob
-
-    @POST("api/cron/jobs/{id}/pause")
-    suspend fun pauseCron(@Path("id") id: String, @Query("profile") profile: String? = null): CronJob
-
-    @POST("api/cron/jobs/{id}/resume")
-    suspend fun resumeCron(@Path("id") id: String, @Query("profile") profile: String? = null): CronJob
-
-    @POST("api/cron/jobs/{id}/trigger")
-    suspend fun triggerCron(@Path("id") id: String, @Query("profile") profile: String? = null): CronJob
-
-    @DELETE("api/cron/jobs/{id}")
-    suspend fun deleteCron(@Path("id") id: String, @Query("profile") profile: String? = null): OkResponse
-
     /** Raw cron surface for dashboard v0.19.1, whose schedule shape is not CronJob.schedule. */
     @GET("api/cron/jobs")
     suspend fun getCronJobsRaw(@Query("profile") profile: String? = null): JsonElement
