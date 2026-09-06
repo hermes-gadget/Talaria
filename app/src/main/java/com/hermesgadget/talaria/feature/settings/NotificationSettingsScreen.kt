@@ -16,6 +16,10 @@
 
 package com.hermesgadget.talaria.feature.settings
 
+import android.content.Context
+import android.app.NotificationManager
+import android.provider.Settings
+import android.content.Intent
 import android.app.TimePickerDialog
 import android.text.format.DateFormat
 import androidx.compose.foundation.layout.Arrangement
@@ -36,6 +40,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -211,6 +216,20 @@ private fun SettingsRowSwitch(label: String, checked: Boolean, onChange: (Boolea
 
 @Composable
 private fun ChannelCard(status: NotificationChannelStatus) {
+    // U15: deep-link to Android's per-channel controls so users can mute/sound each
+    // channel without leaving the app for Settings manually. Surface the live
+    // importance so the mute state is visible before opening Settings.
+    val context = LocalContext.current
+    val importanceLabel = remember(status.channel.id) {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        val importance = nm?.getNotificationChannel(status.channel.id)?.importance
+            ?: NotificationManager.IMPORTANCE_DEFAULT
+        if (importance <= NotificationManager.IMPORTANCE_LOW) "muted" else "active"
+    }
+    val channelSettingsIntent = Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
+        putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        putExtra(Settings.EXTRA_CHANNEL_ID, status.channel.id)
+    }
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -230,6 +249,21 @@ private fun ChannelCard(status: NotificationChannelStatus) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp),
             )
+            TextButton(
+                onClick = {
+                    runCatching { context.startActivity(channelSettingsIntent) }
+                        .onFailure {
+                            // Very old builds lack channel settings; fall back to app settings.
+                            context.startActivity(
+                                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                },
+                            )
+                        }
+                },
+            ) {
+                Text("Android settings — channel is $importanceLabel")
+            }
         }
     }
 }

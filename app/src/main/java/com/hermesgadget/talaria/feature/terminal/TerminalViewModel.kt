@@ -282,6 +282,13 @@ class TerminalViewModel(
         return true
     }
 
+    /** U14: raw control sequence (Ctrl+C, Ctrl+D, Tab) without touching history. */
+    fun sendRaw(seq: String) {
+        val session = pty ?: return
+        if (_ui.value.connection !is TerminalConnectionState.Connected) return
+        session.sendTextChecked(seq)
+    }
+
     fun sendInput() {
         val session = pty ?: return
         if (_ui.value.connection !is TerminalConnectionState.Connected) return

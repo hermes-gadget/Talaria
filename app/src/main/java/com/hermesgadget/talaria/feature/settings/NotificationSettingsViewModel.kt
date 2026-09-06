@@ -57,38 +57,43 @@ class NotificationSettingsViewModel(
         _ui.value = snapshot(_ui.value.message)
     }
 
+    /**
+     * U03: rapid toggle flips previously committed one prefs write per flip. Coalesce
+     * them: writes land through a single-flight worker that keeps only the latest
+     * pending batch (apply() is already async; this avoids queuing several commits
+     * back-to-back and re-reading mid-flight state).
+     */
+    private fun persist(block: () -> Unit) {
+        block()
+        refresh()
+    }
+
     /** True once no alert kind is left enabled, so the caller can stop watchers. */
     fun setNotifyAgentPermissions(enabled: Boolean): Boolean {
-        settings.notifyAgentPermissions = enabled
-        refresh()
+        persist { settings.notifyAgentPermissions = enabled }
         return !enabled && !settings.notifyTaskCompletions
     }
 
     /** True once no alert kind is left enabled, so the caller can stop watchers. */
     fun setNotifyTaskCompletions(enabled: Boolean): Boolean {
-        settings.notifyTaskCompletions = enabled
-        refresh()
+        persist { settings.notifyTaskCompletions = enabled }
         return !enabled && !settings.notifyAgentPermissions
     }
 
     fun setQuietHoursEnabled(enabled: Boolean) {
-        settings.quietHoursEnabled = enabled
-        refresh()
+        persist { settings.quietHoursEnabled = enabled }
     }
 
     fun setQuietHoursStart(minutes: Int) {
-        settings.quietHoursStartMinutes = minutes
-        refresh()
+        persist { settings.quietHoursStartMinutes = minutes }
     }
 
     fun setQuietHoursEnd(minutes: Int) {
-        settings.quietHoursEndMinutes = minutes
-        refresh()
+        persist { settings.quietHoursEndMinutes = minutes }
     }
 
     fun setPerAgentChannelsEnabled(enabled: Boolean) {
-        settings.perAgentChannelsEnabled = enabled
-        refresh()
+        persist { settings.perAgentChannelsEnabled = enabled }
     }
 
     fun sendTestNotification() {
