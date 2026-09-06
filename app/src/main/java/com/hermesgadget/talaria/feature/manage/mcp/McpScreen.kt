@@ -85,6 +85,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import java.util.Locale
 import androidx.core.net.toUri
+import com.hermesgadget.talaria.core.util.ActionOutcome
 import com.hermesgadget.talaria.core.util.suspendResult
 
 private val MCP_AUTH_MODES = setOf("none", "header", "oauth")
@@ -391,10 +392,15 @@ fun McpScreen() {
                                 },
                             )
                         }
-                        api.updateMcpServer(
-                            buildJsonObject {
-                                put("servers", replacement)
-                            },
+                        // Q05: the config-write endpoint answers {ok, error}; a 2xx
+                        // body carrying ok=false must fail the save, not clear the draft.
+                        ActionOutcome.requireOk(
+                            api.updateMcpServer(
+                                buildJsonObject {
+                                    put("servers", replacement)
+                                },
+                            ),
+                            "The MCP server rejected the configuration.",
                         )
                         repo.clearCache()
                     }

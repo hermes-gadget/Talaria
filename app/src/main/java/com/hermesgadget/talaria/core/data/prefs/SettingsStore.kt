@@ -210,13 +210,47 @@ class SettingsStore(context: Context) {
      */
     @Synchronized
     fun purgeScopedKeys(connectionId: String) {
-        val prefixes = listOf("chat_state_", "cache_status_line_", "cache_status_at_")
+        // Q01: purge every namespace whose keys embed the scope directly — chat state,
+        // offline status cache, pairing badge, and sync fingerprints (the latter keyed
+        // by profileId, which shares the scope id). Hashed agent-notification lanes
+        // cannot be matched by connection; those entries are pure dedupe bookkeeping,
+        // so stale slots are swept by age below.
+        val prefixes = listOf(
+            "chat_state_",
+            "cache_status_line_",
+            "cache_status_at_",
+            "cache_pending_pairing_",
+            "sync_",
+        )
         prefs.all.keys
             .filter { key -> prefixes.any { key.startsWith(it + connectionId) } }
             .forEach { key -> prefs.edit { remove(key) } }
         val watches = loadAgentWatches()
         if (watches.any { it.connectionId == connectionId }) {
             saveAgentWatches(watches.filterNot { it.connectionId == connectionId })
+        }
+        sweepStaleAgentNotificationSlots(nowMillis = System.currentTimeMillis())
+    }
+
+    /**
+     * Q01: agent notification bookkeeping lives in hashed slots
+     * (`agent_notification_{fingerprint,timestamp}_<slot>`,
+     * `active_agent_permissions_<slot>`) that cannot be tied back to a deleted
+     * connection by key. Sweep entries whose timestamp is older than
+     * [AGENT_SLOT_RETENTION_MS] so dead lanes cannot accumulate forever.
+     */
+    private fun sweepStaleAgentNotificationSlots(nowMillis: Long) {
+        val staleSlots = prefs.all.keys
+            .filter { it.startsWith("agent_notification_timestamp_") }
+            .filter { nowMillis - prefs.getLong(it, 0L) > AGENT_SLOT_RETENTION_MS }
+            .map { it.removePrefix("agent_notification_timestamp_") }
+        if (staleSlots.isEmpty()) return
+        prefs.edit {
+            for (slot in staleSlots) {
+                remove("agent_notification_timestamp_$slot")
+                remove("agent_notification_fingerprint_$slot")
+                remove("active_agent_permissions_$slot")
+            }
         }
     }
 
@@ -320,6 +354,7 @@ class SettingsStore(context: Context) {
         prefs.edit { putStringSet("sync_${category}_$profileId", values.toSet()) }
 
     private companion object {
+        const val AGENT_SLOT_RETENTION_MS = 7L * 24 * 60 * 60 * 1000
         const val KEY_THEME_PRESET = "theme_preset"
         const val DEFAULT_THEME_PRESET = "dark"
         const val KEY_LOCALE_TAG = "app_locale"

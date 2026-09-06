@@ -1282,12 +1282,25 @@ class HermesRepository(
                 check(current.text == expectedOriginal) {
                     "The file changed on the Hermes host. Reopen it before saving."
                 }
+                // Q02: the server exposes no conditional write/ETag, so the
+                // preflight-check-to-write window cannot be closed server-side.
+                // Narrow it and make conflicts detectable: pass the expected
+                // original for servers that support conditional writes, then
+                // verify the content actually landed — if a concurrent host edit
+                // raced the write, report a conflict instead of silently
+                // overwriting or claiming success.
                 operation.api.fsWriteText(buildJsonObject {
                     put("path", path)
                     put("content", content)
+                    put("expected_original", expectedOriginal)
                 }, profile = operation.snapshot.managementProfile)
                 invalidate(operation.snapshot, "fs_list:${path.substringBeforeLast('/', "/")}")
-                operation.api.fsReadText(path, profile = operation.snapshot.managementProfile)
+                val after = operation.api.fsReadText(path, profile = operation.snapshot.managementProfile)
+                check(!after.binary && !after.truncated) { "This file cannot be safely edited as text" }
+                check(after.text == content) {
+                    "The file changed on the Hermes host during save. Reopen it before saving."
+                }
+                after
         }
 
     // --- Learning graph / Starmap (Desktop parity 15.4) ---

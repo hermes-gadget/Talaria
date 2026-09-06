@@ -208,13 +208,16 @@ class ChannelsViewModel(
                 ),
             )
         }
+        // Q09: freeze the management profile at operation start — a profile switch
+        // mid-request must not change which profile this onboarding applies to.
+        val operationProfile = profileProvider()?.takeIf(::hasNonDefaultProfile)
         viewModelScope.launch {
             suspendResult {
                 api.applyTelegramOnboarding(
                     pairingId,
                     buildJsonObject {
                         put("allowed_user_ids", buildJsonArray { allowedUsers.forEach { add(JsonPrimitive(it)) } })
-                        profileProvider()?.takeIf(::hasNonDefaultProfile)?.let { put("profile", it) }
+                        operationProfile?.let { put("profile", it) }
                     },
                 )
             }.fold(
@@ -256,6 +259,8 @@ class ChannelsViewModel(
                 ),
             )
         }
+        // Q09: same immutable operation context as the Telegram apply above.
+        val waOperationProfile = profileProvider()?.takeIf(::hasNonDefaultProfile)
         viewModelScope.launch {
             suspendResult {
                 api.applyWhatsAppOnboarding(
@@ -263,7 +268,7 @@ class ChannelsViewModel(
                     buildJsonObject {
                         put("mode", normalizedMode)
                         put("allowed_users", normalizedAllowedUsers)
-                        profileProvider()?.takeIf(::hasNonDefaultProfile)?.let { put("profile", it) }
+                        waOperationProfile?.let { put("profile", it) }
                     },
                 )
             }.fold(

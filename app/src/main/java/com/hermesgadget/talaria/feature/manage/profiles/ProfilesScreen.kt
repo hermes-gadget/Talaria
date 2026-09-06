@@ -79,6 +79,8 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
     var message by remember { mutableStateOf<String?>(null) }
     var activeName by remember { mutableStateOf<String?>(null) }
     var createName by remember { mutableStateOf("") }
+    // Q12: create is non-idempotent — guard against double-tap duplicates.
+    var creatingProfile by remember { mutableStateOf(false) }
     var createDescription by remember { mutableStateOf("") }
     var cloneFrom by remember { mutableStateOf("") }
     var renameTarget by remember { mutableStateOf<String?>(null) }
@@ -396,19 +398,25 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
                                 modifier = Modifier.fillMaxWidth(),
                             )
                             Button(
-                                enabled = createName.isNotBlank(),
+                                enabled = createName.isNotBlank() && !creatingProfile,
                                 onClick = {
+                                    if (creatingProfile) return@Button
                                     val name = createName.trim()
+                                    creatingProfile = true
                                     scope.launch {
-                                        repo.createProfile(name, createDescription, cloneFrom)
-                                            .onSuccess {
-                                                createName = ""
-                                                createDescription = ""
-                                                cloneFrom = ""
-                                                message = "Created $name"
-                                                reload()
-                                            }
-                                            .onFailure { error = it.message }
+                                        try {
+                                            repo.createProfile(name, createDescription, cloneFrom)
+                                                .onSuccess {
+                                                    createName = ""
+                                                    createDescription = ""
+                                                    cloneFrom = ""
+                                                    message = "Created $name"
+                                                    reload()
+                                                }
+                                                .onFailure { error = it.message }
+                                        } finally {
+                                            creatingProfile = false
+                                        }
                                     }
                                 },
                             ) { Text("Create") }

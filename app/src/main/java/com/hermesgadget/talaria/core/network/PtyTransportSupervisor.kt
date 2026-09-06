@@ -54,7 +54,9 @@ data class PtyCloseClassification(
  * message and waits for one explicit user retry.
  */
 object PtyCloseCodeClassifier {
-    private val terminalCodes = setOf(401, 403, 404, 4401, 4403, 4404, 4408, 1008)
+    // Q04: shared classification (includes 1009 message-too-big, matching the
+    // sidecar client) so oversized PTY frames stop instead of reconnect-looping.
+    private val terminalCodes = WsAuthHelper.TERMINAL_CLOSE_CODES + setOf(401, 403, 404, 1008)
 
     fun classify(code: Int, reason: String = ""): PtyCloseClassification = when {
         code == 1000 -> PtyCloseClassification(

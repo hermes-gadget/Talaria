@@ -222,12 +222,17 @@ class ReviewViewModel(
         switchJob?.cancel()
         switchJob = viewModelScope.launch {
             suspendResult {
-                requestApi.gitBranchSwitch(
+                val response = requestApi.gitBranchSwitch(
                     GitBranchSwitchRequest(
                         path = state.repoPath,
                         branch = branch.name,
                     ),
                 )
+                // Q05: HTTP 2xx with ok=false is an application rejection, not success.
+                if (response.ok == false) {
+                    error(response.message ?: "The server rejected the branch switch")
+                }
+                response
             }.fold(
                 onSuccess = { if (isCurrentScope(expectedScope)) refresh() },
                 onFailure = { error ->

@@ -988,7 +988,7 @@ class HermesEventClient(
             eventScope == envelope.scope
     }
 
-    private fun isTerminalCloseCode(code: Int): Boolean = code in TERMINAL_CLOSE_CODES
+    private fun isTerminalCloseCode(code: Int): Boolean = WsAuthHelper.isTerminalCloseCode(code)
 
     private fun closeMessage(code: Int, reason: String): String =
         "WebSocket closed permanently ($code)${reason.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()}"
@@ -1040,13 +1040,6 @@ class HermesEventClient(
          * sees the newest chunk and the UI falls back to reconciliation.
          */
         const val MAX_MERGED_DELTA_CHARS = 64 * 1024
-        private val TERMINAL_CLOSE_CODES = setOf(
-            4401,
-            4403,
-            4404,
-            4408,
-            WebSocketFrameBudget.MESSAGE_TOO_BIG_CLOSE_CODE,
-        )
     }
 
     private fun parseCommandCatalog(result: JsonElement?): List<SidecarSlashCommand> {

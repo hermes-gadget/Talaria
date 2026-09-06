@@ -196,11 +196,29 @@ class WsAuthHelper(
         private val SESSION_TOKEN_RE =
             Regex("""__HERMES_SESSION_TOKEN__\s*=\s*["']([^"']+)["']""")
 
+        /**
+         * Q04: single owner of terminal close codes shared by the sidecar event
+         * client and the PTY supervisor. 1009 (message too big) is terminal for
+         * both: retrying a frame the endpoint will always reject just burns
+         * reconnects.
+         */
+        val TERMINAL_CLOSE_CODES: Set<Int> = setOf(
+            4401,
+            4403,
+            4404,
+            4408,
+            WebSocketFrameBudget.MESSAGE_TOO_BIG_CLOSE_CODE,
+        )
+
+        fun isTerminalCloseCode(code: Int): Boolean = code in TERMINAL_CLOSE_CODES
+
         fun explainCloseCode(code: Int): String? = when (code) {
             4401 -> "WebSocket auth failed (4401). Sign in again or refresh the session token."
             4403 -> "WebSocket rejected (4403). Check Host/peer guards — remote dashboards must bind non-loopback and match the URL host."
             4404 -> "WebSocket target not found (4404). The durable Hermes session may no longer exist."
             4408 -> "WebSocket policy rejected (4408). Check the dashboard policy and connection scope before retrying."
+            WebSocketFrameBudget.MESSAGE_TOO_BIG_CLOSE_CODE ->
+                "Message too big (1009). The endpoint enforces a frame budget this client exceeds; reduce the request size."
             else -> null
         }
     }
