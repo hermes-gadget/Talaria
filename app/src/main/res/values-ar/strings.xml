@@ -305,7 +305,11 @@
     <string name="notif_monitor_title_none">مراقبة مهام Hermes</string>
     <string name="notif_monitor_title_one">%1$s يعمل الآن</string>
     <plurals name="notif_monitor_title_many">
+        <item quantity="zero">مراقبة وكلاء Hermes في عدد %1$d</item>
         <item quantity="one">مراقبة وكلاء Hermes في عدد %1$d</item>
+        <item quantity="two">مراقبة وكلاء Hermes في عدد %1$d</item>
+        <item quantity="few">مراقبة وكلاء Hermes في عدد %1$d</item>
+        <item quantity="many">مراقبة وكلاء Hermes في عدد %1$d</item>
         <item quantity="other">مراقبة وكلاء Hermes في عدد %1$d</item>
     </plurals>
     <string name="notif_channel_agent_slot_alerts">تنبيهات من %1$s</string>
