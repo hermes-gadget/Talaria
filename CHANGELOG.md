@@ -2,6 +2,25 @@
 
 All notable Talaria changes are documented here. Versions below correspond to repository tags; there has never been a `1.0.0` release.
 
+## [0.9.3] — 2026-09-06
+
+2026-09-05/06 full-source audit remediation (batches 1–14): 141-finding
+roadmap adopted across 326 files, with 14 fix batches plus the first
+transport/API split slices landing regression tests throughout. Suite grew
+to 598 tests, 0 failures.
+
+### Correctness & platform
+
+- Fix batches 1–14 land B-series UI/correctness findings, P-series platform
+  guards, Q/S/U-series storage, settings and UX findings, and F-series
+  transport fixes — each batch ships with regression tests
+- Suspend-catch gate (H2): production tree keeps using `suspendResult`
+  instead of `runCatching` swallowing `CancellationException`
+- Translate load-more strings; S08 consent test coverage
+- Transport/API split first slices (Q03, Q07) — groundwork for the
+  channel/resume session flow verified end-to-end on the live gateway
+  (send → agent turn → stream-back → transcript → find-in-session)
+
 ## [0.9.2] — 2026-08-14
 
 2026-08-13 audit remediation (Waves 0–9): transport/persistence hardening,
