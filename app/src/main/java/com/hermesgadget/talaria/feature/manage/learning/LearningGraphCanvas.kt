@@ -122,6 +122,9 @@ private fun LegendDot(color: Color, label: String) {
     }
 }
 
+// P10: reused allocation — highlight stroke color is constant across frames.
+private val NODE_HIGHLIGHT = Color.White.copy(alpha = 0.35f)
+
 @Composable
 private fun LearningGraphCanvas(
     nodes: List<LearningMapNode>,
@@ -231,16 +234,15 @@ private fun LearningGraphCanvas(
                 val color = if (position.node.kind == "memory") memoryColor else skillColor
                 drawCircle(color = color, radius = position.radius, center = point)
                 drawCircle(
-                    color = Color.White.copy(alpha = 0.35f),
+                    color = NODE_HIGHLIGHT,
                     radius = position.radius * 0.32f,
                     center = point - Offset(position.radius * 0.25f, position.radius * 0.25f),
                 )
                 labelPaint.color = labelColor.toArgb()
                 labelPaint.textSize = 10.dp.toPx() / zoom
-                labelPaint.typeface = android.graphics.Typeface.create(
-                    android.graphics.Typeface.DEFAULT,
-                    android.graphics.Typeface.NORMAL,
-                )
+                // P10: Typeface.create per node allocates a font object on every
+                // draw frame; the default normal face is a process-wide singleton.
+                labelPaint.typeface = android.graphics.Typeface.DEFAULT
                 drawContext.canvas.nativeCanvas.drawText(
                     position.node.label.ifBlank { position.node.id }.take(26),
                     point.x + position.radius + 4f,
