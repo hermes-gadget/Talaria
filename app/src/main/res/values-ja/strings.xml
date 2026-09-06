@@ -275,4 +275,7 @@
     <string name="capture_send">送信</string>
     <string name="capture_sending">送信中…</string>
     <string name="capture_delivery_unknown">送信状態を確認できません。再試行する前にこの下書きを確認してください。</string>
+
+    <string name="sessions_load_more">さらに読み込む</string>
+    <string name="sessions_loading_more">読み込み中…</string>
 </resources>

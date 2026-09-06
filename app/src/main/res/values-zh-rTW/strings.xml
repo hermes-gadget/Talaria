@@ -275,4 +275,7 @@
     <string name="capture_send">傳送</string>
     <string name="capture_sending">傳送中…</string>
     <string name="capture_delivery_unknown">傳送狀態不明；請在重試前檢查此草稿。</string>
+
+    <string name="sessions_load_more">載入更多</string>
+    <string name="sessions_loading_more">載入中…</string>
 </resources>
