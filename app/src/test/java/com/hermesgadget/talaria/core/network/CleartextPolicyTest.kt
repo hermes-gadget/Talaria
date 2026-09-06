@@ -117,15 +117,19 @@ class CleartextPolicyTest {
         CleartextPolicy.check(consented, baseUrl)
         // Explicit :80 and omitted ports have the same effective origin.
         CleartextPolicy.check(consented, "http://192.168.1.5:80".toHttpUrl())
-        assertThrowsOrNull {
+        // Q13: wrong-port and spoofed-origin denial must be asserted, not just
+        // exercised — an ignored result would let a regression through.
+        val wrongPort = assertThrowsOrNull {
             CleartextPolicy.check(consented, "http://192.168.1.5:9120".toHttpUrl())
         }
+        assertTrue("wrong-port consent origin mismatch not denied", wrongPort)
         val spoofedSnapshot = consented.copy(
             profile = consented.profile.copy(cleartextConsentOrigin = "http://192.168.1.6:80"),
         )
-        assertThrowsOrNull {
+        val spoofed = assertThrowsOrNull {
             CleartextPolicy.check(spoofedSnapshot, baseUrl)
         }
+        assertTrue("spoofed consent origin not denied", spoofed)
     }
 
     @Test

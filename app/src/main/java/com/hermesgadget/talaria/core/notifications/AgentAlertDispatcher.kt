@@ -40,7 +40,8 @@ class AgentAlertDispatcher(private val notifier: TalariaNotifier) {
                 target = target,
                 notificationKey = alert.notificationKey,
                 fingerprint = alert.fingerprint,
-                body = alert.body,
+                // U01: localized at the Android boundary from the structured kind+detail.
+                body = notifier.localizedPromptBody(alert.kind, alert.detail),
             )
             is AgentAlert.PermissionExpired -> notifier.cancelAgentPermission(
                 target = target,
@@ -49,7 +50,7 @@ class AgentAlertDispatcher(private val notifier: TalariaNotifier) {
             is AgentAlert.TaskFinished -> notifier.notifyAgentTaskFinished(
                 target = target,
                 fingerprint = alert.fingerprint,
-                body = alert.body,
+                body = alert.fallbackBody?.let { notifier.localizedAgentBody(it) } ?: alert.body,
                 failed = alert.failed,
                 background = alert.background,
             )

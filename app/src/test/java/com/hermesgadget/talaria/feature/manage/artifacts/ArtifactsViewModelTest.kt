@@ -3,6 +3,7 @@ package com.hermesgadget.talaria.feature.manage.artifacts
 
 import android.app.Application
 import android.net.Uri
+import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.domain.model.FsDataUrl
 import com.hermesgadget.talaria.domain.model.FsTextFile
 import com.hermesgadget.talaria.domain.model.SessionMessage
@@ -187,6 +188,7 @@ class ArtifactsViewModelTest {
             defaultDispatcher = StandardTestDispatcher(testScheduler),
             ioDispatcher = StandardTestDispatcher(testScheduler),
         )
+        mainDispatcherRule.track(vm.viewModelScope)
         advanceUntilIdle()
 
         val failure = vm.ui.value.load as ArtifactLoadState.Failed
@@ -210,6 +212,7 @@ class ArtifactsViewModelTest {
             defaultDispatcher = StandardTestDispatcher(testScheduler),
             ioDispatcher = StandardTestDispatcher(testScheduler),
         )
+        mainDispatcherRule.track(vm.viewModelScope)
         advanceUntilIdle()
 
         assertTrue(vm.ui.value.load is ArtifactLoadState.Loading)
@@ -246,6 +249,7 @@ class ArtifactsViewModelTest {
             defaultDispatcher = StandardTestDispatcher(testScheduler),
             ioDispatcher = StandardTestDispatcher(testScheduler),
         )
+        mainDispatcherRule.track(vm.viewModelScope)
         advanceUntilIdle()
 
         assertEquals(50, messageLoads)

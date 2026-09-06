@@ -5,6 +5,7 @@
 
 package com.hermesgadget.talaria.feature.manage.sessions
 
+import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.core.data.db.LocalSessionCollectionKind
 import com.hermesgadget.talaria.core.data.repo.SavedSessionFilter
 import com.hermesgadget.talaria.core.data.repo.SessionOrganizationSnapshot
@@ -27,6 +28,7 @@ class SessionOrganizationViewModelTest {
     fun favoriteMutationUsesTheCapturedConnectionScope() = runTest {
         val store = FakeStore()
         val vm = SessionOrganizationViewModel(store, connectionIdProvider = { "scope-a" })
+        mainDispatcherRule.track(vm.viewModelScope)
         advanceUntilIdle()
 
         vm.toggleFavorite("session-1")
@@ -41,6 +43,7 @@ class SessionOrganizationViewModelTest {
     fun savedFilterMutationIsReboundToTheCapturedScope() = runTest {
         val store = FakeStore()
         val vm = SessionOrganizationViewModel(store, connectionIdProvider = { "scope-a" })
+        mainDispatcherRule.track(vm.viewModelScope)
         advanceUntilIdle()
 
         vm.saveFilter(

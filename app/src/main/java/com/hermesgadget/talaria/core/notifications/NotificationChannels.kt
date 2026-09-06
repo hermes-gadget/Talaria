@@ -99,8 +99,18 @@ object NotificationChannels {
                 setShowBadge(false)
             },
         ) + agentChannels.map { channel ->
-            NotificationChannel(channel.id, channel.displayName, NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Alerts from ${channel.displayName.lowercase()}"
+            // U01: slot names + descriptions localized at the Android boundary.
+            val label = context.getString(
+                when (channel.id) {
+                    "agent_slot_1_v1" -> R.string.notif_channel_agent_1
+                    "agent_slot_2_v1" -> R.string.notif_channel_agent_2
+                    "agent_slot_3_v1" -> R.string.notif_channel_agent_3
+                    "agent_slot_4_v1" -> R.string.notif_channel_agent_4
+                    else -> R.string.notif_channel_agent_other
+                },
+            )
+            NotificationChannel(channel.id, label, NotificationManager.IMPORTANCE_HIGH).apply {
+                description = context.getString(R.string.notif_channel_agent_slot_alerts, label.lowercase())
                 enableVibration(true)
             }
         }

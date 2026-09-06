@@ -4,9 +4,11 @@ package com.hermesgadget.talaria.feature.manage.files
 
 import android.content.ContentResolver
 import android.net.Uri
+import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.core.network.ConnectionScope
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.core.network.HermesApi
+import com.hermesgadget.talaria.util.MainDispatcherRule
 import com.hermesgadget.talaria.domain.model.ManagedFileEntry
 import com.hermesgadget.talaria.domain.model.ManagedFilesListResponse
 import io.mockk.coEvery
@@ -51,6 +53,9 @@ class FilesDownloadRetryTest {
     @get:Rule
     val tempFolder = TemporaryFolder()
 
+    @get:Rule
+    val mainDispatcherRule = MainDispatcherRule()
+
     @Test
     fun failedSaveRetainsThePayloadForRetry() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
@@ -69,6 +74,7 @@ class FilesDownloadRetryTest {
             scopeFlow = scopeFlow,
             ioDispatcher = StandardTestDispatcher(testScheduler),
         )
+        mainDispatcherRule.track(viewModel.viewModelScope)
         val entry = ManagedFileEntry(name = "report.txt", path = "/report.txt", size = 18L)
         val uri = mockk<Uri>()
         val resolver = mockk<ContentResolver>()

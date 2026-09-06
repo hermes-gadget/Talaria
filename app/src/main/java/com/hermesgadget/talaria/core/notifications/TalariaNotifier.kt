@@ -17,6 +17,7 @@
 
 package com.hermesgadget.talaria.core.notifications
 
+import com.hermesgadget.talaria.core.network.PromptKind
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.PendingIntent
@@ -83,7 +84,7 @@ class TalariaNotifier(
         show(
             channel = agentChannel(target, NotificationChannels.AGENT_PERMISSIONS),
             id = id,
-            title = "${target.agentName} needs permission",
+            title = context.getString(R.string.notif_agent_needs_permission, target.agentName),
             body = body,
             deepLink = sessionDeepLink(target),
             target = target,
@@ -92,6 +93,25 @@ class TalariaNotifier(
             category = NotificationCompat.CATEGORY_REMINDER,
             groupKey = agentGroupKey(target),
         )
+    }
+
+
+    /** U01: localized rendering for policy fallback strings at the notification boundary. */
+    fun localizedAgentBody(fallback: AgentAlert.FallbackBody): String = when (fallback) {
+        AgentAlert.FallbackBody.TASK_FAILED -> context.getString(R.string.notif_agent_failed_body)
+        AgentAlert.FallbackBody.TASK_FINISHED -> context.getString(R.string.notif_agent_finished_body)
+        AgentAlert.FallbackBody.BACKGROUND_FAILED -> context.getString(R.string.notif_agent_background_failed_body)
+        AgentAlert.FallbackBody.BACKGROUND_FINISHED -> context.getString(R.string.notif_agent_background_finished_body)
+    }
+
+    fun localizedPromptBody(kind: PromptKind, detail: String): String {
+        val d = detail.ifBlank { context.getString(R.string.notif_prompt_open_talaria) }
+        return when (kind) {
+            PromptKind.APPROVAL -> context.getString(R.string.notif_prompt_approval, d)
+            PromptKind.CLARIFY -> context.getString(R.string.notif_prompt_clarify, d)
+            PromptKind.SUDO -> context.getString(R.string.notif_prompt_sudo, d)
+            PromptKind.SECRET -> context.getString(R.string.notif_prompt_secret, d)
+        }
     }
 
     fun cancelAgentPermission(target: AgentNotificationTarget, notificationKey: String) {
@@ -112,9 +132,9 @@ class TalariaNotifier(
         val lane = "${scopeKey(target)}|${target.sessionId ?: target.agentName}"
         if (!settings.claimAgentNotification("completion|$lane", fingerprint)) return
         val title = when {
-            failed -> "${target.agentName}'s task failed"
-            background -> "${target.agentName} finished a background task"
-            else -> "${target.agentName} completed the task"
+            failed -> context.getString(R.string.notif_agent_task_failed, target.agentName)
+            background -> context.getString(R.string.notif_agent_background_finished, target.agentName)
+            else -> context.getString(R.string.notif_agent_task_completed, target.agentName)
         }
         show(
             channel = agentChannel(target, NotificationChannels.AGENT_TASKS),
@@ -132,10 +152,14 @@ class TalariaNotifier(
 
     fun buildAgentMonitorNotification(agentNames: Collection<String>): Notification {
         val names = agentNames.map(String::trim).filter(String::isNotBlank).distinct()
-        val title = when (names.size) {
-            0 -> "Monitoring Hermes tasks"
-            1 -> "${names.single()} is working"
-            else -> "Monitoring ${names.size} Hermes agents"
+        val title = when {
+            names.isEmpty() -> context.getString(R.string.notif_monitor_title_none)
+            names.size == 1 -> context.getString(R.string.notif_monitor_title_one, names.single())
+            else -> context.resources.getQuantityString(
+                R.plurals.notif_monitor_title_many,
+                names.size,
+                names.size,
+            )
         }
         val openIntent = Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW

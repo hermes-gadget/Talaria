@@ -1,6 +1,7 @@
 /* Copyright 2026 Talaria contributors; Licensed under the Apache License, Version 2.0. */
 package com.hermesgadget.talaria.feature.manage.sessions
 
+import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.core.network.JsonConfig
 import com.hermesgadget.talaria.core.network.HermesApi
 import com.hermesgadget.talaria.domain.model.BulkDeleteSessionsResponse
@@ -214,7 +215,7 @@ class SessionAdminViewModelTest {
         pinStore = pinStore,
         scopeIdProvider = { "scope-1" },
         compactionGateway = compactionGateway,
-    )
+    ).also { mainDispatcherRule.track(it.viewModelScope) }
 
     private fun content(vm: SessionAdminViewModel): SessionAdminContent =
         (vm.ui.value as SessionAdminUiState.Content).value

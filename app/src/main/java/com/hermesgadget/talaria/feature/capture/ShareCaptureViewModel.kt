@@ -424,7 +424,15 @@ class ShareCaptureViewModel(
 
     fun discard() {
         val current = draft ?: return
-        if (current.deliveryState != ShareDraftDeliveryState.DRAFT) return
+        // F02: a DELIVERY_UNKNOWN draft (process died between the SENDING
+        // journal write and the PTY ack) is permanently non-resendable but
+        // must remain resolvable — the user can still clear it, deleting the
+        // local copies. Only in-flight SENDING stays locked.
+        if (current.deliveryState != ShareDraftDeliveryState.DRAFT &&
+            current.deliveryState != ShareDraftDeliveryState.DELIVERY_UNKNOWN
+        ) {
+            return
+        }
         // Cancel any pending debounced save first: a delayed write after
         // remove() would resurrect the discarded draft (often pointing at
         // files that are about to be deleted).

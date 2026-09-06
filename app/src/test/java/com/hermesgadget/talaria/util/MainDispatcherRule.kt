@@ -16,8 +16,10 @@
 package com.hermesgadget.talaria.util
 
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -28,21 +30,45 @@ import org.junit.runner.Description
  * Swaps `Dispatchers.Main` for a test dispatcher around a test so ViewModels
  * that launch on the main dispatcher can be driven deterministically.
  *
- * Deliberately does NOT reset Main after the test: a ViewModel coroutine that is
- * still suspended on a real dispatcher (e.g. an in-flight `withContext(Dispatchers.IO)`
- * hop) can resume after the test ends. If Main were unset at that moment, the resume
- * would throw the "Dispatchers.Main was accessed when the platform dispatcher was
- * absent" IllegalStateException on a real thread, which the global kotlinx
- * ExceptionCollector attributes to the NEXT runTest class as
- * `UncaughtExceptionsBeforeTest` (intermittent CI flake, hit twice on
- * LearningScopeSwitchTest). Keeping the dispatcher installed makes such late resumes
- * dispatch into a dead scheduler — harmless. Tests that need their own Main (e.g.
- * the scope-switch tests) call `setMain` themselves, which replaces this one.
+ * Q14: the rule now owns explicit cleanup. Tests register ViewModel scopes (or any
+ * CoroutineScope) via [track] as they create them; [finished] cancels each one while
+ * the test Main dispatcher is still installed and its scheduler can absorb late
+ * continuations. Cancelling at teardown means no ViewModel work is left parked on a
+ * dead scheduler after the class ends — pending coroutines fail fast with silent
+ * CancellationExceptions instead of surfacing later as order-dependent flake
+ * (UncaughtExceptionsBeforeTest).
+ *
+ * Main is still NOT reset in `finished`: a coroutine resumed on a real dispatcher
+ * (e.g. an in-flight `withContext(Dispatchers.IO)` hop) can reach its Main-continuation
+ * after the test ends; with Main unset that resume throws
+ * "Dispatchers.Main was accessed when the platform dispatcher was absent" on a real
+ * thread, which the global kotlinx ExceptionCollector attributes to the NEXT runTest
+ * class. Keeping the dispatcher installed makes such stragglers dispatch into the
+ * already-cancelled scope — harmless. Scope-switch tests install their own Main, which
+ * replaces this one.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainDispatcherRule(
     val dispatcher: CoroutineDispatcher = UnconfinedTestDispatcher(),
 ) : TestWatcher() {
-    override fun starting(description: Description) = Dispatchers.setMain(dispatcher)
-    override fun finished(description: Description) = Unit
+    private val trackedScopes = mutableListOf<CoroutineScope>()
+
+    /** Register a ViewModel/worker scope for teardown cancellation (Q14). */
+    fun track(scope: CoroutineScope) {
+        trackedScopes += scope
+    }
+
+    override fun starting(description: Description) {
+        trackedScopes.clear()
+        Dispatchers.setMain(dispatcher)
+    }
+
+    override fun finished(description: Description) {
+        // Cancel tracked scopes FIRST (while Main is installed) so parked work fails
+        // here, deterministically, instead of after the scheduler dies.
+        for (scope in trackedScopes) {
+            runCatching { scope.cancel() }
+        }
+        trackedScopes.clear()
+    }
 }

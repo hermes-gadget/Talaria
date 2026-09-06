@@ -20,6 +20,7 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -82,12 +83,37 @@ object ThemeOverrides {
     }
 }
 
-private fun ColorScheme.withServerSkin(skin: ThemeSkin): ColorScheme = copy(
-    primary = skin.primary ?: primary,
-    secondary = skin.accent ?: secondary,
-    tertiary = skin.accent ?: tertiary,
-    background = skin.background ?: background,
-)
+/**
+ * U18: a server skin can override primary/accent/background while the scheme keeps
+ * its original on-colors — a white primary on a white-background scheme erases all
+ * contrast. Whenever a role is overridden, recompute its `on` color by luminance so
+ * text/icons on top of the overridden role stay readable in both themes.
+ */
+private fun ColorScheme.withServerSkin(skin: ThemeSkin): ColorScheme {
+    val primary = skin.primary ?: primary
+    val secondary = skin.accent ?: secondary
+    val tertiary = skin.accent ?: tertiary
+    val background = skin.background ?: background
+    return copy(
+        primary = primary,
+        onPrimary = primary.contrastOn(),
+        secondary = secondary,
+        onSecondary = secondary.contrastOn(),
+        tertiary = tertiary,
+        onTertiary = tertiary.contrastOn(),
+        background = background,
+        onBackground = background.contrastOn(),
+        // Surface roles inherit the background override so cards/dialogs follow the
+        // same contrast rule instead of mixing a server background with the preset's
+        // surface (and its now-possibly-invisible onSurface).
+        surface = background,
+        onSurface = background.contrastOn(),
+    )
+}
+
+/** Black or white, whichever reads better on [color]. */
+private fun Color.contrastOn(): Color =
+    if (luminance() > 0.5f) Color.Black else Color.White
 
 /**
  * All palette values live in one data-driven registry. The generated schemes

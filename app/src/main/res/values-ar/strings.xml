@@ -288,4 +288,35 @@
 
     <string name="sessions_load_more">تحميل المزيد</string>
     <string name="sessions_loading_more">جارٍ التحميل…</string>
+    <!-- U01 -->
+    <string name="notif_agent_needs_permission">%1$s بحاجة إلى إذن</string>
+    <string name="notif_agent_task_failed">فشلت مهمة %1$s</string>
+    <string name="notif_agent_background_finished">أنهى %1$s مهمة في الخلفية</string>
+    <string name="notif_agent_task_completed">أكمل %1$s المهمة</string>
+    <string name="notif_agent_failed_body">أفاد Hermes بفشل المهمة.</string>
+    <string name="notif_agent_finished_body">انتهت المهمة.</string>
+    <string name="notif_agent_background_failed_body">فشلت المهمة الخلفية.</string>
+    <string name="notif_agent_background_finished_body">انتهت المهمة الخلفية.</string>
+    <string name="notif_prompt_open_talaria">افتح Talaria للمتابعة.</string>
+    <string name="notif_prompt_approval">إذن مطلوب: %1$s</string>
+    <string name="notif_prompt_clarify">لدى Hermes سؤال: %1$s</string>
+    <string name="notif_prompt_sudo">إذن المسؤول مطلوب: %1$s</string>
+    <string name="notif_prompt_secret">مفتاح سري مطلوب: %1$s</string>
+    <string name="notif_monitor_title_none">مراقبة مهام Hermes</string>
+    <string name="notif_monitor_title_one">%1$s يعمل الآن</string>
+    <plurals name="notif_monitor_title_many">
+        <item quantity="zero">مراقبة وكلاء Hermes في عدد %1$d</item>
+        <item quantity="one">مراقبة وكلاء Hermes في عدد %1$d</item>
+        <item quantity="two">مراقبة وكلاء Hermes في عدد %1$d</item>
+        <item quantity="few">مراقبة وكلاء Hermes في عدد %1$d</item>
+        <item quantity="many">مراقبة وكلاء Hermes في عدد %1$d</item>
+        <item quantity="other">مراقبة وكلاء Hermes في عدد %1$d</item>
+    </plurals>
+    <string name="notif_channel_agent_slot_alerts">تنبيهات من %1$s</string>
+    <string name="notif_agent_default_name">وكيل Hermes</string>
+    <string name="notif_channel_agent_1">الوكيل 1</string>
+    <string name="notif_channel_agent_2">الوكيل 2</string>
+    <string name="notif_channel_agent_3">الوكيل 3</string>
+    <string name="notif_channel_agent_4">الوكيل 4</string>
+    <string name="notif_channel_agent_other">وكلاء آخرون</string>
 </resources>

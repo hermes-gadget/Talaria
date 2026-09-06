@@ -38,6 +38,9 @@ import com.hermesgadget.talaria.domain.model.CredentialPoolEntry
 import com.hermesgadget.talaria.domain.model.ConnectionProfile
 import com.hermesgadget.talaria.core.util.suspendResult
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -457,6 +460,7 @@ class ConnectViewModel(
                         oauthCode = "",
                     ),
                 )
+                startProviderOAuthAutoPoll()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (t: Throwable) {
@@ -509,6 +513,52 @@ class ConnectViewModel(
         }
     }
 
+    // F03: device-flow authorization used to require manual taps on "Check
+    // status". A lifecycle-owned loop polls while a pending session exists and
+    // stops on completion/clear; process death simply restarts it when the
+    // draft surface reopens the session.
+    private var oauthPollJob: Job? = null
+
+    private fun startProviderOAuthAutoPoll() {
+        oauthPollJob?.cancel()
+        oauthPollJob = viewModelScope.launch {
+            while (isActive) {
+                delay(OAUTH_AUTO_POLL_MS)
+                val session = _ui.value.providerOAuthSession ?: break
+                val status = session.status
+                val terminal = status != null && !status.equals("pending", ignoreCase = true) &&
+                    !status.equals("awaiting", ignoreCase = true) &&
+                    !status.equals("authorizing", ignoreCase = true)
+                if (terminal) break
+                if (session.sessionId.isNullOrBlank()) break
+                // Reuse the manual poll path; it updates state and refreshes
+                // provider content on success. Skip while a manual poll runs.
+                if (_ui.value.providerBusy == ProviderBusyAction.POLL_OAUTH) continue
+                try {
+                    val response = parseProviderOAuthPoll(
+                        providerApi().pollProviderOAuth(session.providerId, session.sessionId!!),
+                    )
+                    _ui.value = _ui.value.copy(
+                        providerOAuthSession = _ui.value.providerOAuthSession?.copy(
+                            status = response.status,
+                            message = response.message ?: response.detail,
+                        ),
+                        providerNotice = response.message ?: response.detail ?: _ui.value.providerNotice,
+                    )
+                    if (oauthCompleted(response.status, response.loggedIn)) {
+                        refreshProviderContent("Provider OAuth connected")
+                        break
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (t: Throwable) {
+                    // Transient errors keep the loop alive; the manual check
+                    // button still works for diagnostics.
+                }
+            }
+        }
+    }
+
     fun pollProviderOAuth() {
         val session = _ui.value.providerOAuthSession
         val sessionId = session?.sessionId
@@ -537,6 +587,8 @@ class ConnectViewModel(
     }
 
     fun clearProviderOAuthSession() {
+        oauthPollJob?.cancel()
+        oauthPollJob = null
         _ui.value = _ui.value.copy(providerOAuthSession = null)
     }
 
@@ -1131,6 +1183,7 @@ class ConnectViewModel(
     }
 
     companion object {
+        private const val OAUTH_AUTO_POLL_MS = 5_000L
         fun factory() = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = ConnectViewModel() as T
