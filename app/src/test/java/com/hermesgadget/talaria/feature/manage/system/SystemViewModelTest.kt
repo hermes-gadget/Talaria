@@ -1,6 +1,7 @@
 /* Copyright 2026 Talaria contributors; Licensed under the Apache License, Version 2.0. */
 package com.hermesgadget.talaria.feature.manage.system
 
+import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.core.network.JsonConfig
 import com.hermesgadget.talaria.domain.model.ActionStatus
 import com.hermesgadget.talaria.domain.model.OpsActionResponse
@@ -34,6 +35,7 @@ class SystemViewModelTest {
     fun updateAndDrainActionsPublishGatewayResponses() = runTest {
         val gateway = FakeSystemGateway()
         val vm = testViewModel(gateway)
+        mainDispatcherRule.track(vm.viewModelScope)
 
         vm.applyHermesUpdate()
         vm.drainGateway()
@@ -50,6 +52,7 @@ class SystemViewModelTest {
     fun opsDepthLoadsCheckpointsAndRunsAllMaintenanceActions() = runTest {
         val gateway = FakeSystemGateway()
         val vm = testViewModel(gateway)
+        mainDispatcherRule.track(vm.viewModelScope)
 
         vm.getOpsCheckpoints()
         advanceUntilIdle()
@@ -78,6 +81,7 @@ class SystemViewModelTest {
             opsFailure = IllegalStateException("dump failed")
         }
         val vm = testViewModel(gateway)
+        mainDispatcherRule.track(vm.viewModelScope)
 
         vm.drainGateway()
         vm.runOpsDump()

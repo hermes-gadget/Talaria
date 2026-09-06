@@ -284,4 +284,31 @@ See PRIVACY.md in the repository for the full statement.</string>
     <string name="capture_delivery_unknown">Delivery status is unknown; review this draft before retrying.</string>
     <string name="sessions_load_more">Load more</string>
     <string name="sessions_loading_more">Loading…</string>
+    <!-- U01: notification strings moved out of code for localization. -->
+    <string name="notif_agent_needs_permission">%1$s needs permission</string>
+    <string name="notif_agent_task_failed">%1$s\'s task failed</string>
+    <string name="notif_agent_background_finished">%1$s finished a background task</string>
+    <string name="notif_agent_task_completed">%1$s completed the task</string>
+    <string name="notif_agent_failed_body">Hermes reported that the task failed.</string>
+    <string name="notif_agent_finished_body">The task has finished.</string>
+    <string name="notif_agent_background_failed_body">The background task failed.</string>
+    <string name="notif_agent_background_finished_body">The background task has finished.</string>
+    <string name="notif_prompt_open_talaria">Open Talaria to continue.</string>
+    <string name="notif_prompt_approval">Permission required: %1$s</string>
+    <string name="notif_prompt_clarify">Hermes has a question: %1$s</string>
+    <string name="notif_prompt_sudo">Administrator permission required: %1$s</string>
+    <string name="notif_prompt_secret">A secret is required: %1$s</string>
+    <string name="notif_monitor_title_none">Monitoring Hermes tasks</string>
+    <string name="notif_monitor_title_one">%1$s is working</string>
+    <plurals name="notif_monitor_title_many">
+        <item quantity="one">Monitoring %1$d Hermes agent</item>
+        <item quantity="other">Monitoring %1$d Hermes agents</item>
+    </plurals>
+    <string name="notif_channel_agent_slot_alerts">Alerts from %1$s</string>
+    <string name="notif_agent_default_name">Hermes agent</string>
+    <string name="notif_channel_agent_1">Agent 1</string>
+    <string name="notif_channel_agent_2">Agent 2</string>
+    <string name="notif_channel_agent_3">Agent 3</string>
+    <string name="notif_channel_agent_4">Agent 4</string>
+    <string name="notif_channel_agent_other">Other agents</string>
 </resources>

@@ -6,7 +6,9 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
+import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
+import com.hermesgadget.talaria.util.MainDispatcherRule
 import com.hermesgadget.talaria.feature.manage.files.ShareFileManager
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CompletableDeferred
@@ -23,6 +25,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -44,6 +47,9 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35], application = Application::class)
 class ShareCaptureViewModelTest {
 
+    @get:Rule
+    val mainDispatcherRule = MainDispatcherRule()
+
     @Test
     fun newShareIsRejectedWhileDeliveryIsSuspended() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
@@ -60,6 +66,7 @@ class ShareCaptureViewModelTest {
             dependencies = dependencies,
             ioDispatcher = StandardTestDispatcher(testScheduler),
         )
+        mainDispatcherRule.track(viewModel.viewModelScope)
 
         viewModel.send()
         awaitState { delivery.started.isCompleted }
@@ -91,6 +98,7 @@ class ShareCaptureViewModelTest {
             dependencies = dependencies,
             ioDispatcher = StandardTestDispatcher(testScheduler),
         )
+        mainDispatcherRule.track(viewModel.viewModelScope)
 
         viewModel.send()
         awaitState { delivery.started.isCompleted }
@@ -119,6 +127,7 @@ class ShareCaptureViewModelTest {
             dependencies = dependencies,
             ioDispatcher = StandardTestDispatcher(testScheduler),
         )
+        mainDispatcherRule.track(viewModel.viewModelScope)
 
         // Trigger a debounced save (100 ms), then discard inside the window.
         viewModel.acceptIntent(

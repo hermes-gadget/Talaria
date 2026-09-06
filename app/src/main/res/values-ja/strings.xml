@@ -278,4 +278,31 @@
 
     <string name="sessions_load_more">さらに読み込む</string>
     <string name="sessions_loading_more">読み込み中…</string>
+    <!-- U01 -->
+    <string name="notif_agent_needs_permission">%1$s が権限を求めています</string>
+    <string name="notif_agent_task_failed">%1$s のタスクが失敗しました</string>
+    <string name="notif_agent_background_finished">%1$s がバックグラウンドタスクを完了しました</string>
+    <string name="notif_agent_task_completed">%1$s がタスクを完了しました</string>
+    <string name="notif_agent_failed_body">Hermes がタスクの失敗を報告しました。</string>
+    <string name="notif_agent_finished_body">タスクが完了しました。</string>
+    <string name="notif_agent_background_failed_body">バックグラウンドタスクが失敗しました。</string>
+    <string name="notif_agent_background_finished_body">バックグラウンドタスクが完了しました。</string>
+    <string name="notif_prompt_open_talaria">Talaria を開いて続行してください。</string>
+    <string name="notif_prompt_approval">権限が必要です: %1$s</string>
+    <string name="notif_prompt_clarify">Hermes から質問があります: %1$s</string>
+    <string name="notif_prompt_sudo">管理者権限が必要です: %1$s</string>
+    <string name="notif_prompt_secret">シークレットが必要です: %1$s</string>
+    <string name="notif_monitor_title_none">Hermes タスクを監視中</string>
+    <string name="notif_monitor_title_one">%1$s が作業中です</string>
+    <plurals name="notif_monitor_title_many">
+        <item quantity="one">%1$d 個の Hermes エージェントを監視中</item>
+        <item quantity="other">%1$d 個の Hermes エージェントを監視中</item>
+    </plurals>
+    <string name="notif_channel_agent_slot_alerts">%1$s からの通知</string>
+    <string name="notif_agent_default_name">Hermes エージェント</string>
+    <string name="notif_channel_agent_1">エージェント 1</string>
+    <string name="notif_channel_agent_2">エージェント 2</string>
+    <string name="notif_channel_agent_3">エージェント 3</string>
+    <string name="notif_channel_agent_4">エージェント 4</string>
+    <string name="notif_channel_agent_other">その他のエージェント</string>
 </resources>

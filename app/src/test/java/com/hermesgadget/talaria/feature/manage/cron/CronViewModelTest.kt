@@ -1,6 +1,7 @@
 /* Copyright 2026 Talaria contributors; Licensed under the Apache License, Version 2.0. */
 package com.hermesgadget.talaria.feature.manage.cron
 
+import androidx.lifecycle.viewModelScope
 import com.hermesgadget.talaria.core.network.JsonConfig
 import com.hermesgadget.talaria.domain.model.AutomationBlueprint
 import com.hermesgadget.talaria.domain.model.CronDeliveryTarget
@@ -38,6 +39,7 @@ class CronViewModelTest {
     fun blueprintInstantiationSendsBlueprintAndValues() = runTest {
         val gateway = FakeCronGateway()
         val vm = CronViewModel(gateway)
+        mainDispatcherRule.track(vm.viewModelScope)
         advanceUntilIdle()
 
         vm.instantiateBlueprint("daily-report", mapOf("name" to "Morning report", "prompt" to "Summarize"))

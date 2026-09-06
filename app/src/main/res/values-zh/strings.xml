@@ -278,4 +278,31 @@
 
     <string name="sessions_load_more">加载更多</string>
     <string name="sessions_loading_more">加载中…</string>
+    <!-- U01 -->
+    <string name="notif_agent_needs_permission">%1$s 请求权限</string>
+    <string name="notif_agent_task_failed">%1$s 的任务失败</string>
+    <string name="notif_agent_background_finished">%1$s 完成了后台任务</string>
+    <string name="notif_agent_task_completed">%1$s 完成了任务</string>
+    <string name="notif_agent_failed_body">Hermes 报告任务失败。</string>
+    <string name="notif_agent_finished_body">任务已完成。</string>
+    <string name="notif_agent_background_failed_body">后台任务失败。</string>
+    <string name="notif_agent_background_finished_body">后台任务已完成。</string>
+    <string name="notif_prompt_open_talaria">打开 Talaria 继续。</string>
+    <string name="notif_prompt_approval">需要权限：%1$s</string>
+    <string name="notif_prompt_clarify">Hermes 有一个问题：%1$s</string>
+    <string name="notif_prompt_sudo">需要管理员权限：%1$s</string>
+    <string name="notif_prompt_secret">需要密钥：%1$s</string>
+    <string name="notif_monitor_title_none">正在监控 Hermes 任务</string>
+    <string name="notif_monitor_title_one">%1$s 正在工作中</string>
+    <plurals name="notif_monitor_title_many">
+        <item quantity="one">正在监控 %1$d 个 Hermes 代理</item>
+        <item quantity="other">正在监控 %1$d 个 Hermes 代理</item>
+    </plurals>
+    <string name="notif_channel_agent_slot_alerts">来自%1$s的提醒</string>
+    <string name="notif_agent_default_name">Hermes 代理</string>
+    <string name="notif_channel_agent_1">代理 1</string>
+    <string name="notif_channel_agent_2">代理 2</string>
+    <string name="notif_channel_agent_3">代理 3</string>
+    <string name="notif_channel_agent_4">代理 4</string>
+    <string name="notif_channel_agent_other">其他代理</string>
 </resources>

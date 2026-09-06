@@ -40,6 +40,8 @@ import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.core.network.ConnectionSnapshot
 import com.hermesgadget.talaria.domain.model.SessionSummary
 import java.util.concurrent.Executor
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -62,6 +64,7 @@ class SessionListScreen(
 ) : Screen(carContext) {
 
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+
     private val mainExecutor: Executor = carContext.mainExecutor
 
     @Volatile
@@ -117,7 +120,25 @@ class SessionListScreen(
         ),
     )
 
+    // F01: replies from the agent or other clients used to require a manual
+    // action to appear; poll the conversation list while the screen is alive.
+    private val refreshScheduler: ScheduledExecutorService =
+        Executors.newSingleThreadScheduledExecutor()
+
     init {
+        refreshScheduler.scheduleWithFixedDelay(
+            {
+                if (destroyed) return@scheduleWithFixedDelay
+                if (conversations != null && !loading) {
+                    postToMain {
+                        if (!destroyed && conversations != null && !loading) loadConversations()
+                    }
+                }
+            },
+            REFRESH_PERIOD_SECONDS,
+            REFRESH_PERIOD_SECONDS,
+            TimeUnit.SECONDS,
+        )
         authorizer.addTrustListener(trustListener)
         lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onDestroy(owner: LifecycleOwner) {
@@ -126,6 +147,7 @@ class SessionListScreen(
                 // Drop the message-center notifications this screen posted.
                 CarConversationNotifier.clear(carContext)
                 executor.shutdownNow()
+                refreshScheduler.shutdownNow()
             }
         })
     }
@@ -430,6 +452,8 @@ class SessionListScreen(
         ?: throw IllegalStateException(carContext.getString(R.string.car_connect_phone_first))
 
     companion object {
+        // F01: refresh cadence for the car session list.
+        private const val REFRESH_PERIOD_SECONDS = 20L
         private const val CREATE_AGENT_ID = "create-agent"
         private const val ACTION_CREATE = "create_session"
         private const val ACTION_SEND = "send_prompt"

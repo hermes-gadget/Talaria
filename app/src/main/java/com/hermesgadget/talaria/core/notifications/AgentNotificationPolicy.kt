@@ -36,6 +36,8 @@ sealed interface AgentAlert {
         val fingerprint: String,
         val body: String,
         val kind: PromptKind,
+        /** U01: raw prompt detail for localized rendering at the notifier boundary. */
+        val detail: String = "",
     ) : AgentAlert
 
     data class PermissionExpired(
@@ -51,13 +53,19 @@ sealed interface AgentAlert {
         val body: String,
         val failed: Boolean,
         val background: Boolean,
+        /** U01: set when [body] is a policy fallback string that the notifier should
+         * re-render from localized resources; null when the body is server text. */
+        val fallbackBody: FallbackBody? = null,
     ) : AgentAlert
+
+    /** U01: which localized fallback template produced [TaskFinished.body]. */
+    enum class FallbackBody { TASK_FAILED, TASK_FINISHED, BACKGROUND_FAILED, BACKGROUND_FINISHED }
 }
 
 /** Pure mapping from Hermes sidecar events to user-visible agent alerts. */
 object AgentNotificationPolicy {
     fun alert(identity: AgentThreadIdentity, event: HermesSideEvent): AgentAlert? {
-        val agentName = identity.agentName.trim().take(MAX_AGENT_NAME_LENGTH).ifBlank { "Hermes agent" }
+        val agentName = identity.agentName.trim().take(MAX_AGENT_NAME_LENGTH).ifBlank { DEFAULT_AGENT_NAME }
         val sessionId = event.sessionIdOrNull() ?: identity.sessionId
         return when (event) {
             is HermesSideEvent.Prompt -> {
@@ -69,6 +77,7 @@ object AgentNotificationPolicy {
                     fingerprint = listOf(notificationKey, event.kind.name, event.message).joinToString("|"),
                     body = promptBody(event.kind, event.message),
                     kind = event.kind,
+                    detail = event.message.trim().ifBlank { OPEN_TALARIA_FALLBACK },
                 )
             }
             is HermesSideEvent.PromptExpired -> AgentAlert.PermissionExpired(
@@ -80,6 +89,10 @@ object AgentNotificationPolicy {
                 val failed = event.status?.lowercase() in FAILED_STATUSES
                 val body = event.text.trim().ifBlank {
                     if (failed) "Hermes reported that the task failed." else "The task has finished."
+                }
+                val fallbackBody = event.text.trim().isBlank().takeIf { it }?.let {
+                    if (failed) AgentAlert.FallbackBody.TASK_FAILED
+                    else AgentAlert.FallbackBody.TASK_FINISHED
                 }
                 AgentAlert.TaskFinished(
                     agentName = agentName,
@@ -94,6 +107,7 @@ object AgentNotificationPolicy {
                     body = body,
                     failed = failed,
                     background = false,
+                    fallbackBody = fallbackBody,
                 )
             }
             is HermesSideEvent.BackgroundComplete -> AgentAlert.TaskFinished(
@@ -107,6 +121,10 @@ object AgentNotificationPolicy {
                 ).joinToString("|"),
                 body = event.text.trim().ifBlank {
                     if (event.failed) "The background task failed." else "The background task has finished."
+                },
+                fallbackBody = event.text.trim().isBlank().takeIf { it }?.let {
+                    if (event.failed) AgentAlert.FallbackBody.BACKGROUND_FAILED
+                    else AgentAlert.FallbackBody.BACKGROUND_FINISHED
                 },
                 failed = event.failed,
                 background = true,
@@ -128,8 +146,11 @@ object AgentNotificationPolicy {
             ?: sessionId?.takeIf { it.isNotBlank() }
             ?: watcherId
 
+    const val DEFAULT_AGENT_NAME = "Hermes agent"
+    const val OPEN_TALARIA_FALLBACK = "Open Talaria to continue."
+
     private fun promptBody(kind: PromptKind, message: String): String {
-        val detail = message.trim().ifBlank { "Open Talaria to continue." }
+        val detail = message.trim().ifBlank { OPEN_TALARIA_FALLBACK }
         return when (kind) {
             PromptKind.APPROVAL -> "Permission required: $detail"
             PromptKind.CLARIFY -> "Hermes has a question: $detail"
