@@ -282,4 +282,6 @@ See PRIVACY.md in the repository for the full statement.</string>
     <string name="capture_send">Send</string>
     <string name="capture_sending">Sending…</string>
     <string name="capture_delivery_unknown">Delivery status is unknown; review this draft before retrying.</string>
+    <string name="sessions_load_more">Load more</string>
+    <string name="sessions_loading_more">Loading…</string>
 </resources>

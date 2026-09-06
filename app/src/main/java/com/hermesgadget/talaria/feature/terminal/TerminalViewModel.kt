@@ -150,7 +150,13 @@ class TerminalViewModel(
         val snapshot = expectedScope?.snapshot ?: container.clientFactory.snapshot() ?: return
         val requestApi = container.clientFactory.api(snapshot)
         val profile = snapshot.managementProfile
+        // B73: cancelling an in-flight backend load must not leave
+        // backendsLoading stuck true (the guard above would block every later
+        // load). Clear the flag for the job being superseded.
         backendJob?.cancel()
+        if (_ui.value.backendsLoading) {
+            _ui.update { it.copy(backendsLoading = false) }
+        }
         backendJob = viewModelScope.launch {
             _ui.update { it.copy(backendsLoading = true, backendError = null) }
             suspendResult {
@@ -190,7 +196,11 @@ class TerminalViewModel(
         val requestApi = container.clientFactory.api(snapshot)
         val profile = snapshot.managementProfile
         if (requested.isEmpty() || _ui.value.backendSelecting != null) return
+        // B73: see loadBackends — clear the orphaned loading flag on cancel.
         backendJob?.cancel()
+        if (_ui.value.backendsLoading) {
+            _ui.update { it.copy(backendsLoading = false) }
+        }
         backendJob = viewModelScope.launch {
             _ui.update { it.copy(backendSelecting = requested, backendError = null) }
             suspendResult {
@@ -274,9 +284,20 @@ class TerminalViewModel(
         val session = pty ?: return
         if (_ui.value.connection !is TerminalConnectionState.Connected) return
         val line = _ui.value.input
-        if (line.isNotBlank()) history.record(line)
-        session.sendText(line)
-        _ui.update { it.copy(input = "", sidecarError = null) }
+        // B72: a socket-rejected send must not silently wipe the command —
+        // check the send result and keep the input + an error when rejected.
+        val result = session.sendTextChecked(line)
+        if (result.isSuccess) {
+            if (line.isNotBlank()) history.record(line)
+            _ui.update { it.copy(input = "", sidecarError = null) }
+        } else {
+            _ui.update {
+                it.copy(
+                    sidecarError = result.exceptionOrNull()?.message
+                        ?: "Send failed — command kept",
+                )
+            }
+        }
     }
 
     private fun connect() {

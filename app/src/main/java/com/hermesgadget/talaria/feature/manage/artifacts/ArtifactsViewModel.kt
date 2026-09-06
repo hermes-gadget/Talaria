@@ -55,6 +55,15 @@ import kotlinx.coroutines.ensureActive
 import java.io.File
 
 private const val ARTIFACT_SESSION_LIMIT = 50
+
+    // F05: hard ceiling for the paginated artifact scan (≈10 pages).
+    private const val ARTIFACT_SCAN_SESSION_CAP = 500
+
+    private suspend fun loadSessionsPageDefault(offset: Int): Result<SessionsPage> =
+        TalariaApp.instance.container.hermesRepository.getSessionsPage(
+            limit = ARTIFACT_SESSION_LIMIT,
+            offset = offset,
+        )
 private const val ARTIFACT_MESSAGE_CONCURRENCY = 4
 private const val MAX_ARTIFACT_PREVIEW_BYTES = 16L * 1024L * 1024L
 private const val MAX_ARTIFACT_DATA_URL_CHARS = 24L * 1024L * 1024L
@@ -144,6 +153,7 @@ class ArtifactsViewModel(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val scopeFlow: StateFlow<ConnectionScope?>? = null,
     private val loadSessionsSnapshot: (suspend (ConnectionSnapshot?) -> Result<SessionsPage>)? = null,
+    private val loadSessionsPage: (suspend (ConnectionSnapshot?, Int, Int) -> Result<SessionsPage>)? = null,
     private val loadMessagesSnapshot: (suspend (ConnectionSnapshot?, String) -> Result<List<SessionMessage>>)? = null,
     private val readTextSnapshot: (suspend (ConnectionSnapshot?, String) -> Result<FsTextFile>)? = null,
     private val readDataUrlSnapshot: (suspend (ConnectionSnapshot?, String) -> FsDataUrl)? = null,
@@ -383,14 +393,29 @@ class ArtifactsViewModel(
     }
 
     private suspend fun loadArtifacts(expectedScope: ConnectionScope?): List<ArtifactRecord> = coroutineScope {
-        // The desktop browser intentionally scans a recent bounded session slice;
-        // doing the same keeps a mobile refresh responsive on large Hermes homes.
+        // F05: artifacts often live outside the newest slice of sessions, so the
+        // scan walks successive pages (bounded) instead of silently scanning only
+        // the first window. Coverage stays responsive via the page cap.
         ensureCurrentScope(expectedScope)
         val requestSnapshot = expectedScope?.snapshot
-        val page = (loadSessionsSnapshot?.invoke(requestSnapshot) ?: loadSessions()).getOrThrow()
+        val firstPage = (loadSessionsSnapshot?.invoke(requestSnapshot) ?: loadSessions()).getOrThrow()
         ensureCurrentScope(expectedScope)
-        val sessions = page.sessions.take(ARTIFACT_SESSION_LIMIT)
-        val revision = artifactRevision(page)
+        val sessions = ArrayList(firstPage.sessions.take(ARTIFACT_SESSION_LIMIT))
+        var morePages = firstPage.total?.let { total -> sessions.size < total } ?: false
+        var nextOffset = ARTIFACT_SESSION_LIMIT
+        var scanCapReached = false
+        while (morePages && nextOffset < ARTIFACT_SCAN_SESSION_CAP) {
+            ensureCurrentScope(expectedScope)
+            val continuation = (loadSessionsPage?.invoke(requestSnapshot, nextOffset, ARTIFACT_SESSION_LIMIT)
+                ?: loadSessionsPageDefault(nextOffset)).getOrThrow()
+            ensureCurrentScope(expectedScope)
+            if (continuation.sessions.isEmpty()) break
+            sessions += continuation.sessions.take(ARTIFACT_SESSION_LIMIT)
+            nextOffset += ARTIFACT_SESSION_LIMIT
+            morePages = continuation.total?.let { total -> sessions.size < total } ?: false
+        }
+        if (morePages) scanCapReached = true
+        val revision = artifactRevision(firstPage) + (if (scanCapReached) "|capped" else "")
         if (revision == cachedArtifactRevision) return@coroutineScope cachedArtifacts
         val permits = Semaphore(ARTIFACT_MESSAGE_CONCURRENCY)
         // B44: distinguish "loaded, zero artifacts" from "load failed" — a failed

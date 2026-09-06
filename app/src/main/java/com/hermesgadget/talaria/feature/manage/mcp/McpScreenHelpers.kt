@@ -221,15 +221,19 @@ internal fun buildEditedMcpServerConfig(
                 }
                 "header" -> {
                     if (normalizedBearer.isNotBlank()) {
-                        put(
-                            "headers",
-                            buildJsonObject {
-                                put(
-                                    "Authorization",
-                                    "Bearer ${mcpBearerEnvKey(name)}",
-                                )
-                            },
-                        )
+                        // B63: token rotation must merge Authorization into the
+                        // server's existing headers — replacing the whole object
+                        // silently dropped unrelated required headers.
+                        val mergedHeaders = buildJsonObject {
+                            (existing["headers"] as? JsonObject)?.forEach { (key, value) ->
+                                if (key != "Authorization") put(key, value)
+                            }
+                            put(
+                                "Authorization",
+                                "Bearer ${mcpBearerEnvKey(name)}",
+                            )
+                        }
+                        put("headers", mergedHeaders)
                     } else {
                         existing["headers"]?.let { put("headers", it) }
                     }

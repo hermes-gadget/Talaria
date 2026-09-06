@@ -16,6 +16,7 @@ import java.io.FilterOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -65,7 +66,14 @@ internal object BoundedImage {
             } ?: error("Could not read the selected image")
             currentCoroutineContext().ensureActive()
             val prepared = prepareFile(source, outputDirectory, displayName)
-            currentCoroutineContext().ensureActive()
+            try {
+                currentCoroutineContext().ensureActive()
+            } catch (cancelled: CancellationException) {
+                // B25: the produced output must not be orphaned when the caller
+                // is cancelled after preparation completed.
+                File(prepared.handle.path).delete()
+                throw cancelled
+            }
             prepared
         } finally {
             source.delete()
@@ -89,7 +97,13 @@ internal object BoundedImage {
             source.outputStream().use { it.write(bytes) }
             currentCoroutineContext().ensureActive()
             val prepared = prepareFile(source, outputDirectory, displayName)
-            currentCoroutineContext().ensureActive()
+            try {
+                currentCoroutineContext().ensureActive()
+            } catch (cancelled: CancellationException) {
+                // B25: same orphan-output cleanup for the byte-input path.
+                File(prepared.handle.path).delete()
+                throw cancelled
+            }
             prepared
         } finally {
             source.delete()

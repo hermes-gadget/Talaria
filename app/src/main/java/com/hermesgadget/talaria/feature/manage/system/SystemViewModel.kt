@@ -242,16 +242,27 @@ class SystemViewModel(
     private var retainedBackupFile: File? = null
     private var debugShareJob: Job? = null
     private var debugShareGeneration = 0L
+
+    /** S08: file produced by an UNREDACTED debug share, awaiting explicit user consent. */
+    private var pendingUnredactedShareUri: android.net.Uri? = null
     private val defaultShareFileManager by lazy { ShareFileManager(cacheDirectory) }
 
     init {
         if (autoRefresh) refresh()
     }
 
+    /** B69: surface share-chooser failures from the System screen. */
+    fun reportShareFailure(message: String) {
+        _ui.update { it.copy(error = message) }
+    }
+
     fun refresh() {
         loadSystem()
         refreshHooks()
-        refreshRawConfig()
+        // B68: the auto/global refresh must not discard raw YAML drafts —
+        // pass preserveDraft so dirty edits and in-flight saves survive;
+        // only an explicit user refresh reloads the editor content.
+        refreshRawConfig(preserveDraft = true)
         getOpsCheckpoints()
     }
 
@@ -675,6 +686,25 @@ class SystemViewModel(
         _ui.update { it.copy(backupDownload = BackupDownloadUiState.Idle) }
     }
 
+    /**
+     * S08: deliberate user consent to share an UNREDACTED debug report —
+     * emits the prepared share request exactly once.
+     */
+    fun confirmUnredactedShare() {
+        val uri = pendingUnredactedShareUri ?: return
+        pendingUnredactedShareUri = null
+        _ui.update {
+            it.copy(
+                shareRequest = SystemShareRequest(
+                    uri = uri,
+                    mimeType = "text/plain",
+                    subject = "Hermes debug share",
+                    chooserTitle = "Share UNREDACTED Hermes debug output",
+                ),
+            )
+        }
+    }
+
     fun createDebugShare() {
         if (_ui.value.debugShare is DebugShareUiState.Running) return
         debugShareGeneration += 1
@@ -719,8 +749,18 @@ class SystemViewModel(
                     (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(output)
                     return@launch
                 }
-                _ui.update {
-                    it.copy(debugShare = DebugShareUiState.Complete(result.first), shareRequest = result.second)
+                // S08: an unredacted report never auto-opens the share sheet —
+                // the user must confirm after seeing the privacy warning.
+                val response = result.first
+                if (!response.redacted) {
+                    pendingUnredactedShareUri = result.second?.uri
+                    _ui.update {
+                        it.copy(debugShare = DebugShareUiState.Complete(response), shareRequest = null)
+                    }
+                } else {
+                    _ui.update {
+                        it.copy(debugShare = DebugShareUiState.Complete(response), shareRequest = result.second)
+                    }
                 }
             } catch (cancelled: CancellationException) {
                 (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(output)
@@ -739,7 +779,18 @@ class SystemViewModel(
         }
     }
 
-    fun refreshRawConfig() {
+    fun refreshRawConfig(preserveDraft: Boolean = false) {
+        if (preserveDraft) {
+            val current = _ui.value.rawConfig
+            // B68: skip the reload entirely while the editor holds unsaved
+            // edits or a save is in flight — a fresh fetch would overwrite
+            // them with server state.
+            if (current is RawConfigUiState.Ready &&
+                (current.yaml != current.savedYaml || current.saving)
+            ) {
+                return
+            }
+        }
         _ui.update { it.copy(rawConfig = RawConfigUiState.Loading) }
         viewModelScope.launch {
             suspendResult { gateway.getOpsRawConfig() }.fold(

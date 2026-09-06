@@ -128,7 +128,13 @@ fun SystemScreen() {
             putExtra(Intent.EXTRA_SUBJECT, request.subject)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, request.chooserTitle))
+        // B69: a chooser start can throw if no activity can handle the share —
+        // surface it through the VM message instead of crashing composition.
+        runCatching {
+            context.startActivity(Intent.createChooser(intent, request.chooserTitle))
+        }.onFailure { error ->
+            vm.reportShareFailure(error.message ?: "Could not open share dialog")
+        }
         vm.consumeShareRequest()
     }
 
@@ -459,10 +465,30 @@ fun SystemScreen() {
                             DebugShareUiState.Idle, DebugShareUiState.Running -> Unit
                             is DebugShareUiState.Failed -> Text(state.message, color = MaterialTheme.colorScheme.error)
                             is DebugShareUiState.Complete -> {
-                                Text(
-                                    "Redacted: ${state.response.redacted}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
+                                // S08: show the ACTUAL privacy state and make
+                                // sharing an unredacted report a deliberate act.
+                                if (!state.response.redacted) {
+                                    Text(
+                                        "This report is NOT redacted — it may contain sensitive data.",
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    TextButton(onClick = { vm.confirmUnredactedShare() }) {
+                                        Text("Share anyway (unredacted)")
+                                    }
+                                } else {
+                                    Text(
+                                        "Redacted: true",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                                if (!state.response.ok) {
+                                    Text(
+                                        "Share failed on the server — links below may be stale.",
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
                                 state.response.urls.toSortedMap().forEach { (label, url) ->
                                     Text("$label: $url", style = MaterialTheme.typography.bodySmall)
                                 }
@@ -632,12 +658,19 @@ private fun HookRow(hook: OpsHookEntry, enabled: Boolean, onDelete: () -> Unit) 
 }
 
 private fun displayName(context: android.content.Context, uri: Uri): String {
-    context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-        if (cursor.moveToFirst()) {
-            cursor.getString(0)?.takeIf { it.isNotBlank() }?.let { return it }
+    // B69: external-document metadata queries can throw SecurityException on
+    // hostile/unavailable providers — degrade to the path segment instead of
+    // crashing the System screen.
+    runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getString(0)?.takeIf { it.isNotBlank() }?.let { return it }
+            }
         }
     }
-    return uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "import.json"
+    return runCatching {
+        uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+    }.getOrNull() ?: "import.json"
 }
 
 private fun formatOpsAction(response: OpsActionResponse): String = buildString {

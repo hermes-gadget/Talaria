@@ -240,6 +240,10 @@ sealed interface SkillsUiState {
 class SkillsViewModel(
     private val gateway: SkillsGateway,
 ) : ViewModel() {
+
+    /** B67: generation guards so stale detail loads can't reopen dialogs. */
+    private var editorLoadGeneration = 0L
+    private var toolsetLoadGeneration = 0L
     private val _ui = MutableStateFlow<SkillsUiState>(SkillsUiState.Loading)
     val ui: StateFlow<SkillsUiState> = _ui.asStateFlow()
 
@@ -267,6 +271,8 @@ class SkillsViewModel(
     }
 
     fun getToolsetConfig(name: String) {
+        // B67: version toolset-config loads like editor loads.
+        val generation = ++toolsetLoadGeneration
         updateContent {
             it.copy(
                 busy = true,
@@ -274,10 +280,14 @@ class SkillsViewModel(
                 toolsetConfig = ToolsetConfigState.Loading(name),
             )
         }
-        loadToolsetConfig(name)
+        loadToolsetConfig(name, generation)
     }
 
-    fun closeToolsetConfig() = updateContent { it.copy(toolsetConfig = ToolsetConfigState.Closed) }
+    fun closeToolsetConfig() {
+        // B67: invalidate any in-flight toolset load before dismissing.
+        toolsetLoadGeneration += 1
+        updateContent { it.copy(toolsetConfig = ToolsetConfigState.Closed) }
+    }
 
     fun putToolsetProvider(name: String, provider: String) {
         runToolsetAction(name, "Could not update toolset") {
@@ -369,10 +379,15 @@ class SkillsViewModel(
     }
 
     fun openEditor(name: String) {
+        // B67: version this detail load — closing (or reopening) the editor
+        // bumps the generation so a delayed response can neither resurrect a
+        // dismissed dialog nor clobber a newer one.
+        val generation = ++editorLoadGeneration
         updateContent { it.copy(editor = SkillEditorState.Loading(name), message = null) }
         viewModelScope.launch {
             gateway.getContent(name).fold(
                 onSuccess = { response ->
+                    if (generation != editorLoadGeneration) return@fold
                     updateContent {
                         it.copy(
                             busy = false,
@@ -384,12 +399,19 @@ class SkillsViewModel(
                         )
                     }
                 },
-                onFailure = { error -> updateContent { it.copy(editor = SkillEditorState.Error(name, error.message ?: "Could not load skill content")) } },
+                onFailure = { error ->
+                    if (generation != editorLoadGeneration) return@fold
+                    updateContent { it.copy(editor = SkillEditorState.Error(name, error.message ?: "Could not load skill content")) }
+                },
             )
         }
     }
 
-    fun closeEditor() = updateContent { it.copy(editor = SkillEditorState.Closed) }
+    fun closeEditor() {
+        // B67: invalidate any in-flight editor load before dismissing.
+        editorLoadGeneration += 1
+        updateContent { it.copy(editor = SkillEditorState.Closed) }
+    }
 
     fun saveContent(
         targetName: String,
@@ -458,7 +480,7 @@ class SkillsViewModel(
         }
     }
 
-    private fun loadToolsetConfig(name: String) {
+    private fun loadToolsetConfig(name: String, generation: Long = ++toolsetLoadGeneration) {
         viewModelScope.launch {
             suspendResult {
                 val config = parseToolsetConfig(gateway.getToolsetConfig(name).getOrThrow())
@@ -471,6 +493,7 @@ class SkillsViewModel(
                 config to models
             }.fold(
                 onSuccess = { (config, models) ->
+                    if (generation != toolsetLoadGeneration) return@fold
                     updateContent {
                         it.copy(
                             busy = false,
@@ -480,6 +503,7 @@ class SkillsViewModel(
                     }
                 },
                 onFailure = { error ->
+                    if (generation != toolsetLoadGeneration) return@fold
                     updateContent {
                         it.copy(
                             busy = false,

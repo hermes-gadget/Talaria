@@ -397,7 +397,12 @@ class SessionAdminViewModel(
             gateway: SessionAdminGateway = HermesSessionAdminGateway(
                 TalariaApp.instance.container.clientFactory.apiForActive(),
                 reconcileAfterMutation = {
-                    TalariaApp.instance.container.hermesRepository.refreshSessions().getOrThrow()
+                    // B65: a confirmed mutation must not be reported as a
+                    // failure because the post-delete refresh hiccupped —
+                    // reconciliation is best-effort.
+                    suspendResult {
+                        TalariaApp.instance.container.hermesRepository.refreshSessions()
+                    }
                 },
             ),
             pinStore: SessionPinStore = SharedPreferencesSessionPinStore(TalariaApp.instance),

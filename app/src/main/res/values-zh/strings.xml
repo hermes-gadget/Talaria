@@ -275,4 +275,7 @@
     <string name="capture_send">发送</string>
     <string name="capture_sending">发送中…</string>
     <string name="capture_delivery_unknown">发送状态未知；请在重试前检查此草稿。</string>
+
+    <string name="sessions_load_more">加载更多</string>
+    <string name="sessions_loading_more">加载中…</string>
 </resources>

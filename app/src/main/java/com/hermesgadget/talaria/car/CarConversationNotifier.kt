@@ -50,7 +50,12 @@ object CarConversationNotifier {
     private val postedIds: MutableSet<Int> = ConcurrentHashMap.newKeySet()
 
     /** Refresh message-center notifications to match the active conversations. */
-    fun update(context: Context, snapshot: ConnectionSnapshot, conversations: List<CarConversation>) {
+    fun update(
+        context: Context,
+        snapshot: ConnectionSnapshot,
+        conversations: List<CarConversation>,
+        allowReply: Boolean = true,
+    ) {
         val manager = NotificationManagerCompat.from(context)
         val settings = SettingsStore(context.applicationContext)
         if (!settings.notificationsEnabled) {
@@ -60,7 +65,7 @@ object CarConversationNotifier {
         if (!manager.areNotificationsEnabled()) return
 
         val currentIds = conversations.mapNotNull { conversation ->
-            postConversation(context, manager, snapshot, conversation)
+            postConversation(context, manager, snapshot, conversation, allowReply)
         }.toSet()
 
         // Cancel notifications for sessions that are no longer active.
@@ -89,6 +94,7 @@ object CarConversationNotifier {
         manager: NotificationManagerCompat,
         snapshot: ConnectionSnapshot,
         conversation: CarConversation,
+        allowReply: Boolean,
     ): Int? {
         val session = conversation.session
         val id = notificationId(snapshot, session.id)
@@ -115,10 +121,16 @@ object CarConversationNotifier {
             context, id, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val replyPi = PendingIntent.getBroadcast(
+        // B02: a read-only template host must not offer a reply affordance —
+        // the notification bridge must not bypass the template authorization
+        // checks that the car screens enforce.
+        val replyPi = if (allowReply) PendingIntent.getBroadcast(
             context, id + 22,
             Intent(context, NotificationActionReceiver::class.java).apply {
                 action = NotificationActionReceiver.ACTION_REPLY
+                // B02: mark car-bridge replies so the worker can re-verify
+                // car-host enrollment before sending (defense in depth).
+                putExtra(NotificationActionReceiver.EXTRA_CAR_ORIGIN, true)
                 putExtra(NotificationActionReceiver.EXTRA_NOTIF_ID, id)
                 putExtra(NotificationActionReceiver.EXTRA_DEEP_LINK, deepLink)
                 putExtra(NotificationActionReceiver.EXTRA_CONNECTION_ID, snapshot.connectionId)
@@ -126,7 +138,7 @@ object CarConversationNotifier {
                     ?.let { putExtra(NotificationActionReceiver.EXTRA_MANAGEMENT_PROFILE, it) }
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
-        )
+        ) else null
         val remoteInput = RemoteInput.Builder(NotificationActionReceiver.KEY_REPLY)
             .setLabel(context.getString(R.string.car_reply_to_hermes))
             .build()
@@ -142,13 +154,17 @@ object CarConversationNotifier {
             .setOnlyAlertOnce(true)
             .setAutoCancel(true)
             .setSilent(true)
-            .addAction(
-                NotificationCompat.Action.Builder(
-                    0, // no icon — matches TalariaNotifier's reply action pattern
-                    context.getString(R.string.car_reply),
-                    replyPi,
-                ).addRemoteInput(remoteInput).build(),
-            )
+            .also { builder ->
+                if (replyPi != null) {
+                    builder.addAction(
+                        NotificationCompat.Action.Builder(
+                            0, // no icon — matches TalariaNotifier's reply action pattern
+                            context.getString(R.string.car_reply),
+                            replyPi,
+                        ).addRemoteInput(remoteInput).build(),
+                    )
+                }
+            }
             .build()
 
         if (!hasNotificationPermission(context)) return null

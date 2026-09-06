@@ -285,4 +285,7 @@
     <string name="capture_send">إرسال</string>
     <string name="capture_sending">جارٍ الإرسال…</string>
     <string name="capture_delivery_unknown">حالة الإرسال غير معروفة؛ راجع هذه المسودة قبل إعادة المحاولة.</string>
+
+    <string name="sessions_load_more">تحميل المزيد</string>
+    <string name="sessions_loading_more">جارٍ التحميل…</string>
 </resources>
