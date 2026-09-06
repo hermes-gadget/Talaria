@@ -252,7 +252,10 @@ fun SessionDetailScreen(
                                         suspendResult {
                                             val file = withContext(Dispatchers.IO) {
                                                 val dir = File(context.cacheDir, "exports").apply { mkdirs() }
-                                                File(dir, safeSessionExportFilename(sessionId)).also { it.writeText(md) }
+                                                val scopeKey = TalariaApp.instance.container.hermesRepository.scopeKeyForExport()
+                                                val attempt = System.currentTimeMillis()
+                                                File(dir, safeSessionExportFilename(sessionId, scopeKey, attempt))
+                                                    .also { it.writeText(md) }
                                             }
                                             val uri: Uri = FileProvider.getUriForFile(
                                                 context,
@@ -358,17 +361,30 @@ fun SessionDetailScreen(
     }
 }
 
-internal fun safeSessionExportFilename(sessionId: String): String {
+internal fun safeSessionExportFilename(
+    sessionId: String,
+    scope: String? = null,
+    attempt: Long = 0L,
+): String {
     val stem = sessionId
         .replace(Regex("[^A-Za-z0-9._-]+"), "_")
         .trim('.', '_', '-')
         .take(72)
         .ifBlank { "export" }
-    val digest = MessageDigest.getInstance("SHA-256")
-        .digest(sessionId.toByteArray(Charsets.UTF_8))
+    // B64: the digest covers the origin scope (profile + base URL) as well as
+    // the session id, and each export attempt gets its own timestamp so
+    // concurrent/repeated exports never overwrite an earlier file.
+    val digestInput = buildString {
+        append(scope.orEmpty())
+        append('#')
+        append(sessionId)
+    }
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(digestInput.toByteArray(Charsets.UTF_8))
         .take(6)
         .joinToString("") { "%02x".format(it) }
-    return "session-$stem-$digest.md"
+    val attemptPart = if (attempt > 0L) "-$attempt" else ""
+    return "session-$stem-$digest$attemptPart.md"
 }
 
 @Composable

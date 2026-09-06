@@ -206,6 +206,12 @@ private suspend fun applyDeepLinkScope(
             container.connectionStore.setManagementProfile(checkNotNull(requestedProfile))
         }
 
+        // B75: the scope was validated before the suspending store writes
+        // above; a concurrent connection switch while suspended would leave
+        // the deep link acting on the WRONG scope. Recheck after the writes
+        // and abort the use if the scope drifted.
+        if (currentScopeId() != expectedScope) return false
+
         if (connectionChanged || profileChanged) {
             container.hermesRepository.clearCache()
             container.wsAuthHelper.invalidate()

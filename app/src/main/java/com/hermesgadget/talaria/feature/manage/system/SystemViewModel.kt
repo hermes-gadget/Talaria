@@ -248,10 +248,18 @@ class SystemViewModel(
         if (autoRefresh) refresh()
     }
 
+    /** B69: surface share-chooser failures from the System screen. */
+    fun reportShareFailure(message: String) {
+        _ui.update { it.copy(error = message) }
+    }
+
     fun refresh() {
         loadSystem()
         refreshHooks()
-        refreshRawConfig()
+        // B68: the auto/global refresh must not discard raw YAML drafts —
+        // pass preserveDraft so dirty edits and in-flight saves survive;
+        // only an explicit user refresh reloads the editor content.
+        refreshRawConfig(preserveDraft = true)
         getOpsCheckpoints()
     }
 
@@ -739,7 +747,18 @@ class SystemViewModel(
         }
     }
 
-    fun refreshRawConfig() {
+    fun refreshRawConfig(preserveDraft: Boolean = false) {
+        if (preserveDraft) {
+            val current = _ui.value.rawConfig
+            // B68: skip the reload entirely while the editor holds unsaved
+            // edits or a save is in flight — a fresh fetch would overwrite
+            // them with server state.
+            if (current is RawConfigUiState.Ready &&
+                (current.yaml != current.savedYaml || current.saving)
+            ) {
+                return
+            }
+        }
         _ui.update { it.copy(rawConfig = RawConfigUiState.Loading) }
         viewModelScope.launch {
             suspendResult { gateway.getOpsRawConfig() }.fold(

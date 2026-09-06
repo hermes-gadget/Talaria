@@ -492,6 +492,10 @@ class VoiceViewModel(
 
     fun stopPlayback() {
         if (_ui.value.phase != VoicePhase.PLAYING) return
+        // B70: cancel any in-flight speech synthesis too — otherwise the
+        // pending TTS job keeps running and can restart playback after stop.
+        speakJob?.cancel()
+        speakJob = null
         audioPlayer.stop()
         finishPlayback(expectedScope = boundScope)
     }

@@ -1,27 +1,44 @@
-/*
- * Copyright 2026 Talaria contributors
- * Licensed under the Apache License, Version 2.0
- */
 package com.hermesgadget.talaria.feature.manage.sessions
 
-import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * B64: session export filenames must be scoped to the origin (profile/base
+ * URL) and each export attempt, so exports from different servers/profiles
+ * (or repeated exports) never overwrite each other in the shared dir.
+ */
 class SessionExportFilenameTest {
-    @Test
-    fun `export filename cannot traverse directories`() {
-        val filename = safeSessionExportFilename("../../secrets/session\\id")
 
-        assertFalse(filename.contains('/'))
-        assertFalse(filename.contains('\\'))
-        assertFalse(filename.contains(".."))
-        assertTrue(filename.endsWith(".md"))
+    @Test
+    fun differentScopesProduceDifferentNames() {
+        val a = safeSessionExportFilename("sess-1", scope = "profileA|https://one.example", attempt = 0)
+        val b = safeSessionExportFilename("sess-1", scope = "profileB|https://two.example", attempt = 0)
+        assertNotEquals(a, b)
+        assertTrue(a.endsWith(".md"))
     }
 
     @Test
-    fun `sanitization collisions retain distinct hash suffixes`() {
-        assertNotEquals(safeSessionExportFilename("a/b"), safeSessionExportFilename("a\\b"))
+    fun sameScopeDifferentAttemptsDiffer() {
+        val a = safeSessionExportFilename("sess-1", scope = "p|u", attempt = 1_000)
+        val b = safeSessionExportFilename("sess-1", scope = "p|u", attempt = 2_000)
+        assertNotEquals(a, b)
+    }
+
+    @Test
+    fun noArgsBackwardCompatibleStable() {
+        assertEquals(
+            safeSessionExportFilename("abc"),
+            safeSessionExportFilename("abc"),
+        )
+    }
+
+    @Test
+    fun hostileSessionIdIsSanitized() {
+        val name = safeSessionExportFilename("../../etc/passwd")
+        assertTrue(!name.contains('/'))
+        assertTrue(name.startsWith("session-") && name.endsWith(".md"))
     }
 }

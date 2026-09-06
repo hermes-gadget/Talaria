@@ -128,7 +128,13 @@ fun SystemScreen() {
             putExtra(Intent.EXTRA_SUBJECT, request.subject)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, request.chooserTitle))
+        // B69: a chooser start can throw if no activity can handle the share —
+        // surface it through the VM message instead of crashing composition.
+        runCatching {
+            context.startActivity(Intent.createChooser(intent, request.chooserTitle))
+        }.onFailure { error ->
+            vm.reportShareFailure(error.message ?: "Could not open share dialog")
+        }
         vm.consumeShareRequest()
     }
 
@@ -632,12 +638,19 @@ private fun HookRow(hook: OpsHookEntry, enabled: Boolean, onDelete: () -> Unit) 
 }
 
 private fun displayName(context: android.content.Context, uri: Uri): String {
-    context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-        if (cursor.moveToFirst()) {
-            cursor.getString(0)?.takeIf { it.isNotBlank() }?.let { return it }
+    // B69: external-document metadata queries can throw SecurityException on
+    // hostile/unavailable providers — degrade to the path segment instead of
+    // crashing the System screen.
+    runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getString(0)?.takeIf { it.isNotBlank() }?.let { return it }
+            }
         }
     }
-    return uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "import.json"
+    return runCatching {
+        uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+    }.getOrNull() ?: "import.json"
 }
 
 private fun formatOpsAction(response: OpsActionResponse): String = buildString {

@@ -17,6 +17,14 @@
         android:name="android.hardware.microphone"
         android:required="false" />
 
+    <!-- B78: API 30+ package visibility — SpeechRecognizer binds a system
+         RecognitionService, which is invisible without an explicit query. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <application
         android:name=".TalariaApp"
         android:allowBackup="false"

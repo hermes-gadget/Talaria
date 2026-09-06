@@ -91,7 +91,11 @@ internal fun encodeRecordedVoiceDataUrl(file: File, mimeType: String): String {
  * is decoded through a streaming decoder, so the complete payload never also
  * exists as a decoded ByteArray in memory.
  */
-internal fun decodeVoiceAudioDataUrl(value: String, cacheDir: File): DecodedVoiceAudioFile {
+internal fun decodeVoiceAudioDataUrl(
+    value: String,
+    cacheDir: File,
+    onTempFileCreated: (File) -> Unit = {},
+): DecodedVoiceAudioFile {
     require(value.length <= VoiceAudioLimits.MAX_PLAYBACK_DATA_URL_CHARS) {
         "Server audio data URL exceeds the ${VoiceAudioLimits.MAX_PLAYBACK_DATA_URL_CHARS} character limit"
     }
@@ -109,6 +113,9 @@ internal fun decodeVoiceAudioDataUrl(value: String, cacheDir: File): DecodedVoic
     val isBase64 = metadata.split(';').any { it.equals("base64", ignoreCase = true) }
 
     val file = File.createTempFile("talaria-tts-", extensionFor(mimeType), cacheDir)
+    // B71: publish the temp file the moment it exists — a caller cancelled
+    // between creation and return can still clean it up.
+    onTempFileCreated(file)
     try {
         val byteCount = BufferedOutputStream(FileOutputStream(file)).use { output ->
             if (isBase64) {

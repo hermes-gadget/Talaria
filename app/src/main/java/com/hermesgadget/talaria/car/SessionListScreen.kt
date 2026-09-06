@@ -76,6 +76,10 @@ class SessionListScreen(
             conversations = null
             error = null
             loading = false
+            // B02: when host trust changes, mirrored conversation
+            // notifications are stale/unauthorized — withdraw them so the
+            // notification surface never outlives its authorization.
+            CarConversationNotifier.clear(carContext)
             invalidate()
         }
     }
@@ -373,8 +377,22 @@ class SessionListScreen(
                         // Android Auto message-center bridge: the projection
                         // host shows MESSAGING apps through phone notifications,
                         // so mirror the active conversations as notifications.
-                        snapshot?.let { snap ->
-                            CarConversationNotifier.update(carContext, snap, it)
+                        // B02: the read was async — host trust may have dropped
+                        // while it ran. Recheck authorization and, on loss,
+                        // withdraw any mirrored notifications instead of
+                        // publishing fresh ones.
+                        val access = authorizer.access()
+                        if (!access.canReadTranscripts) {
+                            CarConversationNotifier.clear(carContext)
+                        } else {
+                            snapshot?.let { snap ->
+                                CarConversationNotifier.update(
+                                    carContext,
+                                    snap,
+                                    it,
+                                    allowReply = access.canPerformActions,
+                                )
+                            }
                         }
                     },
                     onFailure = { error = it.message ?: carContext.getString(R.string.car_failed_load_sessions) },

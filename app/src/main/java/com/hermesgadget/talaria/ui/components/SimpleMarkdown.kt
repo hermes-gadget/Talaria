@@ -435,8 +435,16 @@ private fun buildCodeAnnotatedString(
 internal fun markdownHighlightRanges(text: String, query: String): List<IntRange> {
     val needle = query.trim()
     if (needle.isEmpty() || text.isEmpty()) return emptyList()
-    val haystack = text.lowercase()
-    val lowerNeedle = needle.lowercase()
+    // B74: String.lowercase() can change length for some Unicode characters
+    // (İ, ß, ﬁ …), which makes offsets computed on the folded string invalid
+    // against the original. Fold per code point and only index-fold when the
+    // mapping is 1:1; characters with expanding/contracting case mappings are
+    // left unchanged so indices stay valid, and matching degrades to exact
+    // char equality for those (still correct — just not case-insensitive
+    // for the rare fold-expanding characters).
+    fun foldChar(c: Char): String = c.lowercase().let { if (it.length == 1) it else c.toString() }
+    val haystack = buildString(text.length) { text.forEach { append(foldChar(it)) } }
+    val lowerNeedle = buildString(needle.length) { needle.forEach { append(foldChar(it)) } }
     val ranges = mutableListOf<IntRange>()
     var offset = 0
     while (offset <= haystack.length - lowerNeedle.length) {

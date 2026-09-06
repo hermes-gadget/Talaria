@@ -1213,6 +1213,14 @@ class HermesRepository(
         }
 
     /** Export session messages as markdown for share sheet. */
+    /**
+     * B64: stable origin-scope key (profile + base URL) used to namespace
+     * session export filenames so exports from different servers/profiles
+     * cannot collide in the shared exports directory.
+     */
+    fun scopeKeyForExport(): String =
+        connectionStore.activeProfile()?.scopeId().orEmpty()
+
     suspend fun exportSessionMarkdown(sessionId: String): Result<String> = withBoundOperation { operation ->
             val msgs = operation.api.getSessionMessages(
                 sessionId,

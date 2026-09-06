@@ -53,7 +53,9 @@ internal class VoiceAudioPlayer(
             var decodedFile: File? = null
             try {
                 val decoded = withContext(Dispatchers.IO) {
-                    decodeVoiceAudioDataUrl(dataUrl, cacheDir)
+                    decodeVoiceAudioDataUrl(dataUrl, cacheDir) { temp ->
+                        decodedFile = temp
+                    }
                 }
                 decodedFile = decoded.file
                 ensureActive()

@@ -19,6 +19,7 @@ package com.hermesgadget.talaria.worker
 
 import android.content.Context
 import androidx.work.CoroutineWorker
+import androidx.work.ListenableWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.hermesgadget.talaria.TalariaApp
@@ -39,7 +40,7 @@ class ReplyWorker(
     appContext: Context,
     params: WorkerParameters,
 ) : CoroutineWorker(appContext, params) {
-    override suspend fun doWork(): Result {
+    private suspend fun doWorkInternal(): Result {
         val text = inputData.getString(KEY_TEXT)
             ?: inputData.getString(KEY_TEXT_FILE)?.let { path ->
                 // Oversized notification replies are spilled to a cache file
@@ -53,6 +54,18 @@ class ReplyWorker(
         val container = TalariaApp.instance.container
         val expectedConnectionId = inputData.getString(KEY_CONNECTION_ID) ?: return Result.failure()
         val expectedProfile = inputData.getString(KEY_MANAGEMENT_PROFILE).orEmpty()
+        // B02: replies from the Android Auto bridge are only valid while at
+        // least one car host is still enrolled — after trust is revoked the
+        // bridge's reply affordance must not keep working from a stale
+        // notification. Phone-notification replies (no car origin) are
+        // unaffected.
+        if (inputData.getBoolean(KEY_CAR_ORIGIN, false)) {
+            val anyEnrolled = TalariaApp.instance.container.carHostTrustStore
+                .listEnrolledIdentities().isNotEmpty()
+            if (!anyEnrolled) {
+                return Result.failure(workDataOf(KEY_ERROR to "Car host no longer trusted"))
+            }
+        }
         // S09: the action was queued against the endpoint the notification
         // came from. If that endpoint was edited before the job ran, the
         // re-read snapshot points somewhere else — the reply must not follow
@@ -140,6 +153,18 @@ class ReplyWorker(
         }
     }
 
+    override suspend fun doWork(): Result {
+        val result = doWorkInternal()
+        // B76: consume the spill file only on terminal outcomes — a retry
+        // re-reads the file, so it must survive until success/failure.
+        if (result != ListenableWorker.Result.retry()) {
+            inputData.getString(KEY_TEXT_FILE)?.let { path ->
+                runCatching { java.io.File(path).delete() }
+            }
+        }
+        return result
+    }
+
     companion object {
         const val KEY_TEXT = "text"
         const val KEY_TEXT_FILE = "text_file"
@@ -148,6 +173,7 @@ class ReplyWorker(
         const val KEY_MANAGEMENT_PROFILE = "management_profile"
         const val KEY_BASE_URL = "base_url"
         const val KEY_MESSAGE_ID = "message_id"
+        const val KEY_CAR_ORIGIN = "car_origin"
         const val KEY_ERROR = "error"
         private const val MAX_ATTEMPTS = 3
 
