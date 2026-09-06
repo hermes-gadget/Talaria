@@ -295,8 +295,10 @@ class ArtifactsViewModel(
                             ?: readDataUrl(artifact.path)
                         ensureCurrentScope(expectedScope)
                         val bounded = boundedDataUrl(file.dataUrl, file.byteSize)
-                        val decoded = decodeDataUrl(bounded)
+                        // P07: Base64-decoding up to 16MiB must not run on the
+                        // main dispatcher — fold decode + prepare into the IO block.
                         val prepared = withContext(ioDispatcher) {
+                            val decoded = decodeDataUrl(bounded)
                             BoundedImage.prepareBytes(
                                 bytes = decoded.bytes,
                                 outputDirectory = previewDirectory(),

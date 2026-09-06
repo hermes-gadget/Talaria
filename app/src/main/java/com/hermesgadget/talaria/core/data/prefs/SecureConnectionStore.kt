@@ -19,6 +19,7 @@ package com.hermesgadget.talaria.core.data.prefs
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.SystemClock
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.hermesgadget.talaria.core.network.AuthInterceptor
@@ -219,6 +220,46 @@ class SecureConnectionStore internal constructor(
         readSecretsSafely(id, _profiles.value.find { it.id == id })
     }
 
+    // P03: AuthInterceptor re-validates the stored snapshot up to 3× per request;
+    // without a cache each check re-runs the AES-GCM decryption. Cache the last
+    // decrypted secret set per profile id, keyed by the store generation so ANY
+    // mutation (token rotation, edit, clear) invalidates it immediately.
+    private var secretsCacheId: String? = null
+    private var secretsCacheGeneration: Long = -1
+    private var secretsCacheValue: ConnectionSecrets? = null
+    private var secretsCacheAtMs: Long = 0
+
+    // Injectable monotonic clock so JVM unit tests (no Robolectric) can exercise
+    // the cache TTL logic without android.os.SystemClock.
+    internal var clockMs: () -> Long = {
+        try {
+            SystemClock.elapsedRealtime()
+        } catch (failure: Throwable) {
+            // JVM unit-test environments do not mock android.os.SystemClock;
+            // any monotonic millisecond source preserves TTL semantics.
+            System.nanoTime() / 1_000_000L
+        }
+    }
+
+    private fun cachedSecrets(id: String, generation: Long): ConnectionSecrets? {
+        val now = clockMs()
+        if (secretsCacheId == id &&
+            secretsCacheGeneration == generation &&
+            secretsCacheValue != null &&
+            now - secretsCacheAtMs < SECRETS_CACHE_TTL_MS
+        ) {
+            return secretsCacheValue
+        }
+        return null
+    }
+
+    private fun rememberSecrets(id: String, generation: Long, secrets: ConnectionSecrets) {
+        secretsCacheId = id
+        secretsCacheGeneration = generation
+        secretsCacheValue = secrets
+        secretsCacheAtMs = clockMs()
+    }
+
     fun snapshotFor(id: String, expectedManagementProfile: String? = null): ConnectionSnapshot? =
         synchronized(mutationLock) {
             if (_state.value !is SecureConnectionStoreState.Available) return null
@@ -227,7 +268,10 @@ class SecureConnectionStore internal constructor(
                 normalizeManagementProfile(expectedManagementProfile) !=
                 normalizeManagementProfile(profile.managementProfile)
             ) return null
-            val secrets = readSecretsSafely(id, profile) ?: return null
+            val generation = scopeGeneration
+            val secrets = cachedSecrets(id, generation)
+                ?: readSecretsSafely(id, profile)?.also { rememberSecrets(id, generation, it) }
+                ?: return null
             ConnectionSnapshot.from(profile, secrets)
         }
 
@@ -537,6 +581,8 @@ class SecureConnectionStore internal constructor(
     private fun secretKey(id: String) = "secret_$id"
 
     companion object {
+        // P03: sub-second window; any mutation invalidates via generation anyway.
+        private const val SECRETS_CACHE_TTL_MS = 250L
         internal const val KEY_PROFILES = "profiles_json"
         internal const val KEY_ACTIVE = "active_id"
         internal const val KEY_CLEARTEXT_CONSENT_VERSION = "cleartext_consent_schema_version"

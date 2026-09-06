@@ -45,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -474,6 +475,10 @@ private fun BoardColumns(
                             Text(stringResource(R.string.kanban_create_task))
                         }
                     }
+                    // P10: composing every task in every column makes large
+                    // boards quadratic; render a bounded window with an explicit
+                    // reveal control instead.
+                    var expanded by remember(column.name) { mutableStateOf(false) }
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -481,8 +486,14 @@ private fun BoardColumns(
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        column.tasks.forEach { task ->
+                        val visible = if (expanded) column.tasks else column.tasks.take(MAX_TASKS_PER_COLUMN)
+                        visible.forEach { task ->
                             TaskCard(task = task, onOpen = onOpen)
+                        }
+                        if (!expanded && column.tasks.size > MAX_TASKS_PER_COLUMN) {
+                            TextButton(onClick = { expanded = true }) {
+                                Text("Show ${column.tasks.size - MAX_TASKS_PER_COLUMN} more…")
+                            }
                         }
                     }
                 }
@@ -490,6 +501,9 @@ private fun BoardColumns(
         }
     }
 }
+
+// P10: tasks composed eagerly per column are bounded; the rest load on demand.
+internal const val MAX_TASKS_PER_COLUMN = 20
 
 @Composable
 private fun TaskCard(task: KanbanTaskRow, onOpen: (String) -> Unit) {

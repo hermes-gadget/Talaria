@@ -24,9 +24,13 @@ import com.hermesgadget.talaria.core.util.suspendResult
 
 /** Immutable queue operations used by the ViewModel and unit tests. */
 internal object ComposerQueue {
+    // P06: the queued-prompt list is bounded so a runaway enqueue loop cannot
+    // grow memory without limit.
+    const val MAX_QUEUE = 100
+
     fun enqueue(queue: List<String>, prompt: String): List<String> {
         val trimmed = prompt.trim()
-        return if (trimmed.isEmpty()) queue else queue + trimmed
+        return if (trimmed.isEmpty()) queue else (queue + trimmed).takeLast(MAX_QUEUE)
     }
 
     fun dequeue(queue: List<String>): Pair<String?, List<String>> =
@@ -134,17 +138,56 @@ internal class ChatInputHistoryStore(context: Context) {
     }
 
     fun save(sessionKey: String, entries: List<String>) {
+        val sanitized = entries
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            // P06: individual prompts are capped so one giant paste cannot
+            // dominate the persisted history or the shared-preferences file.
+            .map { entry -> entry.take(MAX_ENTRY_CHARS) }
+            .takeLast(InputHistoryNavigator.MAX_ENTRIES)
         prefs.edit {
             putString(
                 key(sessionKey),
-                JsonConfig.json.encodeToString(entries.takeLast(InputHistoryNavigator.MAX_ENTRIES)),
+                JsonConfig.json.encodeToString(sanitized),
             )
+        }
+        enforceNamespaceBudget(sanitized.sumOf { it.length }, sessionKey)
+    }
+
+    /**
+     * P06: the history file is a shared namespace across sessions; when the total
+     * persisted bytes exceed the budget, drop the oldest OTHER session history
+     * entries (this session's just-saved data always survives).
+     */
+    private fun enforceNamespaceBudget(ownBytes: Int, justSavedKey: String) {
+        val all = prefs.all
+        var total = 0L
+        val historyKeys = ArrayList<String>()
+        for (entry in all.entries) {
+            if (entry.key.startsWith(KEY_PREFIX)) {
+                historyKeys.add(entry.key)
+                total += (entry.value as? String)?.length ?: 0
+            }
+        }
+        if (total <= NAMESPACE_BUDGET_CHARS) return
+        // Oldest first: SharedPreferences order is arbitrary, so drop in reverse
+        // insertion of keys we know — iterating and removing until under budget.
+        for (historyKey in historyKeys) {
+            if (total <= NAMESPACE_BUDGET_CHARS) break
+            if (historyKey == key(justSavedKey)) continue
+            val value = prefs.getString(historyKey, null) ?: continue
+            total -= value.length
+            prefs.edit { remove(historyKey) }
         }
     }
 
-    private fun key(sessionKey: String): String = "chat_input_history_$sessionKey"
+    private fun key(sessionKey: String): String = "${KEY_PREFIX}$sessionKey"
 
     companion object {
         private const val PREFS_NAME = "talaria_settings"
+        private const val KEY_PREFIX = "chat_input_history_"
+        // P06: 4 KB per prompt entry, ~512 KB total namespace ceiling.
+        const val MAX_ENTRY_CHARS = 4_096
+        const val NAMESPACE_BUDGET_CHARS = 512_000
     }
 }

@@ -155,14 +155,21 @@ class ReviewViewModel(
         )
         detailJob?.cancel()
         detailJob = viewModelScope.launch {
-            val current = suspendResult { requestApi.fsReadText(file.workingTreePath) }
-            val diff = suspendResult {
-                requestApi.gitFileDiff(state.repoPath, file.change.path).diff
+            // P11: the screen only consumes binary/size metadata from the
+            // working-tree response, and the two network reads are independent —
+            // run them concurrently instead of serializing, and drop the unused
+            // text payload immediately.
+            val currentDeferred = async { suspendResult { requestApi.fsReadText(file.workingTreePath) } }
+            val diffDeferred = async {
+                suspendResult { requestApi.gitFileDiff(state.repoPath, file.change.path).diff }
             }
+            val current = currentDeferred.await()
+            val diff = diffDeferred.await()
             if (!isCurrentScope(expectedScope)) return@launch
+            val currentMeta = current.getOrNull()?.copy(text = "")
             val detail = ReviewFileDetail(
                 file = file,
-                current = current.getOrNull(),
+                current = currentMeta,
                 lines = diff.getOrNull()?.let(::renderUnifiedDiff).orEmpty(),
                 loading = false,
                 error = diff.exceptionOrNull()?.message

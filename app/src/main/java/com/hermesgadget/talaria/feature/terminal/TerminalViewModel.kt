@@ -31,6 +31,7 @@ import com.hermesgadget.talaria.core.network.PtyWebSocketSession
 import com.hermesgadget.talaria.domain.model.TerminalBackendsResponse
 import com.hermesgadget.talaria.core.util.suspendResult
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -78,6 +79,7 @@ class TerminalViewModel(
     val ui: StateFlow<TerminalUiState> = _ui.asStateFlow()
 
     private val output = TerminalOutputBuffer()
+    private val outputUpdate = java.util.concurrent.atomic.AtomicBoolean(false)
     private var history = TerminalInputHistory()
     private var pty: PtyWebSocketSession? = null
     private var eventClient: HermesEventClient? = null
@@ -384,7 +386,19 @@ class TerminalViewModel(
             is PtyEvent.Output -> {
                 val raw = event.raw.ifEmpty { event.text }
                 output.append(raw)
-                _ui.update { it.copy(output = output.displayText) }
+                // P12: high-frequency PTY bursts must not copy the full
+                // transcript and trigger a full Text re-layout per frame. The
+                // rendered string is recomputed at most once per frame window;
+                // intermediate appends coalesce into the next update.
+                if (outputUpdate.compareAndSet(false, true)) {
+                    viewModelScope.launch {
+                        delay(OUTPUT_COALESCE_MS)
+                        outputUpdate.set(false)
+                        if (generation == connectionGeneration) {
+                            _ui.update { it.copy(output = output.displayText) }
+                        }
+                    }
+                }
             }
             is PtyEvent.Closed -> {
                 eventClient?.stop()
@@ -422,6 +436,7 @@ class TerminalViewModel(
             }
 
     companion object {
+        private const val OUTPUT_COALESCE_MS = 100L
         fun factory() = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {

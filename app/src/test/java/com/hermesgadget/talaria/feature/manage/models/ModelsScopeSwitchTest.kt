@@ -18,11 +18,9 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -47,10 +45,6 @@ class ModelsScopeSwitchTest {
             generation,
         )
 
-    @After
-    fun tearDown() {
-        Dispatchers.resetMain()
-    }
 
     @Test
     fun `stale A provider list never lands in B UI state`() = runTest {

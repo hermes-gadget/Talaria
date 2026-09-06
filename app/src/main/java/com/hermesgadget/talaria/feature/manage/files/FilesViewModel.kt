@@ -409,21 +409,26 @@ class FilesViewModel(
         editJob?.cancel()
         editJob = viewModelScope.launch {
             try {
-                val draftBytes = draft.toByteArray(Charsets.UTF_8)
-                require(draftBytes.size.toLong() <= INLINE_UPLOAD_LIMIT_BYTES) {
-                    "Edited file exceeds the ${INLINE_UPLOAD_LIMIT_BYTES / (1024 * 1024)} MiB limit"
+                // P09: encoding (and the Base64 data-URL inside dataUrlFor) of
+                // up to the inline limit belongs on IO, not main.
+                val (dataUrl, draftByteCount) = withContext(ioDispatcher) {
+                    val draftBytes = draft.toByteArray(Charsets.UTF_8)
+                    require(draftBytes.size.toLong() <= INLINE_UPLOAD_LIMIT_BYTES) {
+                        "Edited file exceeds the ${INLINE_UPLOAD_LIMIT_BYTES / (1024 * 1024)} MiB limit"
+                    }
+                    dataUrlFor(draftBytes, "text/plain") to draftBytes.size
                 }
                 requestApi.uploadManagedFile(
                     managedUploadBody(
                         path = path,
-                        dataUrl = dataUrlFor(draftBytes, "text/plain"),
+                        dataUrl = dataUrl,
                         overwrite = true,
                     ),
                 )
                 updateCurrentPreview(path, expectedScope) {
                     it.copy(
                         preview = file.copy(
-                            size = draftBytes.size.toLong(),
+                            size = draftByteCount.toLong(),
                             mimeType = "text/plain",
                             text = draft,
                         ),
@@ -538,26 +543,31 @@ class FilesViewModel(
 
     fun prepareUpload(uri: Uri, resolver: ContentResolver) {
         if (scopeFlow != null && boundScope == null) return
-        val displayName = contentDisplayName(resolver, uri)
-            .ifBlank { appString(R.string.files_upload_default_name) }
-        // S06: a document provider can supply an absolute path or "../name"
-        // as the display name; the old getOrDefault(displayName) fallback
-        // failed OPEN and let the upload target leave the managed root.
-        // Rejection now sanitizes to a leaf name instead of trusting input.
-        val targetPath = runCatching { joinManagedPath(_ui.value.path, displayName) }
-            .getOrElse { joinManagedPath(_ui.value.path, sanitizeManagedFileName(displayName)) }
         uploadResolver = resolver
-        _ui.update {
-            it.copy(
-                uploadCandidate = ManagedUploadCandidate(
-                    uri = uri,
-                    displayName = displayName,
-                    mimeType = resolver.getType(uri),
-                    targetPath = targetPath,
-                ),
-                uploadState = FileUploadState.Idle,
-                actionError = null,
-            )
+        // P09: ContentResolver metadata queries can hit binder IPC; resolve the
+        // display name and MIME type off the main thread and publish the
+        // candidate when known.
+        viewModelScope.launch(ioDispatcher) {
+            val displayName = contentDisplayName(resolver, uri)
+                .ifBlank { appString(R.string.files_upload_default_name) }
+            // S06: a document provider can supply an absolute path or "../name"
+            // as the display name; the old getOrDefault(displayName) fallback
+            // failed OPEN and let the upload target leave the managed root.
+            // Rejection now sanitizes to a leaf name instead of trusting input.
+            val targetPath = runCatching { joinManagedPath(_ui.value.path, displayName) }
+                .getOrElse { joinManagedPath(_ui.value.path, sanitizeManagedFileName(displayName)) }
+            _ui.update {
+                it.copy(
+                    uploadCandidate = ManagedUploadCandidate(
+                        uri = uri,
+                        displayName = displayName,
+                        mimeType = runCatching { resolver.getType(uri) }.getOrNull(),
+                        targetPath = targetPath,
+                    ),
+                    uploadState = FileUploadState.Idle,
+                    actionError = null,
+                )
+            }
         }
     }
 
