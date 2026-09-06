@@ -141,33 +141,53 @@ fun parseOAuthProviders(root: JsonElement): List<ProviderOAuth> {
     }
 }
 
-fun parseProviderOAuthStart(root: JsonElement): ProviderOAuthStartResponse =
-    runCatching { JsonConfig.json.decodeFromJsonElement<ProviderOAuthStartResponse>(root) }
-        .getOrElse {
-            val obj = root as? JsonObject ?: return ProviderOAuthStartResponse(message = root.toString())
-            ProviderOAuthStartResponse(
-                sessionId = obj.stringFor("session_id", "sessionId"),
-                authUrl = obj.stringFor("auth_url", "authUrl"),
-                authorizationUrl = obj.stringFor("authorization_url", "authorizationUrl"),
-                verificationUri = obj.stringFor("verification_uri", "verificationUri"),
-                verificationUriComplete = obj.stringFor("verification_uri_complete", "verificationUriComplete"),
-                userCode = obj.stringFor("user_code", "userCode"),
-                status = obj.stringFor("status"),
-                message = obj.stringFor("message", "detail", "error"),
-            )
+/**
+ * Q08: the Start/Poll responses decode to all-optional defaults, so a camelCase or
+ * unsupported shape can "succeed" typed decoding with every field blank and silently
+ * bypass the alias-aware fallback. Accept the typed decode only when the payload
+ * carries at least one recognizable identity/discriminator field (in either naming
+ * convention); otherwise fall through to the alias mapper.
+ */
+fun parseProviderOAuthStart(root: JsonElement): ProviderOAuthStartResponse {
+    val obj = root as? JsonObject
+    val typed = runCatching { JsonConfig.json.decodeFromJsonElement<ProviderOAuthStartResponse>(root) }
+        .getOrNull()
+        // Q08: accept the typed decode only when it actually captured an identity
+        // field (raw aliases the decoder dropped don't count).
+        ?.takeIf {
+            listOf(
+                it.sessionId, it.authUrl, it.authorizationUrl, it.verificationUri,
+                it.verificationUriComplete, it.userCode, it.status, it.message,
+            ).any { value -> !value.isNullOrBlank() }
         }
+    if (typed != null) return typed
+    return ProviderOAuthStartResponse(
+        sessionId = obj?.stringFor("session_id", "sessionId"),
+        authUrl = obj?.stringFor("auth_url", "authUrl"),
+        authorizationUrl = obj?.stringFor("authorization_url", "authorizationUrl"),
+        verificationUri = obj?.stringFor("verification_uri", "verificationUri"),
+        verificationUriComplete = obj?.stringFor("verification_uri_complete", "verificationUriComplete"),
+        userCode = obj?.stringFor("user_code", "userCode"),
+        status = obj?.stringFor("status"),
+        message = obj?.stringFor("message", "detail", "error")
+            ?: if (obj == null) root.toString() else null,
+    )
+}
 
-fun parseProviderOAuthPoll(root: JsonElement): ProviderOAuthPollResponse =
-    runCatching { JsonConfig.json.decodeFromJsonElement<ProviderOAuthPollResponse>(root) }
-        .getOrElse {
-            val obj = root as? JsonObject ?: return ProviderOAuthPollResponse(message = root.toString())
-            ProviderOAuthPollResponse(
-                status = obj.stringFor("status"),
-                message = obj.stringFor("message", "detail", "error"),
-                detail = obj.stringFor("detail"),
-                loggedIn = obj.booleanFor("logged_in", "loggedIn"),
-            )
-        }
+fun parseProviderOAuthPoll(root: JsonElement): ProviderOAuthPollResponse {
+    val obj = root as? JsonObject
+    val typed = runCatching { JsonConfig.json.decodeFromJsonElement<ProviderOAuthPollResponse>(root) }
+        .getOrNull()
+        ?.takeIf { !it.status.isNullOrBlank() || !it.message.isNullOrBlank() || !it.detail.isNullOrBlank() || it.loggedIn != null }
+    if (typed != null) return typed
+    return ProviderOAuthPollResponse(
+        status = obj?.stringFor("status"),
+        message = obj?.stringFor("message", "detail", "error")
+            ?: if (obj == null) root.toString() else null,
+        detail = obj?.stringFor("detail"),
+        loggedIn = obj?.booleanFor("logged_in", "loggedIn"),
+    )
+}
 
 fun parseProviderValidation(root: JsonElement): ProviderValidationResponse {
     val decoded = runCatching {

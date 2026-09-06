@@ -72,8 +72,6 @@ import com.hermesgadget.talaria.ui.components.ScreenScaffold
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -84,7 +82,6 @@ import java.util.Locale
 import androidx.core.net.toUri
 import com.hermesgadget.talaria.core.util.suspendResult
 
-private val MCP_AUTH_MODES = setOf("none", "header", "oauth")
 private val MCP_EDITABLE_CONFIG_FIELDS = setOf(
     "url",
     "command",
@@ -95,8 +92,6 @@ private val MCP_EDITABLE_CONFIG_FIELDS = setOf(
     "oauth",
 )
 
-/** Serializes this client's MCP read/merge/write transactions. */
-private val mcpConfigWriteMutex = Mutex()
 
 internal fun parseMcpArgs(raw: String): List<String> =
     raw.lines().map(String::trim).filter(String::isNotEmpty)

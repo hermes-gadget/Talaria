@@ -59,6 +59,34 @@ class ProviderParsingTest {
     }
 
     @Test
+    fun q8_unsupportedStartShapeFallsBackToAliasFields() {
+        // camelCase-only shape: typed decode alone would yield all-default fields.
+        val root = JsonConfig.json.parseToJsonElement(
+            """{"sessionId":"abc","authUrl":"https:// provider.test/auth"}""".trimIndent(),
+        )
+        val parsed = parseProviderOAuthStart(root)
+        assertEquals("abc", parsed.sessionId)
+        assertTrue(parsed.authUrl!!.contains("provider.test"))
+    }
+
+    @Test
+    fun q8_startPayloadWithoutAnyIdentityFallsBackToMessage() {
+        // Empty object: no identity fields at all — must not decode to a "success"
+        // looking blank Start response; falls back with no message (null) but also
+        // no fabricated identity.
+        val parsed = parseProviderOAuthStart(JsonConfig.json.parseToJsonElement("{}"))
+        assertTrue(parsed.sessionId.isNullOrBlank())
+        assertTrue(parsed.authUrl.isNullOrBlank())
+    }
+
+    @Test
+    fun q8_pollCamelCaseLoggedInIsPreserved() {
+        val root = JsonConfig.json.parseToJsonElement("""{"loggedIn":true}""")
+        val parsed = parseProviderOAuthPoll(root)
+        assertEquals(true, parsed.loggedIn)
+    }
+
+    @Test
     fun customEndpointValidationRejectsMissingFieldsAndEmbeddedCredentials() {
         assertEquals("Endpoint name is required", validateCustomEndpointInput(" ", "https://api.example.com", "model"))
         assertEquals("Model is required", validateCustomEndpointInput("Local", "https://api.example.com", " "))

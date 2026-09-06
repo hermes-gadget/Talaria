@@ -47,9 +47,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.domain.model.WebhookRoute
 import com.hermesgadget.talaria.ui.components.ErrorBox
@@ -101,6 +103,9 @@ fun WebhooksScreen() {
     var name by remember { mutableStateOf("") }
     var prompt by remember { mutableStateOf("") }
     var createdRoute by remember { mutableStateOf<WebhookRoute?>(null) }
+    // Q12: explicit per-operation busy state — a double-tap must not create two
+    // webhooks (create is non-idempotent; button disabling alone races recomposition).
+    var creating by remember { mutableStateOf(false) }
     var secretRevealed by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -223,19 +228,31 @@ fun WebhooksScreen() {
                     label = { Text("Prompt") },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Button(onClick = {
-                    scope.launch {
-                        repo.createWebhook(name.trim(), prompt.trim())
-                            .onSuccess { created ->
-                                name = ""
-                                prompt = ""
-                                createdRoute = created
-                                secretRevealed = false
-                                reload()
+                Button(
+                    enabled = !creating,
+                    onClick = {
+                        if (creating) return@Button
+                        creating = true
+                        scope.launch {
+                            try {
+                                repo.createWebhook(name.trim(), prompt.trim())
+                                    .onSuccess { created ->
+                                        name = ""
+                                        prompt = ""
+                                        createdRoute = created
+                                        secretRevealed = false
+                                        reload()
+                                    }
+                                    .onFailure { error = it.message }
+                            } finally {
+                                creating = false
                             }
-                            .onFailure { error = it.message }
-                    }
-                }) { Text("Create") }
+                        }
+                    },
+                ) {
+                    // Reuse the localized loading string; label swaps while in flight.
+                    if (creating) Text(stringResource(R.string.sessions_loading_more)) else Text("Create")
+                }
                 error?.let {
                     Text(it, color = MaterialTheme.colorScheme.error)
                 }

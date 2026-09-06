@@ -29,56 +29,6 @@ data class DiffLine(
 )
 
 /**
- * Small, dependency-free line diff for text that is already available locally.
- * The LCS table keeps the output stable for the short files shown on a phone.
- */
-fun renderLineDiff(before: String, after: String): List<DiffLine> {
-    val oldLines = splitLines(before)
-    val newLines = splitLines(after)
-    val lcs = Array(oldLines.size + 1) { IntArray(newLines.size + 1) }
-
-    for (oldIndex in oldLines.indices.reversed()) {
-        for (newIndex in newLines.indices.reversed()) {
-            lcs[oldIndex][newIndex] = if (oldLines[oldIndex] == newLines[newIndex]) {
-                lcs[oldIndex + 1][newIndex + 1] + 1
-            } else {
-                maxOf(lcs[oldIndex + 1][newIndex], lcs[oldIndex][newIndex + 1])
-            }
-        }
-    }
-
-    val result = ArrayList<DiffLine>(oldLines.size + newLines.size)
-    var oldIndex = 0
-    var newIndex = 0
-    while (oldIndex < oldLines.size || newIndex < newLines.size) {
-        when {
-            oldIndex == oldLines.size -> {
-                result += DiffLine(DiffLineKind.ADDED, newLines[newIndex++])
-            }
-
-            newIndex == newLines.size -> {
-                result += DiffLine(DiffLineKind.REMOVED, oldLines[oldIndex++])
-            }
-
-            oldLines[oldIndex] == newLines[newIndex] -> {
-                result += DiffLine(DiffLineKind.CONTEXT, oldLines[oldIndex])
-                oldIndex++
-                newIndex++
-            }
-
-            lcs[oldIndex + 1][newIndex] >= lcs[oldIndex][newIndex + 1] -> {
-                result += DiffLine(DiffLineKind.REMOVED, oldLines[oldIndex++])
-            }
-
-            else -> {
-                result += DiffLine(DiffLineKind.ADDED, newLines[newIndex++])
-            }
-        }
-    }
-    return result
-}
-
-/**
  * Parses a unified patch returned by the Hermes git API into simple rows for
  * Compose. The patch is rendered on-device; no syntax or diff library is used.
  */

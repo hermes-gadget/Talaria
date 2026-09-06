@@ -20,6 +20,7 @@ import retrofit2.HttpException
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.hermesgadget.talaria.core.util.ActionOutcome
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.data.repo.HermesRepository
 import com.hermesgadget.talaria.core.network.HermesApi
@@ -125,8 +126,10 @@ class MemoryViewModel(
             )
         }
         viewModelScope.launch {
-            suspendResult { updateMemoryProviderConfig(provider, values, MEMORY_CONFIG_SURFACE) }
-                .fold(
+            suspendResult {
+                updateMemoryProviderConfig(provider, values, MEMORY_CONFIG_SURFACE)
+                    .also(ActionOutcome::requireOk)
+            }.fold(
                     onSuccess = {
                         _ui.update { current ->
                             val latest = current.configs[provider] ?: return@update current
@@ -438,13 +441,10 @@ class MemoryViewModel(
     }
 
     private fun requireSuccessfulAction(response: JsonElement) {
-        val obj = response as? JsonObject ?: return
-        val ok = (obj["ok"] as? JsonPrimitive)?.booleanOrNull ?: return
-        if (!ok) {
-            val detail = (obj["detail"] as? JsonPrimitive)?.contentOrNull
-                ?: (obj["error"] as? JsonPrimitive)?.contentOrNull
-                ?: MEMORY_ERROR_SETUP_FAILED
-            error(detail)
+        try {
+            ActionOutcome.requireOk(response, MEMORY_ERROR_SETUP_FAILED)
+        } catch (rejected: ActionOutcome.ActionRejected) {
+            error(rejected.message ?: MEMORY_ERROR_SETUP_FAILED)
         }
     }
 

@@ -47,6 +47,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.hermesgadget.talaria.core.util.ActionOutcome
 import com.hermesgadget.talaria.R
 import com.hermesgadget.talaria.TalariaApp
 import com.hermesgadget.talaria.core.network.HermesApi
@@ -207,8 +208,13 @@ internal class PluginsViewModel(
         if (previous.busyAction != null) return
         _ui.value = PluginsUiState.Content(previous.copy(busyAction = ACTION_BUSY, refreshing = false))
         viewModelScope.launch {
-            suspendResult { block() }
-                .onSuccess { refresh() }
+            suspendResult {
+                val response = block()
+                // Q05: 2xx with ok=false is an application rejection — don't refresh
+                // into a "success" state that didn't happen.
+                ActionOutcome.requireOk(response)
+                response
+            }.onSuccess { refresh() }
                 .onFailure { error ->
                     _ui.value = PluginsUiState.Failure(
                         error.message,
@@ -219,9 +225,11 @@ internal class PluginsViewModel(
     }
 
     private suspend fun loadContent(): PluginsContent = coroutineScope {
-        val manifests = async { api.getDashboardPlugins() }.await()
-        val hub = async { api.getDashboardPluginsHub() }.await()
-        parseContent(manifests, hub)
+        // Q10: both loads used to be awaited immediately after launch, running them
+        // sequentially. Await both together so the independent calls overlap.
+        val manifests = async { api.getDashboardPlugins() }
+        val hub = async { api.getDashboardPluginsHub() }
+        parseContent(manifests.await(), hub.await())
     }
 
     private fun currentContent(): PluginsContent? = when (val state = _ui.value) {

@@ -202,6 +202,10 @@ data class SystemUiState(
     val doctor: String? = null,
     val audit: String? = null,
     val backup: String? = null,
+    // Q12: explicit per-operation pending state for non-idempotent gateway jobs.
+    val doctorBusy: Boolean = false,
+    val auditBusy: Boolean = false,
+    val backupBusy: Boolean = false,
     val update: String? = null,
     val updateAction: String? = null,
     val gatewayDrain: String? = null,
@@ -294,28 +298,35 @@ class SystemViewModel(
     }
 
     fun runDoctor() {
+        // Q12: re-entry guard — a second doctor run must not overlap the first.
+        if (_ui.value.doctorBusy) return
         viewModelScope.launch {
+            _ui.update { it.copy(doctorBusy = true, doctor = null) }
             gateway.runDoctor().fold(
-                onSuccess = { action -> _ui.update { it.copy(doctor = formatSystemAction(action)) } },
-                onFailure = { error -> _ui.update { it.copy(doctor = error.message) } },
+                onSuccess = { action -> _ui.update { it.copy(doctor = formatSystemAction(action), doctorBusy = false) } },
+                onFailure = { error -> _ui.update { it.copy(doctor = error.message, doctorBusy = false) } },
             )
         }
     }
 
     fun runSecurityAudit() {
+        if (_ui.value.auditBusy) return
         viewModelScope.launch {
+            _ui.update { it.copy(auditBusy = true, audit = null) }
             gateway.runSecurityAudit().fold(
-                onSuccess = { action -> _ui.update { it.copy(audit = formatSystemAction(action)) } },
-                onFailure = { error -> _ui.update { it.copy(audit = error.message) } },
+                onSuccess = { action -> _ui.update { it.copy(audit = formatSystemAction(action), auditBusy = false) } },
+                onFailure = { error -> _ui.update { it.copy(audit = error.message, auditBusy = false) } },
             )
         }
     }
 
     fun runBackup() {
+        if (_ui.value.backupBusy) return
         viewModelScope.launch {
+            _ui.update { it.copy(backupBusy = true, backup = null) }
             gateway.runBackup().fold(
-                onSuccess = { action -> _ui.update { it.copy(backup = formatSystemAction(action)) } },
-                onFailure = { error -> _ui.update { it.copy(backup = error.message) } },
+                onSuccess = { action -> _ui.update { it.copy(backup = formatSystemAction(action), backupBusy = false) } },
+                onFailure = { error -> _ui.update { it.copy(backup = error.message, backupBusy = false) } },
             )
         }
     }

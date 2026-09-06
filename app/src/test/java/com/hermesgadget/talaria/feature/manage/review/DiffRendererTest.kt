@@ -17,37 +17,9 @@
 package com.hermesgadget.talaria.feature.manage.review
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DiffRendererTest {
-    @Test
-    fun lineDiffMarksChangedLinesAndKeepsContext() {
-        val rows = renderLineDiff(
-            before = "header\nold value\nfooter\n",
-            after = "header\nnew value\nfooter\n",
-        )
-
-        assertEquals(
-            listOf(
-                DiffLine(DiffLineKind.CONTEXT, "header"),
-                DiffLine(DiffLineKind.REMOVED, "old value"),
-                DiffLine(DiffLineKind.ADDED, "new value"),
-                DiffLine(DiffLineKind.CONTEXT, "footer"),
-            ),
-            rows,
-        )
-    }
-
-    @Test
-    fun lineDiffRendersNewFileAsAdditions() {
-        val rows = renderLineDiff("", "one\ntwo\n")
-
-        assertEquals(2, rows.size)
-        assertTrue(rows.all { it.kind == DiffLineKind.ADDED })
-        assertEquals(listOf("one", "two"), rows.map { it.text })
-    }
-
     @Test
     fun unifiedPatchKeepsHeadersAndStripsDiffPrefixes() {
         val rows = renderUnifiedDiff(
