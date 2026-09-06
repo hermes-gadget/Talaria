@@ -305,4 +305,9 @@
     <string name="notif_channel_agent_3">代理 3</string>
     <string name="notif_channel_agent_4">代理 4</string>
     <string name="notif_channel_agent_other">其他代理</string>
+    <string name="files_save_confirm_title">保存更改？</string>
+    <string name="files_save_confirm_body">编辑后的文件将写入服务器。</string>
+    <string name="files_discard_draft_title">放弃更改？</string>
+    <string name="files_discard_draft_body">此文件有未保存的编辑。现在关闭将放弃它们。</string>
+    <string name="files_discard">放弃</string>
 </resources>

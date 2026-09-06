@@ -229,6 +229,24 @@ fun FilesScreen(vm: FilesViewModel = viewModel(factory = FilesViewModel.factory(
         )
     }
 
+    // U09: warn before dropping un-saved editor text on sheet dismissal.
+    if (ui.confirmClose) {
+        AlertDialog(
+            onDismissRequest = vm::cancelClosePreview,
+            title = { Text(stringResource(R.string.files_discard_draft_title)) },
+            text = { Text(stringResource(R.string.files_discard_draft_body)) },
+            confirmButton = {
+                TextButton(onClick = vm::confirmClosePreview) {
+                    Text(stringResource(R.string.files_discard))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = vm::cancelClosePreview) {
+                    Text(stringResource(R.string.files_cancel))
+                }
+            },
+        )
+    }
     ui.preview?.let { file ->
         ModalBottomSheet(
             onDismissRequest = vm::closePreview,
@@ -380,6 +398,25 @@ fun FilesScreen(vm: FilesViewModel = viewModel(factory = FilesViewModel.factory(
                                         },
                                     )
                                 }
+                            }
+                            // F07: Save routed through a confirm dialog the screen
+                            // never rendered, so the button did nothing. Render it.
+                            if (ui.confirmSave) {
+                                AlertDialog(
+                                    onDismissRequest = vm::cancelSave,
+                                    title = { Text(stringResource(R.string.files_save_confirm_title)) },
+                                    text = { Text(stringResource(R.string.files_save_confirm_body)) },
+                                    confirmButton = {
+                                        TextButton(onClick = vm::confirmSave, enabled = !ui.saving) {
+                                            Text(stringResource(R.string.files_save))
+                                        }
+                                    },
+                                    dismissButton = {
+                                        TextButton(onClick = vm::cancelSave) {
+                                            Text(stringResource(R.string.files_cancel))
+                                        }
+                                    },
+                                )
                             }
                         } else {
                             Text(

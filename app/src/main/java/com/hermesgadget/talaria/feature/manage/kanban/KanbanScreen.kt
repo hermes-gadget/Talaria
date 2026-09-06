@@ -340,7 +340,8 @@ internal fun KanbanScreen(vm: KanbanViewModel = viewModel(factory = KanbanViewMo
                     selectedTaskId?.let { vm.addKanbanTaskComment(it, body, onSuccess) }
                 },
                 onInspectRun = vm::getKanbanRun,
-                onTerminateRun = { runId -> selectedTaskId?.let { vm.terminateKanbanRun(runId, it) } },
+                // F08: terminate from the run list works without an open task.
+                onTerminateRun = { runId -> vm.terminateKanbanRun(runId, selectedTaskId) },
                 onDelete = { selectedTaskId?.let { deleteTaskId = it } },
             )
         }

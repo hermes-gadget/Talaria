@@ -138,6 +138,8 @@ data class FilesUiState(
     val saving: Boolean = false,
     val previewError: String? = null,
     val confirmSave: Boolean = false,
+    /** U09: sheet-dismiss confirm for unsaved drafts. */
+    val confirmClose: Boolean = false,
     val shareLoading: Boolean = false,
     val sharePayload: FileSharePayload? = null,
     val shareError: String? = null,
@@ -518,7 +520,27 @@ class FilesViewModel(
         _ui.update { it.copy(sharePayload = null, shareLoading = false, shareError = message) }
     }
 
+    /** U09: true when dismissing the preview would drop un-saved editor text. */
+    fun hasUnsavedDraft(): Boolean {
+        val state = _ui.value
+        return state.editing && state.editDraft != state.preview?.text.orEmpty()
+    }
+
+    /** U09: dismissal path when the user confirms dropping the draft. */
+    fun confirmClosePreview() {
+        _ui.update { it.copy(confirmClose = false) }
+        closePreview()
+    }
+
+    /** U09: dismissal path that keeps the sheet open (user tapped "keep editing"). */
+    fun cancelClosePreview() = _ui.update { it.copy(confirmClose = false) }
+
     fun closePreview() {
+        // U09: don't silently discard an edited draft — surface a confirm step.
+        if (hasUnsavedDraft()) {
+            _ui.update { it.copy(confirmClose = true) }
+            return
+        }
         _ui.value.sharePayload?.file?.let { file ->
             (shareFileManager ?: defaultShareFileManager).deleteOwnedFile(file)
         }

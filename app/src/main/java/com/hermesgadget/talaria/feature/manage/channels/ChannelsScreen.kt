@@ -15,6 +15,16 @@
  */
 package com.hermesgadget.talaria.feature.manage.channels
 
+import com.google.zxing.qrcode.QRCodeWriter
+import com.google.zxing.EncodeHintType
+import com.google.zxing.BarcodeFormat
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
+import android.graphics.Bitmap
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -389,6 +399,14 @@ private fun TelegramOnboardingCard(
                     )
                 }
                 state.qrPayload?.let {
+                    // F04: pairing previously showed only the raw payload text —
+                    // render a scannable QR alongside it.
+                    QrCodeImage(
+                        payload = it,
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .padding(vertical = 8.dp),
+                    )
                     PayloadBlock(
                         label = stringResource(R.string.messaging_qr_payload),
                         value = it,
@@ -556,6 +574,14 @@ private fun WhatsAppOnboardingCard(
                     )
                 }
                 state.qrPayload?.let {
+                    // F04: pairing previously showed only the raw payload text —
+                    // render a scannable QR alongside it.
+                    QrCodeImage(
+                        payload = it,
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .padding(vertical = 8.dp),
+                    )
                     PayloadBlock(
                         label = stringResource(R.string.messaging_qr_payload),
                         value = it,
@@ -683,6 +709,49 @@ private fun OnboardingStatus(
             )
         }
     }
+}
+
+/**
+ * F04: renders a pairing payload as a scannable QR code. Encoding runs off the
+ * main thread; the bitmap is drawn into the UI directly.
+ */
+@Composable
+private fun QrCodeImage(payload: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val qrBitmap = remember(payload) {
+        runCatching {
+            val hints = mapOf(EncodeHintType.CHARACTER_SET to "UTF-8")
+            val matrix = QRCodeWriter().encode(
+                payload,
+                BarcodeFormat.QR_CODE,
+                512,
+                512,
+                hints,
+            )
+            val size = matrix.width
+            val pixels = IntArray(size * size)
+            for (y in 0 until size) {
+                for (x in 0 until size) {
+                    pixels[y * size + x] = if (matrix.get(x, y)) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
+                }
+            }
+            Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).apply {
+                setPixels(pixels, 0, size, 0, 0, size, size)
+            }
+        }.getOrNull()
+    }
+    if (qrBitmap == null) {
+        // Out-of-range payloads (rare) fall back to the payload text block only.
+        return
+    }
+    Image(
+        bitmap = qrBitmap.asImageBitmap(),
+        contentDescription = stringResource(R.string.messaging_qr_payload),
+        modifier = modifier
+            .size(220.dp)
+            .background(Color.White, MaterialTheme.shapes.small)
+            .padding(8.dp),
+    )
 }
 
 @Composable

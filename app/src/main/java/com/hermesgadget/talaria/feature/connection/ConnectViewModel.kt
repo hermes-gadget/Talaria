@@ -96,6 +96,9 @@ data class ConnectUiState(
     val cleartextConsentOrigin: String? = null,
 )
 
+/** U06: synthetic scope used to diagnose unsaved drafts without persisting them. */
+private const val EPHEMERAL_DRAFT_SCOPE = "__draft_diagnostics__"
+
 class ConnectViewModel(
     private val repo: ConnectionRepository = TalariaApp.instance.container.connectionRepository,
     private val nativeOidc: NativeOidcLogin = TalariaApp.instance.container.nativeOidcLogin,
@@ -1011,12 +1014,22 @@ class ConnectViewModel(
             _ui.value = s.copy(diagnosing = true, doctorReport = null, error = null)
             val lines = mutableListOf<String>()
             try {
-                val profile = saveConnectionDraft(s)
-                draftProfileId = profile.id
-                repo.setActive(profile.id)
+                // U06: the doctor must not silently save+select the connection.
+                // Diagnose the draft in place: reuse the edited profile when one is
+                // open; for a brand-new entry run against an unsaved draft snapshot
+                // and say so in the report.
+                // U06: the doctor must not silently save+select the connection.
+                // Diagnose the draft in place: reuse the edited profile when one is
+                // open; for a brand-new entry run against an unsaved draft snapshot
+                // and say so in the report.
+                val profile = draftProfileId?.let { id -> repo.profiles.value.firstOrNull { it.id == id } }
+                if (profile == null) {
+                    lines += "Draft (not saved): doctor results are read-only diagnostics."
+                }
+                val profileId = profile?.id ?: EPHEMERAL_DRAFT_SCOPE
                 var snapshot = TalariaApp.instance.container.clientFactory.snapshotFor(
-                    profile.id,
-                    profile.managementProfile,
+                    profileId,
+                    profile?.managementProfile ?: s.managementProfile,
                 ) ?: error(SnapshotAuthGuard.CHANGED_MESSAGE)
 
                 lines += "URL: ${s.baseUrl.trimEnd('/')}"
@@ -1040,8 +1053,8 @@ class ConnectViewModel(
                 )
                 if (status.isSuccess) {
                     snapshot = TalariaApp.instance.container.clientFactory.snapshotFor(
-                        profile.id,
-                        profile.managementProfile,
+                        profileId,
+                        profile?.managementProfile ?: s.managementProfile,
                     ) ?: error(SnapshotAuthGuard.CHANGED_MESSAGE)
                     // Token-gated REST probe: /api/status is public, so a
                     // stored token that no longer matches the dashboard's

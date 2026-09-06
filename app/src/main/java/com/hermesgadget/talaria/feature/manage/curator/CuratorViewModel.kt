@@ -51,14 +51,39 @@ class CuratorViewModel(
     }
 
     fun runNow() {
+        // F06: refuse a second run while one is already active.
+        if (_ui.value.busy || _ui.value.action?.running == true) return
         _ui.update { it.copy(busy = true, action = null, error = null) }
         viewModelScope.launch {
             repo.runCuratorNow().fold(
                 onSuccess = { action ->
-                    _ui.update { it.copy(action = action, busy = false) }
-                    refresh()
+                    _ui.update { it.copy(action = action) }
+                    if (action.running && action.name.isNotBlank()) {
+                        // F06: the run started asynchronously — follow it to a
+                        // terminal status instead of dropping it on the floor.
+                        trackToCompletion(action.name)
+                    } else {
+                        _ui.update { it.copy(busy = false) }
+                        refresh()
+                    }
                 },
                 onFailure = { error -> _ui.update { it.copy(busy = false, error = error.message) } },
+            )
+        }
+    }
+
+    /** F06: poll the named action until terminal, keeping busy=true while running. */
+    private fun trackToCompletion(name: String) {
+        viewModelScope.launch {
+            repo.trackAction(name).fold(
+                onSuccess = { final ->
+                    _ui.update { it.copy(action = final, busy = false) }
+                    refresh()
+                },
+                onFailure = { error ->
+                    _ui.update { it.copy(busy = false, error = error.message) }
+                    refresh()
+                },
             )
         }
     }

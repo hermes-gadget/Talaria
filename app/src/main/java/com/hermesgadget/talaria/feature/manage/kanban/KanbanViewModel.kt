@@ -464,7 +464,9 @@ internal class KanbanViewModel(
         }
     }
 
-    fun terminateKanbanRun(runId: String, taskId: String) {
+    // F08: taskId is optional — terminating from the run list (no task open) must
+    // still work; it only controls the follow-up detail refresh.
+    fun terminateKanbanRun(runId: String, taskId: String? = null) {
         if ((_run.value as? KanbanRunState.Content) == null && _run.value != KanbanRunState.Loading) return
         val generation = runGeneration
         viewModelScope.launch {
@@ -472,7 +474,7 @@ internal class KanbanViewModel(
                 .onSuccess {
                     if (generation != runGeneration) return@onSuccess
                     refresh()
-                    openTask(taskId)
+                    if (taskId != null) openTask(taskId)
                     getKanbanRun(runId)
                 }
                 .onFailure { error ->

@@ -311,4 +311,9 @@ See PRIVACY.md in the repository for the full statement.</string>
     <string name="notif_channel_agent_3">Agent 3</string>
     <string name="notif_channel_agent_4">Agent 4</string>
     <string name="notif_channel_agent_other">Other agents</string>
+    <string name="files_save_confirm_title">Save changes?</string>
+    <string name="files_save_confirm_body">The edited file will be written to the server.</string>
+    <string name="files_discard_draft_title">Discard changes?</string>
+    <string name="files_discard_draft_body">You have un-saved edits in this file. Closing now will discard them.</string>
+    <string name="files_discard">Discard</string>
 </resources>

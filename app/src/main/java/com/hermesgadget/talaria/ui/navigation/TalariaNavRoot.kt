@@ -53,6 +53,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
@@ -373,10 +374,17 @@ fun TalariaNavRoot(
     key(activeScope) {
         val navController = rememberNavController()
         val start = if (profiles.isEmpty()) Routes.CONNECT else TopDest.Chats.route
-        var currentTop by remember { mutableStateOf(TopDest.Chats.route) }
+
+        // U17: derive the selected tab from the live back stack so hardware Back
+        // (which pops to a previous top-level destination) keeps the bar in sync —
+        // a local `currentTop` flag went stale the moment the user pressed Back.
+        val backStackEntry by navController.currentBackStackEntryAsState()
+        val allTopDests = listOf(TopDest.Chats, TopDest.Activity, TopDest.Manage, TopDest.You)
+        val currentTop = backStackEntry?.destination?.route?.let { route ->
+            allTopDests.firstOrNull { it.route == route }?.route
+        } ?: TopDest.Chats.route
 
         fun navigateToTopLevel(route: String) {
-            currentTop = route
             navController.navigate(route) {
                 popUpTo(navController.graph.findStartDestination().id) {
                     saveState = true

@@ -71,7 +71,12 @@ fun CuratorScreen(vm: CuratorViewModel = viewModel(factory = CuratorViewModel.fa
                 ui.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 ui.action?.let { action ->
                     Text(
-                        if (action.exit_code == 0) "Curator completed" else "Curator exited ${action.exit_code ?: "?"}",
+                        // F06: show a live running state until terminal status.
+                        when {
+                            action.running -> "Curator running…"
+                            action.exit_code == 0 -> "Curator completed"
+                            else -> "Curator exited ${action.exit_code ?: "?"}"
+                        },
                         style = MaterialTheme.typography.labelLarge,
                     )
                     if (action.lines.isNotEmpty()) {

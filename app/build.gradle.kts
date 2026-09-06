@@ -160,6 +160,12 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
 
+    // F04: QR rendering for messaging pairing payloads.
+    implementation(libs.zxing.core)
+
+    // U02: EXIF orientation for image capture.
+    implementation(libs.androidx.exif)
+
     implementation(libs.squareup.okhttp)
     implementation(libs.squareup.logging.interceptor)
     implementation(libs.squareup.retrofit)

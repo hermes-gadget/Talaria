@@ -6,6 +6,8 @@
  */
 package com.hermesgadget.talaria.core.util
 
+import androidx.exifinterface.media.ExifInterface
+import android.graphics.Matrix
 import android.content.ContentResolver
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -145,6 +147,37 @@ internal object BoundedImage {
         handle?.let { File(it.path).delete() }
     }
 
+    /** U02: honor the source file's EXIF orientation by transforming the bitmap. */
+    private fun applyExifOrientation(source: File, bitmap: Bitmap): Bitmap {
+        val orientation = runCatching {
+            ExifInterface(source.absolutePath).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL,
+            )
+        }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+        if (orientation == ExifInterface.ORIENTATION_NORMAL || orientation == ExifInterface.ORIENTATION_UNDEFINED) {
+            return bitmap
+        }
+        val matrix = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(270f)
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.preScale(-1f, 1f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.preScale(1f, -1f)
+            ExifInterface.ORIENTATION_TRANSPOSE -> {
+                matrix.setRotate(90f); matrix.preScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_TRANSVERSE -> {
+                matrix.setRotate(-90f); matrix.preScale(-1f, 1f)
+            }
+            else -> return bitmap
+        }
+        return runCatching {
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        }.getOrDefault(bitmap)
+    }
+
     private fun prepareFile(
         source: File,
         outputDirectory: File,
@@ -161,8 +194,11 @@ internal object BoundedImage {
             inSampleSize = sample
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
-        val bitmap = BitmapFactory.decodeFile(source.absolutePath, decodeOptions)
+        val decoded = BitmapFactory.decodeFile(source.absolutePath, decodeOptions)
             ?: error("Image could not be decoded")
+        // U02: JPEG decode ignores EXIF orientation — bake it in before re-encode
+        // so photos don't arrive rotated/sideways on the receiving side.
+        val bitmap = applyExifOrientation(source, decoded)
         try {
             val decodedPixels = bitmap.width.toLong() * bitmap.height.toLong()
             require(decodedPixels <= MAX_DISPLAY_PIXELS) {

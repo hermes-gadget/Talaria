@@ -38,6 +38,7 @@ import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -63,9 +64,13 @@ fun LearningScreen(
     val ui by vm.ui.collectAsStateWithLifecycle()
     val graph = ui.graph
     var reveal by remember { mutableFloatStateOf(1f) }
+    // F09: selected cluster category for the node-list filter (null = all).
+    var selectedCluster by remember { mutableStateOf<String?>(null) }
     val timeline = remember(graph?.nodes) { graph?.let { buildLearningTimeline(it.nodes) } }
-    val visibleNodes = remember(graph?.nodes, reveal) {
-        graph?.let { visibleLearningNodes(it.nodes, reveal) }.orEmpty()
+    val visibleNodes = remember(graph?.nodes, reveal, selectedCluster) {
+        val base = graph?.let { visibleLearningNodes(it.nodes, reveal) }.orEmpty()
+        // F09: cluster chips filter the node list to the chosen category.
+        if (selectedCluster == null) base else base.filter { it.category == selectedCluster }
     }
 
     LaunchedEffect(graph?.nodes) {
@@ -171,7 +176,11 @@ fun LearningScreen(
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             graph.clusters.sortedByDescending { it.count }.forEach { c ->
                                 SuggestionChip(
-                                    onClick = {},
+                                    // F09: chips now filter the node list; tapping the
+                                    // active chip clears the filter.
+                                    onClick = {
+                                        selectedCluster = if (selectedCluster == c.category) null else c.category
+                                    },
                                     label = { Text("${c.category} · ${c.count}") },
                                 )
                             }

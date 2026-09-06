@@ -1212,6 +1212,25 @@ class HermesRepository(
             awaitAction(operation.api.runCurator(), operation.api)
         }
 
+    /**
+     * F06: poll a previously-started action by name until it reaches a terminal
+     * status, surfacing intermediate running states through [onProgress].
+     */
+    suspend fun trackAction(
+        name: String,
+        onProgress: (com.hermesgadget.talaria.domain.model.ActionStatus) -> Unit = {},
+    ): Result<com.hermesgadget.talaria.domain.model.ActionStatus> = withBoundOperation { operation ->
+        var last: com.hermesgadget.talaria.domain.model.ActionStatus? = null
+        repeat(300) {
+            val status = operation.api.getActionStatus(name)
+            last = status
+            if (!status.running) return@withBoundOperation status
+            onProgress(status)
+            kotlinx.coroutines.delay(1_000)
+        }
+        error("Hermes action '$name' did not finish within five minutes")
+    }
+
     /** Export session messages as markdown for share sheet. */
     /**
      * B64: stable origin-scope key (profile + base URL) used to namespace

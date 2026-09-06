@@ -19,6 +19,7 @@ package com.hermesgadget.talaria.feature.voice
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -161,13 +162,18 @@ fun VoiceScreen(
                 ) {
                     CircularProgressIndicator()
                 }
-            } else if (ui.phase == VoicePhase.UNAVAILABLE || !ui.capabilities.isComplete) {
+            } else if (ui.phase == VoicePhase.UNAVAILABLE ||
+                (!ui.capabilities.serverStt && !ui.capabilities.serverTts && !ui.androidSpeechAvailable)
+            ) {
+                // F11: the full unavailable card only when nothing at all works.
                 UnavailableVoiceContent(
                     ui = ui,
                     onUseOnDevice = if (ui.fallbackListening) vm::stopOnDeviceDictation
                     else ::requestOnDeviceDictation,
                 )
             } else {
+                // F11: partial capability sets are usable — the ready surface now
+                // labels each tool with its availability instead of hiding them.
                 if (ui.checkingCapabilities) LinearProgressIndicator(Modifier.fillMaxWidth())
                 ReadyVoiceContent(
                     ui = ui,
@@ -176,6 +182,8 @@ fun VoiceScreen(
                     } else {
                         ::requestServerRecording
                     },
+                    onUseOnDevice = if (ui.fallbackListening) vm::stopOnDeviceDictation
+                    else ::requestOnDeviceDictation,
                     onSpeak = vm::speakText,
                     onStopPlayback = vm::stopPlayback,
                     onTextChanged = vm::updateText,
@@ -298,6 +306,26 @@ private fun UnavailableVoiceContent(
                 )
                 Text(if (ui.fallbackListening) "Stop dictation" else "Use on-device dictation")
             }
+            // F12: local dictation previously had no visible output — show the live
+            // partial stream and a copyable final transcript.
+            if (ui.partialText.isNotBlank()) {
+                Text(
+                    "Hearing: ${ui.partialText}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (ui.text.isNotBlank()) {
+                Text(
+                    ui.text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface, MaterialTheme.shapes.small)
+                        .padding(8.dp)
+                        .let { it },
+                )
+            }
         }
     }
 }
@@ -306,6 +334,7 @@ private fun UnavailableVoiceContent(
 private fun ReadyVoiceContent(
     ui: VoiceUiState,
     onRecord: () -> Unit,
+    onUseOnDevice: () -> Unit,
     onSpeak: () -> Unit,
     onStopPlayback: () -> Unit,
     onTextChanged: (String) -> Unit,
@@ -322,7 +351,19 @@ private fun ReadyVoiceContent(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text("Hermes voice capabilities", style = MaterialTheme.typography.titleMedium)
-            Text("Server STT and server TTS are available.", style = MaterialTheme.typography.bodyMedium)
+            // F11: label each tool with its actual availability.
+            Text(
+                when {
+                    ui.capabilities.serverStt && ui.capabilities.serverTts ->
+                        "Server STT and server TTS are available."
+                    ui.capabilities.serverStt ->
+                        "Server STT is available; server TTS is not advertised."
+                    ui.capabilities.serverTts ->
+                        "Server TTS is available; server STT is not advertised."
+                    else -> "Server voice routes are not advertised; on-device dictation still works below."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
             Text(
                 if (ui.androidSpeechAvailable) {
                     "Android SpeechRecognizer is available; this surface uses a recorded audio upload so Hermes can provide the fallback STT."
@@ -336,7 +377,9 @@ private fun ReadyVoiceContent(
 
     Button(
         onClick = onRecord,
-        enabled = ui.phase == VoicePhase.IDLE || ui.phase == VoicePhase.RECORDING,
+        // F11: server STT only when advertised.
+        enabled = ui.capabilities.serverStt &&
+            (ui.phase == VoicePhase.IDLE || ui.phase == VoicePhase.RECORDING),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Icon(
@@ -344,6 +387,16 @@ private fun ReadyVoiceContent(
             contentDescription = null,
         )
         Text(if (ui.phase == VoicePhase.RECORDING) "Stop and transcribe" else "Record for server STT")
+    }
+    if (!ui.capabilities.serverStt && ui.androidSpeechAvailable) {
+        // F11: substitute path when server STT is missing.
+        OutlinedButton(
+            onClick = onUseOnDevice,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Filled.Mic, contentDescription = null)
+            Text(if (ui.fallbackListening) "Stop dictation" else "Use on-device dictation")
+        }
     }
 
     if (ui.phase == VoicePhase.TRANSCRIBING) {
@@ -373,10 +426,11 @@ private fun ReadyVoiceContent(
         }
         Button(
             onClick = onSpeak,
-            enabled = ui.text.isNotBlank() && ui.phase == VoicePhase.IDLE,
+            // F11: server TTS only when advertised.
+            enabled = ui.capabilities.serverTts && ui.text.isNotBlank() && ui.phase == VoicePhase.IDLE,
         ) {
             Icon(Icons.Filled.VolumeUp, contentDescription = null)
-            Text("Speak with Hermes")
+            Text(if (ui.capabilities.serverTts) "Speak with Hermes" else "Server TTS unavailable")
         }
         if (ui.phase == VoicePhase.PLAYING) {
             TextButton(onClick = onStopPlayback) {

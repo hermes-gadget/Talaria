@@ -319,4 +319,9 @@
     <string name="notif_channel_agent_3">الوكيل 3</string>
     <string name="notif_channel_agent_4">الوكيل 4</string>
     <string name="notif_channel_agent_other">وكلاء آخرون</string>
+    <string name="files_save_confirm_title">حفظ التغييرات؟</string>
+    <string name="files_save_confirm_body">سيتم كتابة الملف المعدّل على الخادم.</string>
+    <string name="files_discard_draft_title">تجاهل التغييرات؟</string>
+    <string name="files_discard_draft_body">لديك تعديلات غير محفوظة في هذا الملف. الإغلاق الآن سيؤدي إلى تجاهلها.</string>
+    <string name="files_discard">تجاهل</string>
 </resources>

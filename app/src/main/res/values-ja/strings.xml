@@ -305,4 +305,9 @@
     <string name="notif_channel_agent_3">エージェント 3</string>
     <string name="notif_channel_agent_4">エージェント 4</string>
     <string name="notif_channel_agent_other">その他のエージェント</string>
+    <string name="files_save_confirm_title">変更を保存しますか？</string>
+    <string name="files_save_confirm_body">編集したファイルがサーバーに書き込まれます。</string>
+    <string name="files_discard_draft_title">変更を破棄しますか？</string>
+    <string name="files_discard_draft_body">このファイルには未保存の編集があります。今閉じると破棄されます。</string>
+    <string name="files_discard">破棄</string>
 </resources>
