@@ -150,6 +150,11 @@ fun AnalyticsScreen() {
             loading && data == null -> LoadingBox()
             error != null && data == null -> ErrorBox(error!!, onRetry = { reload() })
             else -> {
+                // U07: a refresh failure with stale data visible must not hide the
+                // error behind the old totals — banner above the content.
+                error?.let { err ->
+                    ErrorBox(err, onRetry = { reload() })
+                }
                 val a = data ?: return@ScreenScaffold
                 val totals = a.totals
                 val inputTokens = totals?.total_input ?: a.total_input_tokens

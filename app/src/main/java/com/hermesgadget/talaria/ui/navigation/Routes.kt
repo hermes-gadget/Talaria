@@ -55,6 +55,10 @@ object Routes {
     const val PAIRING = "pairing"
     const val CHANNELS = "channels"
     const val SYSTEM = "system"
+
+    /** U08: system entry carrying a requested maintenance action. */
+    const val SYSTEM_WITH_ACTION = "system?action={action}"
+    const val ARG_SYSTEM_ACTION = "action"
     const val CAR_HOSTS = "car_hosts"
     const val MEMORY = "memory"
     const val CURATOR = "curator"

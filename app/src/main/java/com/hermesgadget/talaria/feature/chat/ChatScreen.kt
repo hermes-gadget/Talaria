@@ -253,10 +253,15 @@ fun ChatScreen(
     val transcriptMode = effectiveTranscriptMode(ui.transcriptMode, active?.working == true)
     val displayLines = visibleTranscriptLines(active, transcriptMode)
     val searchedLines = filterTranscriptLines(displayLines, ui.transcriptQuery)
-    // Follow the transcript only when the last line actually changed; instant
-    // scroll (no animation) keeps up with stream-rate updates without jank.
+    // U04: follow the transcript only when the last line changed AND the user is
+    // already reading at the bottom — scrolling to newest must never yank someone
+    // back up who deliberately scrolled into history. Instant scroll (no animation)
+    // keeps up with stream-rate updates without jank.
     LaunchedEffect(searchedLines.lastOrNull()?.let { it.id to it.text }, ui.activeTabId, ui.transcriptQuery) {
-        if (searchedLines.isNotEmpty()) listState.scrollToItem(searchedLines.lastIndex)
+        if (searchedLines.isEmpty()) return@LaunchedEffect
+        val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return@LaunchedEffect
+        val nearBottom = lastVisible >= searchedLines.lastIndex - 2
+        if (nearBottom) listState.scrollToItem(searchedLines.lastIndex)
     }
 
     val status = when (val recovery = active?.transportRecovery) {

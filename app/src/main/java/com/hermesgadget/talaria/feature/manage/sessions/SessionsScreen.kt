@@ -210,7 +210,10 @@ fun SessionsScreen(
         }
     }
 
+    // U12: a stats refresh failure must not disable session actions — fall back to
+    // the previous content carried by the Failure state.
     val adminContent = (adminUi as? SessionAdminUiState.Content)?.value
+        ?: (adminUi as? SessionAdminUiState.Failure)?.previous
     val organization = organizationUi.organization
     LaunchedEffect(organization.savedFilters) {
         if (organizationFilter is SessionOrganizationFilter.Saved &&

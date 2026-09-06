@@ -105,6 +105,14 @@ fun SimpleMarkdownText(
     val openLink: (String) -> Unit = { url ->
         onLinkClick?.invoke(url) ?: openMarkdownUrl(context, url)
     }
+    // U16: never truncate silently — if any cap fired, say so.
+    if (document.truncated) {
+        Text(
+            "… content truncated (size limits)",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 
     Column(
         modifier = modifier,
@@ -478,7 +486,12 @@ private fun highlightAnnotatedString(
 
 internal sealed interface MarkdownBlock
 
-internal data class MarkdownDocument(val blocks: List<MarkdownBlock>)
+internal data class MarkdownDocument(
+    val blocks: List<MarkdownBlock>,
+    // U16: caps silently dropped content (input bytes, blocks, lines, table rows,
+    // tokens). Expose it so the renderer can tell the reader content was cut.
+    val truncated: Boolean = false,
+)
 
 internal data class MarkdownParagraph(
     val lines: List<List<MarkdownInline>>,
@@ -531,12 +544,17 @@ internal fun parseMarkdown(markdown: String): MarkdownDocument {
     val blocks = mutableListOf<MarkdownBlock>()
     val budget = MarkdownBudget()
     var index = 0
+    // U16: surface every silent truncation path as one visible flag.
+    var truncated = bounded.length < markdown.length
 
     while (index < lines.size && blocks.size < MAX_MARKDOWN_BLOCKS && !budget.exhausted) {
         val line = lines[index]
         if (line.isBlank()) {
             index++
             continue
+        }
+        if (blocks.size + 1 >= MAX_MARKDOWN_BLOCKS && index + 1 < lines.size) {
+            truncated = true
         }
 
         val fence = FENCE_OPEN.matchEntire(line)
@@ -545,7 +563,7 @@ internal fun parseMarkdown(markdown: String): MarkdownDocument {
             val codeLines = mutableListOf<String>()
             index++
             while (index < lines.size && !isFenceClose(lines[index])) {
-                if (codeLines.size < MAX_MARKDOWN_LINES) codeLines += lines[index]
+                if (codeLines.size < MAX_MARKDOWN_LINES) codeLines += lines[index] else truncated = true
                 index++
             }
             if (index < lines.size) index++
@@ -611,7 +629,7 @@ internal fun parseMarkdown(markdown: String): MarkdownDocument {
         }
         if (paragraph.isNotEmpty()) blocks += MarkdownParagraph(paragraph)
     }
-    return MarkdownDocument(blocks)
+    return MarkdownDocument(blocks, truncated = truncated)
 }
 
 private val FENCE_OPEN = Regex("^\\s*```(.*)$")

@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -96,8 +97,11 @@ fun TerminalScreen(
             vm.reconnectOnResume()
         }
     }
+    // U14: follow the output tail only when the user is already near the bottom —
+    // scrolling up to read must not be yanked back on every output event.
     LaunchedEffect(ui.output) {
-        outputScroll.scrollTo(outputScroll.maxValue)
+        val nearBottom = outputScroll.value >= outputScroll.maxValue - 200
+        if (nearBottom) outputScroll.scrollTo(outputScroll.maxValue)
     }
 
     val status = when (val connection = ui.connection) {
@@ -238,6 +242,32 @@ fun TerminalScreen(
                 ) {
                     Icon(Icons.Filled.Send, contentDescription = "Send command")
                 }
+            }
+            // U14: interactive control keys the soft keyboard can't produce.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                AssistChip(
+                    onClick = { vm.sendRaw("\u0003") },
+                    label = { Text("^C") },
+                    enabled = connected,
+                )
+                AssistChip(
+                    onClick = { vm.sendRaw("\u0004") },
+                    label = { Text("^D") },
+                    enabled = connected,
+                )
+                AssistChip(
+                    onClick = { vm.sendRaw("\t") },
+                    label = { Text("Tab") },
+                    enabled = connected,
+                )
+                AssistChip(
+                    onClick = { vm.sendRaw("\u001a") },
+                    label = { Text("^Z") },
+                    enabled = connected,
+                )
             }
         }
     }

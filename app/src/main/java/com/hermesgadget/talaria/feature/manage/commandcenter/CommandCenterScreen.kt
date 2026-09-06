@@ -55,7 +55,7 @@ import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CommandCenterScreen(onOpenSystem: () -> Unit) {
+fun CommandCenterScreen(onSystemAction: (String) -> Unit) {
     val vm: CommandCenterViewModel = viewModel(factory = CommandCenterViewModel.factory())
     val ui by vm.ui.collectAsStateWithLifecycle()
 
@@ -77,14 +77,14 @@ fun CommandCenterScreen(onOpenSystem: () -> Unit) {
                 onRefresh = vm::refresh,
                 modifier = Modifier.fillMaxSize(),
             ) {
-                CommandCenterContent(state.data, onOpenSystem)
+                CommandCenterContent(state.data, onSystemAction)
             }
         }
     }
 }
 
 @Composable
-private fun CommandCenterContent(data: CommandCenterContent, onOpenSystem: () -> Unit) {
+private fun CommandCenterContent(data: CommandCenterContent, onSystemAction: (String) -> Unit) {
     LazyColumn(
         contentPadding = PaddingValues(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -92,7 +92,7 @@ private fun CommandCenterContent(data: CommandCenterContent, onOpenSystem: () ->
         item { GatewaySection(data.gateway) }
         item { LogsSection(data.logs) }
         item { UsageSection(data.usage) }
-        item { MaintenanceSection(onOpenSystem) }
+        item { MaintenanceSection(onSystemAction) }
         if (data.lastUpdatedMs > 0L) {
             item {
                 Text(
@@ -278,7 +278,7 @@ private fun UsageMetric(label: String, value: String, modifier: Modifier = Modif
 }
 
 @Composable
-private fun MaintenanceSection(onOpenSystem: () -> Unit) {
+private fun MaintenanceSection(onSystemAction: (String) -> Unit) {
     SectionCard("Maintenance", collapsible = true) {
         Text(
             "Open System to review and run the gateway maintenance actions.",
@@ -289,9 +289,10 @@ private fun MaintenanceSection(onOpenSystem: () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Button(onClick = onOpenSystem, modifier = Modifier.weight(1f)) { Text("Doctor") }
-            OutlinedButton(onClick = onOpenSystem, modifier = Modifier.weight(1f)) { Text("Backup") }
-            OutlinedButton(onClick = onOpenSystem, modifier = Modifier.weight(1f)) { Text("Restart") }
+            // U08: each shortcut requests its own tool, not a generic jump.
+            Button(onClick = { onSystemAction("doctor") }, modifier = Modifier.weight(1f)) { Text("Doctor") }
+            OutlinedButton(onClick = { onSystemAction("backup") }, modifier = Modifier.weight(1f)) { Text("Backup") }
+            OutlinedButton(onClick = { onSystemAction("restart") }, modifier = Modifier.weight(1f)) { Text("Restart") }
         }
     }
 }

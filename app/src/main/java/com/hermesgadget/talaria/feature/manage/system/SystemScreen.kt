@@ -96,10 +96,19 @@ private enum class OpsConfirmation(
 }
 
 @Composable
-fun SystemScreen() {
+fun SystemScreen(requestedAction: String? = null) {
     val context = LocalContext.current
     val vm: SystemViewModel = viewModel(factory = SystemViewModel.factory())
     val ui by vm.ui.collectAsStateWithLifecycle()
+
+    // U08: honor the maintenance tool requested from Command Center exactly once.
+    LaunchedEffect(requestedAction) {
+        when (requestedAction) {
+            "doctor" -> vm.runDoctor()
+            "backup" -> vm.runBackup()
+            "restart" -> vm.applyHermesUpdate()
+        }
+    }
 
     var importConfirmation by remember { mutableStateOf<ImportUiState.Ready?>(null) }
     var deleteConfirmation by remember { mutableStateOf<OpsHookEntry?>(null) }

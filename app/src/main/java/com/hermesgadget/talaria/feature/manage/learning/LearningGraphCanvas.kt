@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -41,6 +42,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -81,12 +84,35 @@ fun LearningStarmapCard(
                 )
             }
             LearningLegend()
+            // U10: accessible equivalent of the pinch/pan gestures — a graph
+            // summary for screen readers plus explicit zoom/reset controls.
+            val summary = buildString {
+                append("${visibleNodes.size} of ${graph.nodes.size} skills visible; ")
+                append("${graph.edges.size} connections; ")
+                append("${graph.nodes.count { it.kind.equals("memory", ignoreCase = true) }} memory nodes; ")
+                append("pinch or use the buttons to zoom")
+            }
+            Text(
+                summary,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            var resetKey by remember { mutableStateOf(0) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { resetKey++ }, modifier = Modifier.weight(1f)) {
+                    Text("Reset view")
+                }
+            }
             LearningGraphCanvas(
                 nodes = graph.nodes,
+                resetKey = resetKey,
                 edges = graph.edges,
                 visibleNodes = visibleNodes,
                 onNodeClick = onNodeClick,
-                modifier = Modifier.fillMaxWidth().height(340.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(340.dp)
+                    .semantics { contentDescription = summary },
             )
             LearningTimelineControls(
                 timeline = timeline,
@@ -128,6 +154,7 @@ private val NODE_HIGHLIGHT = Color.White.copy(alpha = 0.35f)
 @Composable
 private fun LearningGraphCanvas(
     nodes: List<LearningMapNode>,
+    resetKey: Int = 0,
     edges: List<LearningMapEdge>,
     visibleNodes: List<LearningMapNode>,
     onNodeClick: (LearningMapNode) -> Unit,
@@ -149,7 +176,8 @@ private fun LearningGraphCanvas(
     val centerColor = MaterialTheme.colorScheme.secondary
     val labelPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG) }
 
-    LaunchedEffect(nodes) {
+    LaunchedEffect(nodes, resetKey) {
+        // U10: an external "reset view" control bumps resetKey to restore zoom/pan.
         zoom = 1f
         pan = Offset.Zero
     }

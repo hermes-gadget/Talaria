@@ -25,6 +25,8 @@ import android.os.Bundle
 import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -145,6 +147,12 @@ object PipChatIntent {
         } else {
             this.messages
         }
+        // U13: the streaming (latest) text is what a PiP viewer cares about —
+        // budget it FIRST and give history only what remains, so truncation eats
+        // old messages rather than the live reply.
+        val streaming = budget.take(this.streamingText)
+        hasMore = hasMore || streaming.wasTruncated
+
         val boundedMessages = ArrayList<PipChatMessage>(sourceMessages.size)
         for (message in sourceMessages) {
             if (budget.isExhausted) {
@@ -156,9 +164,6 @@ object PipChatIntent {
             hasMore = hasMore || role.wasTruncated || text.wasTruncated
             boundedMessages += PipChatMessage(role.value, text.value)
         }
-
-        val streaming = budget.take(this.streamingText)
-        hasMore = hasMore || streaming.wasTruncated
         return copy(
             title = title,
             messages = boundedMessages,
@@ -296,7 +301,18 @@ private fun PipChatContent(snapshot: PipChatSnapshot) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            // U13: follow the streaming tail unless the user scrolled up to read;
+            // lastVisibleItem tracks whether we're near the bottom.
+            val listState = rememberLazyListState()
+            val totalCount = snapshot.messages.size + if (snapshot.streamingText.isNotBlank()) 1 else 0
+            LaunchedEffect(snapshot.messages.size, snapshot.streamingText) {
+                val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return@LaunchedEffect
+                if (lastVisible >= totalCount - 2 && totalCount > 0) {
+                    listState.scrollToItem(totalCount - 1)
+                }
+            }
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 contentPadding = PaddingValues(vertical = 2.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),

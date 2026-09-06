@@ -353,6 +353,10 @@ fun ProfilesScreen(onShortcut: ((String) -> Unit)? = null) {
             list == null && error == null -> LoadingBox()
             error != null && list == null -> ErrorBox(error!!, onRetry = { reload() })
             else -> {
+                // U11: mutation errors must stay visible even with the list loaded.
+                error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error)
+                }
                 message?.let {
                     Text(it, color = MaterialTheme.colorScheme.secondary)
                 }
