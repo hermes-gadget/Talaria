@@ -641,35 +641,6 @@ class HermesRepository(
     suspend fun getAnalytics(days: Int): Result<AnalyticsUsage> =
         cached("analytics:$days") { api -> api.getAnalytics(days) }
 
-    suspend fun getCron(): Result<List<CronJob>> = cached("cron") { api -> api.getCronJobs() }
-
-    suspend fun createCron(prompt: String, schedule: String, name: String?, deliver: String): Result<CronJob> =
-        withBoundOperation { operation ->
-            operation.api.createCronJob(
-                buildJsonObject {
-                    put("prompt", prompt)
-                    put("schedule", schedule)
-                    name?.let { put("name", it) }
-                    put("deliver", deliver)
-                },
-            ).also { invalidate(operation.snapshot, "cron") }
-        }
-
-    suspend fun pauseCron(id: String) = withBoundOperation { operation ->
-        operation.api.pauseCron(id).also { invalidate(operation.snapshot, "cron") }
-    }
-    suspend fun resumeCron(id: String) = withBoundOperation { operation ->
-        operation.api.resumeCron(id).also { invalidate(operation.snapshot, "cron") }
-    }
-    suspend fun triggerCron(id: String) = withBoundOperation { operation ->
-        operation.api.triggerCron(id).also { invalidate(operation.snapshot, "cron") }
-    }
-    suspend fun deleteCron(id: String) = withBoundOperation { operation ->
-        operation.api.deleteCron(id)
-        invalidate(operation.snapshot, "cron")
-        Unit
-    }
-
     suspend fun getSkills(): Result<List<SkillInfo>> = cached("skills") { api -> api.getSkills() }
 
     suspend fun toggleSkill(name: String, enabled: Boolean) = withBoundOperation { operation ->
@@ -1115,20 +1086,6 @@ class HermesRepository(
         Unit
     }
 
-    suspend fun updateCron(id: String, prompt: String, schedule: String) = withBoundOperation { operation ->
-            operation.api.updateCronJob(
-                id,
-                buildJsonObject {
-                    put("updates", buildJsonObject {
-                        put("prompt", prompt)
-                        put("schedule", schedule)
-                    })
-                },
-            )
-            invalidate(operation.snapshot, "cron")
-            Unit
-    }
-
     suspend fun runDoctor(): Result<JsonElement> = withBoundOperation { operation ->
         operation.api.runDoctor()
     }
@@ -1413,7 +1370,7 @@ class HermesRepository(
                 null
             }
             val cron = try {
-                boundApi.getCronJobs(profile = bound.managementProfile)
+                boundApi.getCronJobsRaw(profile = bound.managementProfile)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Throwable) {
@@ -1427,5 +1384,5 @@ class HermesRepository(
 data class SyncSnapshot(
     val status: StatusResponse,
     val pairing: PairingResponse?,
-    val cron: List<CronJob>?,
+    val cron: kotlinx.serialization.json.JsonElement?,
 )
