@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -121,11 +122,40 @@ fun SessionsScreen(
         reloadNonce++
     }
 
+    // F10: paging state — sessions beyond the first page load on demand.
+    var nextOffset by remember { mutableIntStateOf(0) }
+    var loadingMore by remember { mutableStateOf(false) }
+    val canLoadMore = query.trim().isBlank() && (total == null || (sessions.size < (total ?: 0)))
+
+    fun loadMore() {
+        if (loadingMore || !canLoadMore) return
+        loadingMore = true
+        scope.launch {
+            val apiSource = sourceFilter.ifBlank { null }
+            val requestedTab = tab
+            repo.getSessionsPage(source = apiSource, limit = 100, offset = nextOffset)
+                .onSuccess { page ->
+                    if (requestedTab == tab) {
+                        val existing = sessions
+                        val fresh = page.sessions
+                            .filter { SessionFilters.matchesTab(it.source, requestedTab) }
+                            .filter { fresh -> existing.none { it.id == fresh.id } }
+                        sessions = existing + fresh
+                        nextOffset += 100
+                        message = null
+                    }
+                }
+                .onFailure { message = it.message }
+            loadingMore = false
+        }
+    }
+
     LaunchedEffect(tab, sourceFilter, query, reloadNonce) {
         val generation = ++requestGeneration
         val requestedTab = tab
         val requestedSource = sourceFilter
         val requestedQuery = query.trim()
+        nextOffset = 0
         if (requestedQuery.isBlank()) {
             val apiSource = requestedSource.ifBlank { null }
             val result = repo.getSessionsPage(source = apiSource, limit = 100)
@@ -538,6 +568,23 @@ fun SessionsScreen(
                                 onCompact = { compactSession = session },
                                 onDelete = { deleteSession = session },
                             )
+                        }
+                    }
+                }
+                // F10: continue past the first 100 results on demand.
+                if (canLoadMore) {
+                    item(key = "load-more") {
+                        Box(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                            OutlinedButton(
+                                onClick = { loadMore() },
+                                enabled = !loadingMore,
+                                modifier = Modifier.align(Alignment.Center),
+                            ) {
+                                Text(
+                                    if (loadingMore) stringResource(R.string.sessions_loading_more)
+                                    else stringResource(R.string.sessions_load_more),
+                                )
+                            }
                         }
                     }
                 }

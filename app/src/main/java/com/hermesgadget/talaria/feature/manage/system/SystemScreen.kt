@@ -465,10 +465,30 @@ fun SystemScreen() {
                             DebugShareUiState.Idle, DebugShareUiState.Running -> Unit
                             is DebugShareUiState.Failed -> Text(state.message, color = MaterialTheme.colorScheme.error)
                             is DebugShareUiState.Complete -> {
-                                Text(
-                                    "Redacted: ${state.response.redacted}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
+                                // S08: show the ACTUAL privacy state and make
+                                // sharing an unredacted report a deliberate act.
+                                if (!state.response.redacted) {
+                                    Text(
+                                        "This report is NOT redacted — it may contain sensitive data.",
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    TextButton(onClick = { vm.confirmUnredactedShare() }) {
+                                        Text("Share anyway (unredacted)")
+                                    }
+                                } else {
+                                    Text(
+                                        "Redacted: true",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                                if (!state.response.ok) {
+                                    Text(
+                                        "Share failed on the server — links below may be stale.",
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
                                 state.response.urls.toSortedMap().forEach { (label, url) ->
                                     Text("$label: $url", style = MaterialTheme.typography.bodySmall)
                                 }

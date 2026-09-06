@@ -400,7 +400,7 @@ class SessionAdminViewModel(
                     // B65: a confirmed mutation must not be reported as a
                     // failure because the post-delete refresh hiccupped —
                     // reconciliation is best-effort.
-                    runCatching {
+                    suspendResult {
                         TalariaApp.instance.container.hermesRepository.refreshSessions()
                     }
                 },
